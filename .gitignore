@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Claude Code — project instructions and AI memory (not for public repos)
+.claude/
+CLAUDE.md
+
+# Tauri build output
+src-tauri/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

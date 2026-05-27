@@ -1,87 +1,103 @@
 @echo off
 setlocal enabledelayedexpansion
-title FrameForge — Build ^& Release
+title FrameForge Build and Release
 cd /d "%~dp0"
 
+set GITHUB_REPO=Sikewyrm/FrameForge
+set GITHUB_URL=https://github.com/Sikewyrm/FrameForge.git
+
 echo ============================================
-echo  FrameForge — Build ^& GitHub Release
+echo  FrameForge - Build and Release Installer
 echo ============================================
 echo.
 
-:: ── Ask for version ──────────────────────────────────────────────────────────
-set /p VERSION="Enter version (e.g. 0.3.0): "
-if "%VERSION%"=="" (
-    echo No version entered. Aborting.
+:: Check gh is installed
+where gh >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: GitHub CLI is not installed.
+    echo Download from: https://cli.github.com/
     pause & exit /b 1
 )
-set TAG=v%VERSION%
 
-:: ── Update version in tauri.conf.json ────────────────────────────────────────
-echo Updating version to %VERSION% in tauri.conf.json...
-powershell -Command "(Get-Content 'src-tauri\tauri.conf.json') -replace '\"version\": \"[^\"]+\"', '\"version\": \"%VERSION%\"' | Set-Content 'src-tauri\tauri.conf.json'"
-powershell -Command "(Get-Content 'package.json') -replace '\"version\": \"[^\"]+\"', '\"version\": \"%VERSION%\"' | Set-Content 'package.json'"
+:: Read version from package.json automatically
+for /f "delims=" %%v in ('node -e "process.stdout.write(require('./package.json').version)"') do set VERSION=%%v
+if "!VERSION!"=="" (
+    echo ERROR: Could not read version from package.json.
+    pause & exit /b 1
+)
+set TAG=v!VERSION!
 
-:: ── Build ─────────────────────────────────────────────────────────────────────
+echo Version: !TAG! (set this in Settings before building)
 echo.
-echo Building FrameForge %TAG% (this takes 5-15 minutes)...
+set /p CONFIRM=Press Enter to build and release !TAG!, or Ctrl+C to cancel...
 echo.
-call npm run tauri build
+
+:: Initialize repo on GitHub if empty
+gh api repos/%GITHUB_REPO%/commits >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Repo is empty - creating initial commit...
+    if not exist ".git" git init
+    git remote remove origin >nul 2>&1
+    git remote add origin %GITHUB_URL%
+    echo # FrameForge > README.md
+    echo Warframe companion app. Download the latest installer from the Releases tab. >> README.md
+    git add README.md
+    git commit -m "Initial commit"
+    git branch -M main
+    git push -u origin main
+    del README.md
+)
+
+:: Push source code to GitHub before building
+echo Pushing source code to GitHub...
+git add -A
+git diff --cached --quiet
+if %errorlevel% neq 0 (
+    git commit -m "Release !TAG!"
+    git push origin main
+    if %errorlevel% neq 0 (
+        echo ERROR: git push failed. Check your remote and credentials.
+        pause & exit /b 1
+    )
+) else (
+    echo No source changes to commit, skipping push.
+)
+echo.
+
+:: Build
+echo Building FrameForge !TAG! - this takes 5-15 minutes...
+echo.
+call pnpm tauri build
 if %errorlevel% neq 0 (
     echo.
-    echo BUILD FAILED. Fix the errors above and try again.
+    echo BUILD FAILED - see errors above.
     pause & exit /b 1
 )
 
-:: ── Find the installer ────────────────────────────────────────────────────────
+:: Find the installer
 set EXE_PATH=
 for /r "src-tauri\target\release\bundle\nsis" %%f in (*setup.exe) do set EXE_PATH=%%f
-set MSI_PATH=
-for /r "src-tauri\target\release\bundle\msi" %%f in (*.msi) do set MSI_PATH=%%f
 
-if "%EXE_PATH%"=="" (
-    echo Could not find installer. Check src-tauri\target\release\bundle\
+if "!EXE_PATH!"=="" (
+    echo ERROR: Installer not found after build.
     pause & exit /b 1
 )
 
 echo.
-echo Build complete!
-echo   Installer: %EXE_PATH%
-if not "%MSI_PATH%"=="" echo   MSI:       %MSI_PATH%
-
-:: ── Git tag ───────────────────────────────────────────────────────────────────
+echo Found: !EXE_PATH!
 echo.
-echo Creating git tag %TAG%...
-git add package.json src-tauri\tauri.conf.json
-git commit -m "chore: bump version to %VERSION%"
-git tag %TAG%
-git push
-git push origin %TAG%
-
-:: ── GitHub Release ────────────────────────────────────────────────────────────
-echo.
-echo Publishing GitHub Release %TAG%...
-set NOTES=FrameForge %TAG%^
-
-^
-Changes in this release:^
-- See commit history for details.
-
-if not "%MSI_PATH%"=="" (
-    gh release create %TAG% "%EXE_PATH%" "%MSI_PATH%" --title "FrameForge %TAG%" --notes "FrameForge %TAG% — Windows installer" --latest
-) else (
-    gh release create %TAG% "%EXE_PATH%" --title "FrameForge %TAG%" --notes "FrameForge %TAG% — Windows installer" --latest
-)
+echo Uploading FrameForge !TAG! to GitHub...
+gh release create !TAG! "!EXE_PATH!" --repo %GITHUB_REPO% --title "FrameForge !TAG!" --notes "FrameForge !TAG! - Windows installer" --latest
 
 if %errorlevel% neq 0 (
     echo.
-    echo GitHub release failed. Is 'gh' installed and authenticated?
-    echo Install: https://cli.github.com/
-    echo Auth:    gh auth login
+    echo Upload failed. Run: gh auth login
     pause & exit /b 1
 )
 
 echo.
 echo ============================================
-echo  Done! FrameForge %TAG% released on GitHub.
+echo  Done! Share this link:
+echo  https://github.com/%GITHUB_REPO%/releases/latest
 echo ============================================
 pause

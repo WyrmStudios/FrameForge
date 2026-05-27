@@ -27,6 +27,8 @@ pub struct ScanResult {
     pub regions_scanned: usize,
     pub error: Option<String>,
     pub log_lines: Vec<String>,
+    /// 4 item paths when the relic reward screen is active, None otherwise.
+    pub relic_rewards: Option<Vec<String>>,
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -300,8 +302,8 @@ pub fn scan_auth_credentials(data: &[u8]) -> Option<(String, String)> {
         if !id_bytes.iter().all(|&b| b.is_ascii_hexdigit()) { search = next + 1; continue; }
         let account_id = std::str::from_utf8(id_bytes).unwrap_or("").to_string();
 
-        // Look for Nonce within 1024 bytes
-        let nonce_search_end = (id_start + 1024).min(data.len());
+        // Look for Nonce within 2048 bytes
+        let nonce_search_end = (id_start + 2048).min(data.len());
         if let Some(rel) = data[id_start..nonce_search_end].windows(nonce_key.len()).position(|w| w == *nonce_key) {
             let ns = id_start + rel + nonce_key.len();
             let ne = digits_end(data, ns);
@@ -328,12 +330,12 @@ pub fn scan_auth_credentials(data: &[u8]) -> Option<(String, String)> {
         let id_end = data[id_start..].iter().position(|&b| !b.is_ascii_hexdigit()).map(|p| id_start + p).unwrap_or(data.len());
         if id_end - id_start != 24 { search = next + 1; continue; }
         let account_id = std::str::from_utf8(&data[id_start..id_end]).unwrap_or("").to_string();
-        // Nonce must follow within 32 bytes and be 8+ digits
-        let nonce_search_end = (id_end + 32).min(data.len());
+        // Nonce can appear anywhere within 512 bytes after the accountId
+        let nonce_search_end = (id_end + 512).min(data.len());
         if let Some(rel) = data[id_end..nonce_search_end].windows(nk.len()).position(|w| w == *nk) {
             let ns = id_end + rel + nk.len();
             let ne = digits_end(data, ns);
-            if ne > ns && ne - ns >= 8 {
+            if ne > ns && ne - ns >= 5 {
                 if let Ok(nonce) = std::str::from_utf8(&data[ns..ne]) {
                     return Some((account_id, nonce.to_string()));
                 }
@@ -414,7 +416,7 @@ pub fn scan_warframe_memory(unique_names: &[String], display_names: &[String]) -
         return ScanResult {
             warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
             error: Some("No item paths loaded. Click 'Refresh item list' first.".to_string()),
-            log_lines: vec![],
+            log_lines: vec![], relic_rewards: None,
         };
     }
 
@@ -464,7 +466,7 @@ pub fn scan_warframe_memory(unique_names: &[String], display_names: &[String]) -
             Err(e) => return ScanResult {
                 warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
                 error: Some(format!("AC build error: {}", e)),
-                log_lines: vec![],
+                log_lines: vec![], relic_rewards: None,
             },
         }
     };
@@ -474,7 +476,7 @@ pub fn scan_warframe_memory(unique_names: &[String], display_names: &[String]) -
         None => return ScanResult {
             warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
             error: Some("Warframe is not running. Launch the game first.".to_string()),
-            log_lines: vec![],
+            log_lines: vec![], relic_rewards: None,
         },
     };
 
@@ -493,7 +495,7 @@ pub fn scan_warframe_memory(unique_names: &[String], display_names: &[String]) -
             return ScanResult {
                 warframe_running: true, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
                 error: Some("Cannot open Warframe process. Run as Administrator.".to_string()),
-                log_lines: vec![],
+                log_lines: vec![], relic_rewards: None,
             };
         }
 
@@ -645,7 +647,7 @@ pub fn scan_warframe_memory(unique_names: &[String], display_names: &[String]) -
         else { false }
     });
 
-    ScanResult { warframe_running: true, items_found, pending_recipes, mastery_rank, mastery_data: mastery_data_out, regions_scanned, error: None, log_lines }
+    ScanResult { warframe_running: true, items_found, pending_recipes, mastery_rank, mastery_data: mastery_data_out, regions_scanned, error: None, log_lines, relic_rewards: None }
 }
 
 #[cfg(target_os = "windows")]
@@ -693,6 +695,6 @@ pub fn scan_warframe_memory(_unique_names: &[String], _display_names: &[String])
     ScanResult {
         warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
         error: Some("Memory scanning is only supported on Windows.".to_string()),
-        log_lines: vec![],
+        log_lines: vec![], relic_rewards: None,
     }
 }

@@ -20,6 +20,8 @@ interface CraftingJob { unique_name: string; item_name: string; completion_ms: n
 
 interface Props {
   quantities: Record<string, number>;
+  /** API-only quantities — used for ownership checks (more reliable than scanner). */
+  apiQuantities: Record<string, number>;
   refreshKey: number;
   crafting: CraftingJob[];
 }
@@ -140,14 +142,18 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
 
 type SortMode = "name" | "ducats-owned" | "ducats-all" | "completion";
 
-export default function MarketHelper({ quantities, refreshKey, crafting }: Props) {
+export default function MarketHelper({ quantities, apiQuantities, refreshKey, crafting }: Props) {
   const [allItems, setAllItems]         = useState<CatalogItem[]>([]);
   const [wfmItems, setWfmItems]         = useState<WfmItem[]>([]);
   const [wfmLoading, setWfmLoading]     = useState(false);
   const [wfmError, setWfmError]         = useState(false);
   const [prices, setPrices]             = useState<Map<string, WfmPrice>>(new Map());
+  const [priceAges, setPriceAges]       = useState<Map<string, number>>(new Map()); // urlName → fetchedAt ms
   const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
   const [fetchedSets, setFetchedSets]   = useState<Set<string>>(new Set());
+
+  const PRICE_TTL = 60 * 60 * 1000; // 1 hour
+  const PRICE_CACHE_KEY = "ff-wfm-prices-v1";
   const [search, setSearch]             = useState("");
   const [sortMode, setSortMode]         = useState<SortMode>("ducats-owned");
 
@@ -161,32 +167,66 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
     invoke<CatalogItem[]>("get_all_items").then(setAllItems).catch(() => {});
   }, [refreshKey]);
 
+  // Load cached prices from localStorage on startup
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PRICE_CACHE_KEY);
+      if (!raw) return;
+      const data: Record<string, { sell_median?: number; ts: number }> = JSON.parse(raw);
+      const priceMap = new Map<string, WfmPrice>();
+      const ageMap   = new Map<string, number>();
+      for (const [urlName, entry] of Object.entries(data)) {
+        priceMap.set(urlName, { url_name: urlName, sell_median: entry.sell_median });
+        ageMap.set(urlName, entry.ts);
+      }
+      setPrices(priceMap);
+      setPriceAges(ageMap);
+    } catch {}
+  }, []); // eslint-disable-line
+
+  // Persist prices to localStorage whenever they change
+  useEffect(() => {
+    if (prices.size === 0) return;
+    const now = Date.now();
+    const data: Record<string, { sell_median?: number; ts: number }> = {};
+    for (const [urlName, price] of prices) {
+      data[urlName] = { sell_median: price.sell_median, ts: priceAges.get(urlName) ?? now };
+    }
+    try { localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify(data)); } catch {}
+  }, [prices]); // eslint-disable-line
+
   useEffect(() => {
     setWfmLoading(true);
     setWfmError(false);
-    fetch("https://api.warframe.market/v1/items", {
-      headers: { "Accept": "application/json", "Platform": "pc" }
-    })
-      .then(r => r.json())
-      .then(d => {
-        const items: WfmItem[] = (d?.payload?.items ?? []).map((i: any) => ({
-          item_name: i.item_name, url_name: i.url_name
-        }));
+    invoke<WfmItem[]>("fetch_wfm_items")
+      .then(items => {
         setWfmItems(items);
         if (!items.length) setWfmError(true);
       })
-      .catch(() => setWfmError(true))
+      .catch(() => { setWfmError(true); })
       .finally(() => setWfmLoading(false));
   }, []);
 
   const wfmLookup = useMemo(() => {
     const map = new Map<string, string>();
-    for (const w of wfmItems) map.set(normalizeForWfm(w.item_name), w.url_name);
+    for (const w of wfmItems) {
+      const key = normalizeForWfm(w.item_name);
+      map.set(key, w.url_name);
+      // Also map without "_blueprint" suffix so catalog names like
+      // "Atlas Prime Chassis" match WFM's "Atlas Prime Chassis Blueprint"
+      if (key.endsWith("_blueprint")) {
+        map.set(key.slice(0, -"_blueprint".length), w.url_name);
+      }
+    }
     return map;
   }, [wfmItems]);
 
   const primeItems = useMemo(() =>
-    allItems.filter(i => i.name.includes("Prime") && i.ducats != null),
+    allItems.filter(i =>
+      i.name.includes("Prime") &&
+      // Include items with known ducat value OR any blueprint (even if ducats not yet catalogued)
+      (i.ducats != null || i.name.endsWith("Blueprint"))
+    ),
   [allItems]);
 
   const parentItems = useMemo(() => {
@@ -198,6 +238,13 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
     return map;
   }, [allItems]);
 
+  // ducats lookup by name for fallback (e.g. "Chassis" → 15 so "Chassis Blueprint" also gets 15)
+  const ducatsByName = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of allItems) if (i.ducats != null) m.set(i.name, i.ducats);
+    return m;
+  }, [allItems]);
+
   const sets = useMemo(() => {
     const map = new Map<string, CatalogItem[]>();
     for (const item of primeItems) {
@@ -205,8 +252,52 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
     }
+
+    for (const [key, parts] of map) {
+      // 1. Dedup by display label — keep the item with ducats; drop the bare version
+      //    when a blueprint counterpart exists (e.g. remove "Chassis" when "Chassis Blueprint" exists)
+      const byLabel = new Map<string, CatalogItem>();
+      for (const part of parts) {
+        const label = partLabel(part.name, key);
+        const existing = byLabel.get(label);
+        if (!existing || (part.ducats != null && existing.ducats == null)) {
+          byLabel.set(label, part);
+        }
+      }
+      // 2. Remove built component rows when a Blueprint variant exists in the set.
+      //    Exclude the plain "Blueprint" label itself — that's the main warframe blueprint,
+      //    not a "something Blueprint" compound — so it must never be removed.
+      const bpBaseLabels = new Set(
+        [...byLabel.keys()]
+          .filter(l => l.endsWith("Blueprint") && l !== "Blueprint")
+          .map(l => l.replace(/ Blueprint$/, ""))
+      );
+      const deduped = [...byLabel.values()].filter(p => !bpBaseLabels.has(partLabel(p.name, key)));
+
+      // 3. Inherit ducats from base component when blueprint lacks them.
+      //    "Chassis Blueprint" inherits from "Revenant Prime Chassis" (15 ducats).
+      const augmented = deduped.map(p => {
+        if (p.ducats != null) return p;
+        if (p.name.endsWith("Blueprint")) {
+          const baseName = p.name.replace(/ Blueprint$/, "");
+          const d = ducatsByName.get(baseName) ?? ducatsByName.get(`${key} ${baseName.slice(key.length).trim()}`);
+          if (d != null) return { ...p, ducats: d };
+        }
+        return p;
+      });
+
+      // 4. Drop parts that still have no ducat value after inheritance — these are
+      //    exalted weapon blueprints (Talons, Artemis Bow…) that are not relic drops.
+      const finalParts = augmented.filter(p => p.ducats != null);
+
+      // 5. Remove sets that end up with 0 tradeable parts — these are exalted abilities
+      //    (Artemis Bow Prime, Balefire Charger Prime…) or single-unit extractors that
+      //    aren't obtainable from relics. An empty set trivially shows as "Complete".
+      if (finalParts.length === 0) { map.delete(key); continue; }
+      map.set(key, finalParts);
+    }
     return map;
-  }, [primeItems]);
+  }, [primeItems, allItems, ducatsByName]);
 
   const totalDucats = useMemo(() =>
     primeItems.reduce((s, i) => s + (i.ducats ?? 0) * (quantities[i.unique_name] ?? 0), 0),
@@ -216,6 +307,17 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
     primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (quantities[i.unique_name] ?? 0) - 1), 0),
   [primeItems, quantities]);
 
+  // Fetch price for a single URL — sequential within each set to avoid rate limiting
+  const fetchOnePrice = useCallback(async (urlName: string) => {
+    try {
+      const price = await invoke<{ url_name: string; sell_median?: number }>("fetch_wfm_price", { urlName });
+      const now = Date.now();
+      setPrices(prev => new Map(prev).set(urlName, { url_name: urlName, sell_median: price.sell_median }));
+      setPriceAges(prev => new Map(prev).set(urlName, now));
+    } catch {}
+    setLoadingPrices(prev => { const n = new Set(prev); n.delete(urlName); return n; });
+  }, []);
+
   const fetchPricesForSet = useCallback(async (setKey: string, parts: CatalogItem[]) => {
     if (fetchedSets.has(setKey)) return;
     setFetchedSets(prev => new Set(prev).add(setKey));
@@ -223,44 +325,55 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
     const setUrl = wfmLookup.get(normalizeForWfm(setKey + " Set"));
     if (setUrl) urls.push(setUrl);
     for (const p of parts) {
-      const url = wfmLookup.get(normalizeForWfm(p.name));
+      const key = normalizeForWfm(p.name);
+      const url = wfmLookup.get(key);
       if (url && !urls.includes(url)) urls.push(url);
     }
-    setLoadingPrices(prev => { const n = new Set(prev); urls.forEach(u => n.add(u)); return n; });
-    await Promise.all(urls.map(async (urlName) => {
-      try {
-        const r = await fetch(
-          `https://api.warframe.market/v1/items/${urlName}/statistics`,
-          { headers: { "Accept": "application/json", "Platform": "pc" } }
-        );
-        const d = await r.json();
-        const h48: any[] = d?.payload?.statistics_closed?.["48hours"] ?? [];
-        const h90: any[] = d?.payload?.statistics_closed?.["90days"] ?? [];
-        const last = h48.length ? h48[h48.length - 1] : h90.length ? h90[h90.length - 1] : null;
-        const sell_median = last?.median ?? undefined;
-        setPrices(prev => new Map(prev).set(urlName, { url_name: urlName, sell_median }));
-      } catch {}
-      setLoadingPrices(prev => { const n = new Set(prev); n.delete(urlName); return n; });
-    }));
-  }, [wfmLookup, fetchedSets]);
+    // Only fetch URLs that are missing or stale (older than 1 hour)
+    const now = Date.now();
+    const staleUrls = urls.filter(u => {
+      const age = priceAges.get(u);
+      return !age || now - age > PRICE_TTL;
+    });
+    if (staleUrls.length === 0) return; // All prices are fresh from cache
+    setLoadingPrices(prev => { const n = new Set(prev); staleUrls.forEach(u => n.add(u)); return n; });
+    for (const urlName of staleUrls) {
+      await fetchOnePrice(urlName);
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }, [wfmLookup, fetchedSets, fetchOnePrice, priceAges, PRICE_TTL]);
 
   const ownedSetCount = useMemo(() =>
     Array.from(sets.entries()).filter(([_, p]) => p.some(i => (quantities[i.unique_name] ?? 0) > 0)).length,
   [sets, quantities]);
 
   useEffect(() => {
-    if (wfmLookup.size === 0 || ownedSetCount === 0) return;
-    const ownedSets = Array.from(sets.entries())
-      .filter(([_, parts]) => parts.some(p => (quantities[p.unique_name] ?? 0) > 0));
-    let i = 0;
-    const fetchBatch = async () => {
-      const batch = ownedSets.slice(i, i + 5);
-      if (batch.length === 0) return;
-      i += 5;
-      await Promise.all(batch.map(([key, parts]) => fetchPricesForSet(key, parts)));
-      if (i < ownedSets.length) setTimeout(fetchBatch, 600);
+    if (wfmLookup.size === 0) return;
+
+    const allSetsArr = Array.from(sets.entries());
+    const owned = allSetsArr.filter(([_, p]) => p.some(i => (quantities[i.unique_name] ?? 0) > 0));
+    const others = allSetsArr.filter(([_, p]) => !p.some(i => (quantities[i.unique_name] ?? 0) > 0));
+
+    let cancelled = false;
+
+    const runBatch = async (items: [string, CatalogItem[]][], batchSize: number, delay: number) => {
+      for (let i = 0; i < items.length; i += batchSize) {
+        if (cancelled) break;
+        const batch = items.slice(i, i + batchSize);
+        await Promise.all(batch.map(([key, parts]) => fetchPricesForSet(key, parts)));
+        if (i + batchSize < items.length) await new Promise(r => setTimeout(r, delay));
+      }
     };
-    fetchBatch();
+
+    const run = async () => {
+      // Phase 1: owned sets — batch 2, 800ms between batches
+      await runBatch(owned, 2, 800);
+      // Phase 2: everything else — 1 at a time, 3s apart (background, low priority)
+      if (!cancelled) await runBatch(others, 1, 3000);
+    };
+
+    run();
+    return () => { cancelled = true; };
   }, [wfmLookup.size, ownedSetCount]); // eslint-disable-line
 
   const visibleSets = useMemo(() => {
@@ -272,7 +385,9 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
         const hasDupes    = parts.some(p => (quantities[p.unique_name] ?? 0) > 1);
         const isComplete  = parts.every(p => (quantities[p.unique_name] ?? 0) > 0);
         const parent      = parentItems.get(key);
-        const isFullOwned = parent ? (quantities[parent.unique_name] ?? 0) > 0 : false;
+        // Use API-only quantities for ownership — the scanner can pick up warframe
+        // paths from navigation/showcase screens and create false positives.
+        const isFullOwned = parent ? (apiQuantities[parent.unique_name] ?? 0) > 0 : false;
         if (filterHasParts  && !ownedAny)    return false;
         if (filterDupes     && !hasDupes)    return false;
         if (filterComplete  && !isComplete)  return false;
@@ -317,10 +432,9 @@ export default function MarketHelper({ quantities, refreshKey, crafting }: Props
           <button className={`fchip ${sortMode === "completion"  ? "fchip-on" : ""}`} onClick={() => setSortMode("completion")}>% Complete</button>
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visibleSets.length} sets</span>
           <HelpTip items={[
-            { swatch: "rgba(240,192,64,.4)",  label: "Gold card border",  desc: "All parts owned — complete set" },
-            { icon: "✓",  label: "✓ Complete badge", desc: "All prime parts are in your inventory" },
-            { icon: "+",  label: "+ Dupes badge",    desc: "You own extra copies of at least one part" },
-            { icon: "⚒",  label: "⚒ Foundry badge",  desc: "The item is currently building" },
+            { swatch: "rgba(240,192,64,.5)", icon: "✓", label: "Complete set", desc: "Gold border + ✓ — all parts in inventory" },
+            { icon: "+",  label: "+ Dupes",    desc: "Extra copies of at least one part" },
+            { icon: "⚒",  label: "⚒ Building", desc: "Item is currently crafting in Foundry" },
           ]} />
         </div>
       </div>

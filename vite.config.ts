@@ -4,15 +4,35 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
-// https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+
+  build: {
+    // Use terser for more aggressive minification in production builds
+    minify: "terser",
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+        passes: 2,
+      },
+      mangle: {
+        // Mangle top-level names (functions, classes, variables)
+        toplevel: true,
+        // Mangle property names that start with _ (private convention)
+        properties: {
+          regex: /^_/,
+        },
+      },
+      format: {
+        // Remove all comments from the output
+        comments: false,
+      },
+    },
+  },
+
   server: {
     port: 1420,
     strictPort: true,
@@ -25,7 +45,6 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
   },

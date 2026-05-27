@@ -27,11 +27,18 @@ interface CraftingJob {
   completion_ms: number;
 }
 
+interface ArchonShard { type: string; tauforged: boolean; color: string; boost?: string; }
+
 interface Props {
   quantities: Record<string, number>;
   masteryData: Record<string, number>;
   refreshKey: number;
   crafting: CraftingJob[];
+  colorblindMode?: boolean;
+  subsummedWarframes?: Set<string>;
+  archonShards?: Record<string, ArchonShard[]>;
+  tracked: string[];
+  onTrackToggle: (id: string) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -43,7 +50,7 @@ function collectNeeds(
   multiplier: number,
   acc: Map<string, { name: string; needed: number }>
 ) {
-  for (const node of nodes) {
+  for (const node of mergeComponents(nodes)) {
     const resultCount = node.result_count ?? 1;
     const craftsNeeded = Math.ceil((node.count * multiplier) / resultCount);
     if (node.components.length === 0) {
@@ -60,10 +67,26 @@ function collectNeeds(
 type CompStatus = "none" | "blueprint" | "part";
 
 function compStatus(comp: RecipeComponent, quantities: Record<string, number>): CompStatus {
-  if ((quantities[comp.unique_name] ?? 0) > 0) return "part";
+  // Check against the required count, not just > 0 (e.g. 2x Bolto: need qty >= 2)
+  if ((quantities[comp.unique_name] ?? 0) >= (comp.count || 1)) return "part";
   const bpUnique = comp.components[0]?.unique_name;
   if (bpUnique && (quantities[bpUnique] ?? 0) > 0) return "blueprint";
   return "none";
+}
+
+/** Merge recipe components that share the same unique_name, summing their counts.
+ *  Some recipes (e.g. Akbolto needing 2x Bolto) list the same item twice. */
+function mergeComponents(comps: RecipeComponent[]): RecipeComponent[] {
+  const seen = new Map<string, RecipeComponent>();
+  for (const c of comps) {
+    const existing = seen.get(c.unique_name);
+    if (existing) {
+      seen.set(c.unique_name, { ...existing, count: existing.count + c.count });
+    } else {
+      seen.set(c.unique_name, { ...c });
+    }
+  }
+  return [...seen.values()];
 }
 
 function isLichWeapon(item: CatalogItem): boolean {
@@ -71,6 +94,49 @@ function isLichWeapon(item: CatalogItem): boolean {
 }
 
 // ─── Relic helpers ────────────────────────────────────────────────────────────
+
+function ArchonCrystalIcon({ shards }: { shards: ArchonShard[] }) {
+  if (!shards || shards.length === 0) return null;
+  try {
+    const lines = shards.map(s =>
+      `${s.tauforged ? "✦ " : ""}${s.type}${s.boost ? ` — ${s.boost}` : ""}`
+    ).join("\n");
+    const dominant = shards[0]?.color ?? "#88ccff";
+    return (
+      <span
+        className="craft-icon-tag craft-icon-archon"
+        title={`Archon Shards:\n${lines}`}
+        style={{ borderColor: dominant, background: dominant + "22" }}
+      >
+        {/* Hexagon gem matching the 18×18 tag size */}
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ display: "block" }}>
+          <polygon points="8,1 14,4.5 14,11.5 8,15 2,11.5 2,4.5"
+            fill={dominant + "44"} stroke={dominant} strokeWidth="1.2"/>
+          <polygon points="8,4.5 11,6.5 11,10.5 8,12.5 5,10.5 5,6.5"
+            fill={dominant + "66"}/>
+          {shards.length > 1 && (
+            <text x="8" y="9" textAnchor="middle" dominantBaseline="middle"
+              fill="#fff" fontSize="5" fontWeight="bold">{shards.length}</text>
+          )}
+        </svg>
+      </span>
+    );
+  } catch {
+    return null;
+  }
+}
+
+function HelminthIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="6.5" cy="6.5" r="5.5" fill="#1a3d1a" stroke="#5fbf4f" strokeWidth="1"/>
+      <ellipse cx="6.5" cy="8" rx="3" ry="1.5" fill="#5fbf4f" opacity="0.8"/>
+      <circle cx="4.5" cy="5.5" r="1" fill="#5fbf4f"/>
+      <circle cx="8.5" cy="5.5" r="1" fill="#5fbf4f"/>
+      <path d="M4 8 L4.5 9.2 M5 8 L5 9.2 M6 7.8 L6 9.2 M7 7.8 L7 9.2 M8 8 L7.5 9.2 M9 8 L8.5 9.2" stroke="#1a3d1a" strokeWidth="0.5"/>
+    </svg>
+  );
+}
 
 function RelicIcon() {
   return (
@@ -158,7 +224,7 @@ function TreeNode({ node, quantities, depth }: {
         </span>
         {!enough && <span className="recipe-shortage">−{fmt(node.count - owned)}</span>}
       </div>
-      {hasChildren && open && node.components.map((child, i) => (
+      {hasChildren && open && mergeComponents(node.components).map((child, i) => (
         <TreeNode key={i} node={child} quantities={quantities} depth={depth + 1} />
       ))}
     </div>
@@ -229,7 +295,7 @@ function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, cr
               ) : recipe.length === 0 ? (
                 <div className="empty-msg">No recipe data.</div>
               ) : mode === "tree" ? (
-                recipe.map((node, i) => <TreeNode key={i} node={node} quantities={quantities} depth={0} />)
+                mergeComponents(recipe).map((node, i) => <TreeNode key={i} node={node} quantities={quantities} depth={0} />)
               ) : needs.length === 0 ? (
                 <div className="empty-msg">✓ You have everything needed.</div>
               ) : (
@@ -257,15 +323,18 @@ function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, cr
 
 // ─── Craft card ───────────────────────────────────────────────────────────────
 
-function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryData, crafting, isTracked, onTrack, onOpen }: {
+function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryData, crafting, isTracked, onTrack, onOpen, subsummedWarframes, archonShards }: {
   item: CatalogItem; recipe: RecipeComponent[] | null;
   quantities: Record<string, number>; relicDrops: Record<string, string[]>;
   relicNames: Record<string, string>; masteryData: Record<string, number>;
   crafting: CraftingJob[]; isTracked: boolean; onTrack: () => void; onOpen: () => void;
+  subsummedWarframes: Set<string>; archonShards: Record<string, ArchonShard[]>;
 }) {
   const isOwned    = (quantities[item.unique_name] ?? 0) > 0;
   const rank       = masteryData[item.unique_name];
   const isMastered = rank != null && rank >= 30;
+  const isSubsumed  = item.category === "Warframes" && subsummedWarframes.has(item.unique_name);
+  const shards      = item.category === "Warframes" ? (archonShards[item.unique_name] ?? []) : [];
   // Memory scanner stores the recipe/blueprint path; catalog uses the result-item path.
   // Check both so items like Forma (recipe path ≠ item path) still get the badge.
   const isCrafting = crafting.some(c =>
@@ -273,54 +342,61 @@ function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryDa
     (recipe && recipe.length > 0 && recipe[0].unique_name === c.unique_name)
   );
   const isKuva     = isLichWeapon(item);
-  const allParts   = recipe && recipe.length > 0 && recipe.every(c => compStatus(c, quantities) === "part");
+  const mergedRecipe = recipe ? mergeComponents(recipe) : recipe;
+  // ⚡ Ready = you have every ingredient itself (not just its blueprint).
+  const allParts = mergedRecipe && mergedRecipe.length > 0 && mergedRecipe.every(c =>
+    (quantities[c.unique_name] ?? 0) >= (c.count || 1)
+  );
 
   return (
     <div
       className={`craft-card${isOwned ? " craft-card-owned" : ""}${allParts && !isOwned ? " craft-card-ready" : ""}`}
       onClick={onOpen}
     >
-      {/* Left: image + star + vault */}
-      <div className="craft-card-left">
-        <div className="craft-img-wrap">
-          <ItemImg imageName={item.image_name} category={item.category} size={48} />
-          {isMastered && <span className="craft-mastered-overlay" title="Mastered">★</span>}
-        </div>
-        {item.vaulted === true  && <span className="vault-badge vault-yes">🔒 Vaulted</span>}
-        {item.vaulted === false && <span className="vault-badge vault-no">🔓 Unvaulted</span>}
-        <button className={`craft-star ${isTracked ? "tracked" : ""}`}
-          title={isTracked ? "Untrack" : "Track"}
-          onClick={e => { e.stopPropagation(); onTrack(); }}>
-          {isTracked ? "★" : "☆"}
-        </button>
-        {item.mastery_req != null && item.mastery_req > 0 && (
-          <span className="craft-mr-req" title={`Requires MR ${item.mastery_req}`}>MR {item.mastery_req}</span>
-        )}
+      {/* Col 1, rows 1-4: image block with star/wiki/name overlaid */}
+      <div className="cc-image">
+        <ItemImg imageName={item.image_name} category={item.category} size={78} />
+        <button className={`cc-star ${isTracked ? "tracked" : ""}`}
+          onClick={e => { e.stopPropagation(); onTrack(); }}>{isTracked ? "★" : "☆"}</button>
+        <button className="cc-wiki"
+          onClick={e => { e.stopPropagation(); invoke("plugin:opener|open_url", { url:`https://wiki.warframe.com/w/${item.name.replace(" Blueprint","").replace(/\s+/g,"_")}` }).catch(()=>{}); }}>wiki</button>
+        <span className="cc-name">{item.name}</span>
       </div>
 
-      {/* Right: name + badges + component rows */}
-      <div className="craft-card-right">
-        <div className="craft-card-name">
-          {item.name}
-          {isOwned    && <span className="craft-owned-tag">✓ Owned</span>}
-          {isMastered && <span className="craft-mastered-tag">★ Mastered</span>}
-          {isOwned && !isMastered && rank != null && <span className="craft-rank-tag">R{rank}</span>}
-          {isCrafting && <span className="craft-foundry-badge" title="Currently building in Foundry">⚒</span>}
-          {isKuva     && <span className="craft-kuva-tag">🔱 Lich/Sister</span>}
-        </div>
+      {/* Col 1, row 5: MR requirement */}
+      <div className="cc-mr">
+        {item.mastery_req != null && item.mastery_req > 0 &&
+          <span className="craft-mr-req">MR {item.mastery_req}</span>}
+      </div>
 
+      {/* Col 1, row 6: vault / kuva badges */}
+      <div className="cc-badges">
+        {item.vaulted === true  && <span className="vault-badge vault-yes">🔒 Vaulted</span>}
+        {item.vaulted === false && <span className="vault-badge vault-no">🔓 Unvaulted</span>}
+        {isKuva && <span className="craft-icon-tag craft-icon-kuva" title="Lich/Sister">🔱</span>}
+      </div>
+
+      {/* Col 1, row 7: status tags */}
+      <div className="cc-tags">
+        {isMastered && <span className="craft-icon-tag craft-icon-mastered" title="Mastered">★</span>}
+        {isOwned && !isMastered && rank != null && <span className="craft-icon-tag craft-icon-rank">R{rank}</span>}
+        {isCrafting  && <span className="craft-icon-tag craft-icon-foundry" title="Building">⚒</span>}
+        {isSubsumed  && <span className="craft-icon-tag craft-icon-helminth" title="Subsumed"><HelminthIcon /></span>}
+        {shards.length > 0 && <ArchonCrystalIcon shards={shards} />}
+        {isOwned     && <span className="foundry-cb-badge foundry-cb-owned">✓✓</span>}
+        {!isOwned && allParts && <span className="foundry-cb-badge foundry-cb-ready">⚡</span>}
+      </div>
+
+      {/* Col 2, rows 1-7: ingredient list — rows grow to fill available height */}
+      <div className="cc-ingredients">
         {recipe === null ? (
-          <div className="craft-card-loading">Loading…</div>
+          <div className="comp-row-loading">Loading…</div>
         ) : recipe.length === 0 ? (
-          <div className="craft-card-loading">No recipe data</div>
-        ) : isKuva ? (
-          <div className="craft-card-loading">Obtained via Lich / Sister — not crafted</div>
+          <div className="comp-row-loading">No recipe</div>
         ) : (
-          <div className="comp-rows">
-            {recipe.map((comp, i) => (
-              <CompRow key={i} comp={comp} quantities={quantities} relicDrops={relicDrops} relicNames={relicNames} />
-            ))}
-          </div>
+          mergedRecipe!.map((comp, i) => (
+            <CompRow key={i} comp={comp} quantities={quantities} relicDrops={relicDrops} relicNames={relicNames} />
+          ))
         )}
       </div>
     </div>
@@ -334,7 +410,7 @@ const CRAFT_CATEGORIES = [
   "Companions", "Archwing", "Blueprints", "Misc",
 ];
 
-export default function Foundry({ quantities, masteryData, refreshKey, crafting }: Props) {
+export default function Foundry({ quantities, masteryData, refreshKey, crafting, subsummedWarframes = new Set(), archonShards = {}, tracked, onTrackToggle }: Props) {
   const [craftable, setCraftable] = useState<CatalogItem[]>([]);
   const [search, setSearch]       = useState("");
   const [activeCat, setActiveCat] = useState("Warframes");
@@ -352,15 +428,6 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting 
   const [filterOwned,      setFilterOwned]       = useState(false);
   const [filterUnowned,    setFilterUnowned]     = useState(false);
   const [filterReady,      setFilterReady]       = useState(false);
-
-  // Tracking
-  const [tracked, setTracked] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("ff-tracked") ?? "[]"); } catch { return []; }
-  });
-  const [trackedRecipes, setTrackedRecipes] = useState<Map<string, RecipeComponent[]>>(new Map());
-  const [trackingView, setTrackingView] = useState<"need" | "all">("need");
-
-  useEffect(() => { localStorage.setItem("ff-tracked", JSON.stringify(tracked)); }, [tracked]);
 
   useEffect(() => {
     invoke<CatalogItem[]>("get_craftable_items").then(setCraftable).catch(() => setCraftable([]));
@@ -396,7 +463,7 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting 
         const r = recipes.get(i.unique_name);
         if (!r || r.length === 0) return false;
         if ((quantities[i.unique_name] ?? 0) > 0) return false;
-        return r.every(c => compStatus(c, quantities) === "part");
+        return mergeComponents(r).every(c => (quantities[c.unique_name] ?? 0) >= (c.count || 1));
       });
   }, [craftable, activeCat, search, filterPrime, filterVaulted, filterUnvaulted,
       filterMastered, filterUnmastered, filterOwned, filterUnowned, filterReady,
@@ -433,46 +500,8 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting 
   }, [modalItem]);
 
   const toggleTrack = useCallback((item: CatalogItem) => {
-    setTracked(prev =>
-      prev.includes(item.unique_name) ? prev.filter(id => id !== item.unique_name) : [...prev, item.unique_name]
-    );
-  }, []);
-
-  // Load tracked recipes
-  useEffect(() => {
-    const toLoad = tracked.filter(id => !trackedRecipes.has(id));
-    setTrackedRecipes(prev => {
-      const next = new Map(prev);
-      for (const k of next.keys()) if (!tracked.includes(k)) next.delete(k);
-      return next;
-    });
-    if (toLoad.length === 0) return;
-    Promise.all(
-      toLoad.map(id =>
-        invoke<RecipeComponent[]>("get_recipe", { uniqueName: id })
-          .then(r => [id, r ?? []] as [string, RecipeComponent[]])
-          .catch(() => [id, []] as [string, RecipeComponent[]])
-      )
-    ).then(results => {
-      setTrackedRecipes(prev => {
-        const next = new Map(prev);
-        for (const [id, r] of results) if (r.length) next.set(id, r);
-        return next;
-      });
-    });
-  }, [tracked]);
-
-  const totalNeeds = useMemo(() => {
-    const acc = new Map<string, { name: string; needed: number }>();
-    for (const r of trackedRecipes.values()) collectNeeds(r, 1, acc);
-    return Array.from(acc.entries())
-      .map(([unique_name, { name, needed }]) => ({
-        unique_name, name, needed,
-        owned: quantities[unique_name] ?? 0,
-        shortage: Math.max(0, needed - (quantities[unique_name] ?? 0)),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [trackedRecipes, quantities]);
+    onTrackToggle(item.unique_name);
+  }, [onTrackToggle]);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -538,13 +567,13 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting 
           <button className={`fchip ${filterUnmastered? "fchip-on" : ""}`} onClick={() => setFilterUnmastered(v => !v)}>☆ Unmastered</button>
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visible.length} items</span>
           <HelpTip items={[
-            { swatch: "rgba(240,192,64,.4)",  label: "Gold card border", desc: "✓ Item already built and owned" },
-            { swatch: "rgba(56,139,253,.4)",  label: "Blue card border", desc: "⚡ Ready to craft — all parts collected" },
-            { swatch: "rgba(240,192,64,.35)", label: "Gold comp row",    desc: "Blueprint owned" },
-            { swatch: "rgba(63,185,80,.35)",  label: "Green comp row",   desc: "Part / component owned" },
-            { icon: "★",  label: "★ on image",  desc: "Mastered — item levelled to rank 30" },
-            { icon: "⚒",  label: "⚒ badge",     desc: "Currently building in Foundry" },
-            { icon: "MR", label: "MR{n} badge", desc: "Required Mastery Rank to use" },
+            { swatch: "rgba(240,192,64,.5)", icon: "✓✓", label: "Owned",          desc: "Gold border + ✓✓ — item built and in inventory" },
+            { swatch: "rgba(56,139,253,.5)", icon: "⚡",  label: "Ready to craft", desc: "Blue border + ⚡ — all parts collected" },
+            { swatch: "rgba(240,192,64,.4)", icon: "BP",  label: "Blueprint",      desc: "Gold comp row — blueprint in inventory" },
+            { swatch: "rgba(63,185,80,.4)",  icon: "✓",   label: "Part owned",     desc: "Green comp row — component in inventory" },
+            { icon: "★",  label: "★ Mastered", desc: "Item levelled to rank 30" },
+            { icon: "⚒",  label: "⚒ Building", desc: "Currently crafting in the Foundry" },
+            { icon: "MR", label: "MR{n}",       desc: "Required Mastery Rank to use" },
           ]} />
         </div>
 
@@ -567,72 +596,14 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting 
               isTracked={tracked.includes(item.unique_name)}
               onTrack={() => toggleTrack(item)}
               onOpen={() => setModalItem(item)}
+
+              subsummedWarframes={subsummedWarframes}
+              archonShards={archonShards}
             />
           ))}
         </div>
       </div>
 
-      {/* ── Col 3: Tracking panel ── */}
-      <div className="foundry-tracking">
-        <div className="tracking-header-row">
-          <span className="tracking-title">Tracking {tracked.length > 0 ? `(${tracked.length})` : ""}</span>
-        </div>
-
-        {tracked.length === 0 ? (
-          <div className="tracking-empty">Star ☆ items to track them.</div>
-        ) : (
-          <>
-            <div className="foundry-tracked-list">
-              {tracked.map(id => {
-                const item = craftable.find(c => c.unique_name === id);
-                if (!item) return null;
-                const recipe = trackedRecipes.get(id);
-                const isOwned = (quantities[item.unique_name] ?? 0) > 0;
-                const allDone = recipe && recipe.length > 0 && recipe.every(c => compStatus(c, quantities) === "part");
-                return (
-                  <div key={id}
-                    className={`tracking-item${isOwned ? " tracking-owned" : allDone ? " tracking-ready" : ""}`}
-                    onClick={() => setModalItem(item)}>
-                    <ItemImg imageName={item.image_name} category={item.category} size={28} />
-                    <span className="tracking-item-name">{item.name}</span>
-                    <span className="tracking-item-status">{isOwned ? "✓" : allDone ? "⚡" : ""}</span>
-                    <button className="foundry-untrack-btn"
-                      onClick={e => { e.stopPropagation(); toggleTrack(item); }}>×</button>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="tracking-req-header">
-              <span className="tracking-req-title">Requirements</span>
-              <div className="tracking-toggle">
-                <button className={`tracking-toggle-btn ${trackingView === "need" ? "active" : ""}`} onClick={() => setTrackingView("need")}>Missing</button>
-                <button className={`tracking-toggle-btn ${trackingView === "all" ? "active" : ""}`} onClick={() => setTrackingView("all")}>All</button>
-              </div>
-            </div>
-
-            <div className="foundry-totals-list">
-              {totalNeeds.length === 0 ? (
-                <div className="tracking-all-good">✓ All resources covered</div>
-              ) : (
-                totalNeeds
-                  .filter(r => trackingView === "all" || r.shortage > 0)
-                  .map(r => (
-                    <div key={r.unique_name} className={`foundry-total-row ${r.shortage > 0 ? "total-missing" : "total-ok"}`}>
-                      <span className="foundry-total-name">{r.name}</span>
-                      <span className="foundry-total-counts">
-                        <span className={r.shortage === 0 ? "qty-have" : "qty-need"}>{fmt(r.owned)}</span>
-                        <span className="qty-sep">/</span>
-                        <span className="qty-required">{fmt(r.needed)}</span>
-                        {r.shortage > 0 && <span className="recipe-shortage">−{fmt(r.shortage)}</span>}
-                      </span>
-                    </div>
-                  ))
-              )}
-            </div>
-          </>
-        )}
-      </div>
     </div>
   );
 }

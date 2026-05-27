@@ -43,6 +43,102 @@ pub struct FetchResult {
     pub relic_drops: HashMap<String, Vec<String>>,
     /// relic unique_name → 6 rewards sorted Bronze×3, Silver×2, Gold×1
     pub relic_rewards: HashMap<String, Vec<RelicReward>>,
+    /// blueprint_unique → (display name, ducats)
+    /// Built from ExportRecipes × WFCD display_names. Used to enrich the frontend catalog.
+    pub blueprint_names: HashMap<String, (String, Option<u32>)>,
+    /// Canonical relic reward display names from the Warframe Wiki Module:Void.
+    /// Lower-cased. Used as a name-based whitelist for the overlay catalog so that
+    /// path-mismatch issues between ExportRecipes and WFCD never exclude a valid reward.
+    pub wiki_reward_names: HashSet<String>,
+}
+
+/// Fetch the complete list of relic reward display names from the Warframe Wiki's
+/// Module:Void Lua table via the MediaWiki API.
+/// Returns a set of lower-cased names like "xaku prime neuroptics blueprint".
+fn fetch_wiki_reward_names() -> HashSet<String> {
+    let mut names: HashSet<String> = HashSet::new();
+
+    // ── Source A: Module:Void wikitext ────────────────────────────────────────
+    // Structured Lua table with Item + Part fields per relic reward entry.
+    let url_mod = "https://wiki.warframe.com/api.php?\
+                   action=parse&page=Module:Void&prop=wikitext&format=json";
+    if let Some(body) = ureq::get(url_mod)
+        .set("User-Agent", "WarframeCompanion/0.1")
+        .call().ok()
+        .and_then(|r| r.into_string().ok())
+    {
+        let wikitext = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["parse"]["wikitext"]["*"].as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        let item_re  = regex::Regex::new(r#"Item\s*=\s*"([^"]+)""#).unwrap();
+        let part_re  = regex::Regex::new(r#"Part\s*=\s*"([^"]+)""#).unwrap();
+        let block_re = regex::Regex::new(r"\{([^}]+)\}").unwrap();
+        for block in block_re.captures_iter(&wikitext) {
+            let content = &block[1];
+            if let (Some(im), Some(pm)) = (item_re.captures(content), part_re.captures(content)) {
+                let item = im[1].trim();
+                let part = pm[1].trim();
+                let full = if part == "Blueprint" {
+                    format!("{} Blueprint", item)
+                } else {
+                    format!("{} {}", item, part)
+                };
+                names.insert(full.to_lowercase());
+            }
+        }
+    }
+
+    // ── Source B: Void_Relic/ByRelic rendered HTML ────────────────────────────
+    // This page lists every relic with its Common / Uncommon / Rare reward columns.
+    // We extract all linked item names from the rendered HTML — these are the
+    // canonical display names used on the reward selection screen.
+    let url_br = "https://wiki.warframe.com/api.php?\
+                  action=parse&page=Void_Relic/ByRelic&prop=text&format=json";
+    if let Some(html) = ureq::get(url_br)
+        .set("User-Agent", "WarframeCompanion/0.1")
+        .call().ok()
+        .and_then(|r| r.into_string().ok())
+        .and_then(|b| {
+            serde_json::from_str::<serde_json::Value>(&b).ok()
+                .and_then(|v| v["parse"]["text"]["*"].as_str().map(|s| s.to_string()))
+        })
+    {
+        // Extract text from anchor tags inside table cells.
+        // Reward names appear as <a ...>Item Name</a> in the Common/Uncommon/Rare columns.
+        // We capture every linked name that looks like a relic reward:
+        //   • contains "Prime"
+        //   • starts with "Forma"
+        //   • ends with "Blueprint" or a known component suffix
+        let link_re = regex::Regex::new(r#">([^<]{4,60})</a>"#).unwrap();
+        for cap in link_re.captures_iter(&html) {
+            let text = cap[1].trim();
+            let lower = text.to_lowercase();
+            let is_reward = lower.contains("prime")
+                || lower.starts_with("forma")
+                || lower.ends_with("blueprint")
+                || lower.ends_with("neuroptics")
+                || lower.ends_with("chassis")
+                || lower.ends_with("systems")
+                || lower.ends_with("barrel")
+                || lower.ends_with("receiver")
+                || lower.ends_with("stock")
+                || lower.ends_with("handle")
+                || lower.ends_with("blade")
+                || lower.ends_with("carapace")
+                || lower.ends_with("cerebrum")
+                || lower.ends_with("disc")
+                || lower.ends_with("pouch")
+                || lower.ends_with("gauntlet")
+                || lower.ends_with("wings");
+            if is_reward {
+                names.insert(lower);
+            }
+        }
+    }
+
+    names
 }
 
 pub fn fetch_items() -> Result<FetchResult, String> {
@@ -94,7 +190,12 @@ struct ExportRecipe {
 /// Fetch ExportRecipes from warframe-public-export-plus (stable URL, pre-processed, always current).
 /// Returns a map from resultType (= what gets crafted) → ExportRecipe.
 fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
-    let url = "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/HEAD/ExportRecipes.json";
+    // Try two URLs: the warframe-public-export-plus repo (pre-processed) and a fallback
+    let urls = [
+        "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/master/ExportRecipes.json",
+        "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/HEAD/ExportRecipes.json",
+    ];
+    let url = urls[0]; // primary
 
     let json: serde_json::Value = ureq::get(url)
         .set("User-Agent", "FrameForge/0.1")
@@ -224,6 +325,15 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
     // Relics stored separately: (relic_unique_name, rewards_array)
     let mut raw_relics: Vec<(String, serde_json::Value)> = Vec::new();
 
+    // ── Two-pass fetch ───────────────────────────────────────────────────────
+    // Pass 1: Fetch all files → collect top-level unique_names.
+    //   "Bronco" (Secondary.json top-level) must be known BEFORE it appears as
+    //   a component of "Akbolto" (Primary.json) so it keeps "Secondary" not "Parts".
+    // Pass 2: Process items and components using the cached data.
+    // ────────────────────────────────────────────────────────────────────────
+    let mut all_files: Vec<(String, Vec<serde_json::Value>)> = Vec::new(); // (category, items)
+    let mut top_level_uniques: HashSet<String> = HashSet::new();
+
     for (file, category) in categories {
         let url = format!(
             "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/{}.json",
@@ -236,124 +346,171 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                     Err(e) => { errors.push(format!("{}: {}", file, e)); continue; }
                 };
                 if let Some(arr) = json.as_array() {
-                    for item in arr {
-                        let name = match item.get("name").and_then(|v| v.as_str()) {
-                            Some(n) => {
-                                let s = strip_tags(n);
-                                if s.len() < 2 { continue; }
-                                s.to_string()
-                            }
-                            _ => continue,
-                        };
-                        let unique_name = match item.get("uniqueName").and_then(|v| v.as_str()) {
-                            Some(u) => u.trim().to_string(),
-                            None => continue,
-                        };
-
-                        let image_name = item.get("imageName")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let vaulted = item.get("vaulted").and_then(|v| v.as_bool());
-
-                        let ducats = item.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32);
-                        let mastery_req = item.get("masteryReq").and_then(|v| v.as_u64()).map(|n| n as u32);
-
-                        if seen.insert(unique_name.clone()) {
-                            items.push(WfcdItem {
-                                name: name.clone(),
-                                unique_name: unique_name.clone(),
-                                category: category.to_string(),
-                                image_name: image_name.clone(),
-                                vaulted,
-                                ducats,
-                                mastery_req,
-                            });
-                        }
-
-                        if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
-                            if !comps.is_empty() {
-                                raw_craftable.push((unique_name.clone(), item.clone()));
-                            }
-                        }
-
-                        // Collect relic reward data.
-                        // WFCD uses either a flat array or an object keyed by refinement tier.
-                        if let Some(rewards_val) = item.get("rewards") {
-                            let flat: Vec<serde_json::Value> = if let Some(arr) = rewards_val.as_array() {
-                                arr.clone()
-                            } else if let Some(obj) = rewards_val.as_object() {
-                                // {"Intact":[...], "Exceptional":[...], "Flawless":[...], "Radiant":[...]}
-                                // Use Intact tier only (all tiers drop the same items)
-                                obj.get("Intact")
-                                    .or_else(|| obj.values().next())
-                                    .and_then(|v| v.as_array())
-                                    .cloned()
-                                    .unwrap_or_default()
-                            } else {
-                                vec![]
-                            };
-                            if !flat.is_empty() {
-                                raw_relics.push((unique_name.clone(), serde_json::Value::Array(flat)));
-                            }
-                        }
-
-                        // Add component parts to catalog
-                        if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
-                            for comp in comps {
-                                let cname = match comp.get("name").and_then(|v| v.as_str()) {
-                                    Some(n) => n.trim(),
-                                    None => continue,
-                                };
-                                let cunique = match comp.get("uniqueName").and_then(|v| v.as_str()) {
-                                    Some(u) => u.trim().to_string(),
-                                    None => continue,
-                                };
-                                let is_part = cunique.starts_with("/Lotus/Types/Recipes/")
-                                    || cunique.starts_with("/Lotus/Powersuits/")
-                                    || cunique.starts_with("/Lotus/Weapons/")
-                                    || cunique.starts_with("/Lotus/Companions/")
-                                    || cunique.starts_with("/Lotus/Sentinels/")
-                                    || cunique.starts_with("/Lotus/Archwing/")
-                                    || cname.contains("Blueprint");
-                                if !is_part { continue; }
-
-                                let comp_cat = if cunique.starts_with("/Lotus/Types/Recipes/") {
-                                    "Blueprints"
-                                } else {
-                                    category
-                                };
-                                let comp_image = comp.get("imageName")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string())
-                                    .or_else(|| image_name.clone());
-
-                                if seen.insert(cunique.clone()) {
-                                    let comp_name = if cunique.starts_with("/Lotus/Weapons/")
-                                        || cunique.starts_with("/Lotus/Powersuits/")
-                                        || cunique.starts_with("/Lotus/Companions/")
-                                        || cunique.starts_with("/Lotus/Sentinels/")
-                                        || cunique.starts_with("/Lotus/Archwing/")
-                                    {
-                                        cname.to_string()
-                                    } else {
-                                        format!("{} {}", name, cname)
-                                    };
-                                    items.push(WfcdItem {
-                                        name: comp_name,
-                                        unique_name: cunique,
-                                        category: comp_cat.to_string(),
-                                        image_name: comp_image,
-                                        vaulted: None,
-                                        ducats: comp.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32),
-                                        mastery_req: None,
-                                    });
-                                }
-                            }
+                    // Mini-pass: record all top-level unique_names in this file
+                    for item in arr.iter() {
+                        if let Some(u) = item.get("uniqueName").and_then(|v| v.as_str()) {
+                            top_level_uniques.insert(u.trim().to_string());
                         }
                     }
+                    all_files.push((category.to_string(), arr.clone()));
                 }
             }
             Err(e) => errors.push(format!("{}: {}", file, e)),
+        }
+    }
+
+    // Pass 2: full processing using cached data
+    for (category, arr) in &all_files {
+        for item in arr {
+            let name = match item.get("name").and_then(|v| v.as_str()) {
+                Some(n) => {
+                    let s = strip_tags(n);
+                    if s.len() < 2 { continue; }
+                    if s == "Blueprint" { continue; }
+                    s.to_string()
+                }
+                _ => continue,
+            };
+            let unique_name = match item.get("uniqueName").and_then(|v| v.as_str()) {
+                Some(u) => u.trim().to_string(),
+                None => continue,
+            };
+
+            let image_name = item.get("imageName").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let vaulted     = item.get("vaulted").and_then(|v| v.as_bool());
+            let ducats      = item.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32);
+            let mastery_req = item.get("masteryReq").and_then(|v| v.as_u64()).map(|n| n as u32);
+
+            // Correct category before inserting:
+            // • Blueprint items always go to "Blueprints"
+            // • Non-relic items miscategorised under "Relics" → "Misc"
+            let corrected_cat = if name.contains("Blueprint") {
+                "Blueprints".to_string()
+            } else if category == "Relics" {
+                let n = name.to_lowercase();
+                if n.ends_with("intact") || n.ends_with("exceptional")
+                    || n.ends_with("flawless") || n.ends_with("radiant")
+                {
+                    "Relics".to_string()
+                } else {
+                    "Misc".to_string() // blueprints/segments/etc. wrongly in WFCD Relics file
+                }
+            } else {
+                category.clone()
+            };
+
+            if seen.insert(unique_name.clone()) {
+                items.push(WfcdItem {
+                    name: name.clone(),
+                    unique_name: unique_name.clone(),
+                    category: corrected_cat,
+                    image_name: image_name.clone(),
+                    vaulted, ducats, mastery_req,
+                });
+            }
+
+            if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
+                if !comps.is_empty() {
+                    raw_craftable.push((unique_name.clone(), item.clone()));
+                }
+            }
+
+            // Collect relic reward data
+            if let Some(rewards_val) = item.get("rewards") {
+                let flat: Vec<serde_json::Value> = if let Some(arr) = rewards_val.as_array() {
+                    arr.clone()
+                } else if let Some(obj) = rewards_val.as_object() {
+                    obj.get("Intact")
+                        .or_else(|| obj.values().next())
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default()
+                } else { vec![] };
+                if !flat.is_empty() {
+                    raw_relics.push((unique_name.clone(), serde_json::Value::Array(flat)));
+                }
+            }
+
+            // Add component parts to catalog
+            if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
+                for comp in comps {
+                    let cname = match comp.get("name").and_then(|v| v.as_str()) {
+                        Some(n) => n.trim(),
+                        None => continue,
+                    };
+                    let cunique = match comp.get("uniqueName").and_then(|v| v.as_str()) {
+                        Some(u) => u.trim().to_string(),
+                        None => continue,
+                    };
+                    let is_part = cunique.starts_with("/Lotus/Types/Recipes/")
+                        || cunique.starts_with("/Lotus/Powersuits/")
+                        || cunique.starts_with("/Lotus/Weapons/")
+                        || cunique.starts_with("/Lotus/Companions/")
+                        || cunique.starts_with("/Lotus/Sentinels/")
+                        || cunique.starts_with("/Lotus/Archwing/")
+                        || cname.contains("Blueprint");
+                    if !is_part { continue; }
+
+                    // KEY: if this component is a TOP-LEVEL item in any WFCD file,
+                    // skip it here — it will be added with its correct standalone category.
+                    // This prevents "Bronco" (Secondary) from being labelled "Parts"
+                    // when it appears as a component of "Akbolto" (Primary).
+                    if top_level_uniques.contains(&cunique) { continue; }
+
+                    let comp_cat = if cunique.starts_with("/Lotus/Types/Recipes/") {
+                        "Blueprints"
+                    } else {
+                        category // keep parent's category (Warframes, Primary, etc.)
+                    };
+                    let comp_image = comp.get("imageName")
+                        .and_then(|v| v.as_str()).map(|s| s.to_string())
+                        .or_else(|| image_name.clone());
+
+                    if seen.insert(cunique.clone()) {
+                        let raw_comp_name = if cunique.starts_with("/Lotus/Powersuits/")
+                            || cunique.starts_with("/Lotus/Companions/")
+                            || cunique.starts_with("/Lotus/Sentinels/")
+                            || cunique.starts_with("/Lotus/Archwing/")
+                        {
+                            if cname.starts_with(&name) { cname.to_string() }
+                            else { format!("{} {}", name, cname) }
+                        } else {
+                            format!("{} {}", name, cname)
+                        };
+                        if raw_comp_name.trim() == "Blueprint" || raw_comp_name.trim().is_empty() {
+                            seen.remove(&cunique); continue;
+                        }
+                        // Warframe (and companion/archwing) component blueprints drop from relics
+                        // and are displayed in-game with "Blueprint" in the name
+                        // (e.g. "Lavos Prime Neuroptics Blueprint").
+                        // WFCD stores the component as just "Neuroptics", so we append it here.
+                        // Weapon parts (category Primary/Secondary/Melee) intentionally excluded:
+                        // they appear in-game without "Blueprint" ("Braton Prime Stock", not "...Blueprint").
+                        let comp_name = if comp_cat == "Blueprints"
+                            && (category == "Warframes" || category == "Companions" || category == "Archwing")
+                            && !raw_comp_name.ends_with("Blueprint")
+                        {
+                            format!("{} Blueprint", raw_comp_name)
+                        } else {
+                            raw_comp_name
+                        };
+                        items.push(WfcdItem {
+                            name: comp_name.clone(),
+                            unique_name: cunique.clone(),
+                            category: comp_cat.to_string(),
+                            image_name: comp_image.clone(),
+                            vaulted: None,
+                            ducats: comp.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32),
+                            mastery_req: None,
+                        });
+
+                        // Note: blueprint entries for these components are provided by
+                        // ExportRecipes (Phase 1 in get_all_items) which is DE's authoritative
+                        // source. Adding them from WFCD sub-components caused false "X Blueprint"
+                        // entries for weapon parts that drop directly and have no real blueprint.
+                    }
+                }
+            }
         }
     }
 
@@ -368,6 +525,88 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
 
     // Fetch DE's authoritative recipe data (best-effort; fall back to WFCD-only if it fails)
     let export_recipes = fetch_export_recipes().unwrap_or_default();
+
+    // ── Second pass: add Warframe component blueprints ────────────────────────
+    // In Warframe, relics drop Chassis/Neuroptics/Systems BLUEPRINTs — separate items
+    // from the built components.
+    //
+    // Strategy A: use ExportRecipes (resultType → blueprintUnique) if available.
+    // Strategy B (fallback): generate synthetic entries for every Powersuits component
+    //   already in the catalog whose name doesn't end with "Blueprint".
+    //   The synthetic unique_name follows DE's pattern (<component_path>Blueprint).
+    {
+        let image_by_unique: std::collections::HashMap<String, Option<String>> = items.iter()
+            .map(|i| (i.unique_name.clone(), i.image_name.clone()))
+            .collect();
+
+        let mut bp_items: Vec<WfcdItem> = Vec::new();
+
+        // Strategy A: ExportRecipes
+        for (result_type, recipe) in &export_recipes {
+            let bp_unique = &recipe.blueprint_unique;
+            if seen.contains(bp_unique) { continue; }
+            if !result_type.starts_with("/Lotus/Powersuits/") { continue; }
+            let result_name = match display_names.get(result_type) {
+                Some(n) => n.clone(),
+                None => continue,
+            };
+            if seen.insert(bp_unique.clone()) {
+                bp_items.push(WfcdItem {
+                    name:        format!("{} Blueprint", result_name),
+                    unique_name: bp_unique.clone(),
+                    category:    "Blueprints".to_string(),
+                    image_name:  image_by_unique.get(result_type).and_then(|i| i.clone()),
+                    vaulted:     None,
+                    ducats:      None,
+                    mastery_req: None,
+                });
+            }
+        }
+
+        // Strategy B: synthetic fallback for every warframe component not covered above.
+        // Covers the case where export_recipes fetch failed or is incomplete.
+        for item in items.iter() {
+            if !item.unique_name.starts_with("/Lotus/Powersuits/") { continue; }
+            if item.name.ends_with("Blueprint") { continue; }
+            if item.category == "Blueprints" { continue; }
+            // Derive a synthetic blueprint unique_name by appending "Blueprint"
+            let bp_unique = format!("{}Blueprint", item.unique_name);
+            if seen.contains(&bp_unique) { continue; }
+            if seen.insert(bp_unique.clone()) {
+                bp_items.push(WfcdItem {
+                    name:        format!("{} Blueprint", item.name),
+                    unique_name: bp_unique,
+                    category:    "Blueprints".to_string(),
+                    image_name:  item.image_name.clone(),
+                    vaulted:     None,
+                    ducats:      None,
+                    mastery_req: None,
+                });
+            }
+        }
+
+        // Debug: write counts to temp file so we can diagnose issues
+        let powersuits_in_recipes = export_recipes.keys()
+            .filter(|k| k.starts_with("/Lotus/Powersuits/")).count();
+        let _ = std::fs::write(
+            std::env::temp_dir().join("frameforge_wfcd_debug.txt"),
+            format!(
+                "export_recipes total={} powersuits_entries={}\n\
+                 strategy_a candidates checked={}\n\
+                 strategy_b items scanned={}\n\
+                 total bp_items added={}\n\
+                 first 5 bp items:\n{}",
+                export_recipes.len(),
+                powersuits_in_recipes,
+                export_recipes.iter().filter(|(k,_)| k.starts_with("/Lotus/Powersuits/")).count(),
+                items.iter().filter(|i| i.unique_name.starts_with("/Lotus/Powersuits/")).count(),
+                bp_items.len(),
+                bp_items.iter().take(5).map(|i| format!("  {} = {}", i.unique_name, i.name)).collect::<Vec<_>>().join("\n")
+            )
+        );
+
+        items.extend(bp_items);
+    }
 
     // Build recipe trees
     let mut recipes: HashMap<String, Vec<RecipeComponent>> = HashMap::new();
@@ -473,7 +712,29 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         }
     }
 
-    Ok(FetchResult { items, recipes, relic_drops, relic_rewards })
+    // Build blueprint_names: blueprint_path → (display_name, ducats)
+    // Lets the frontend create virtual catalog entries for component blueprints that
+    // are tracked by the API but may be absent from the WFCD catalog.
+    // Ducats are pulled from any existing WFCD item that matches the blueprint path.
+    let ducat_by_unique: HashMap<String, u32> = items.iter()
+        .filter_map(|i| i.ducats.map(|d| (i.unique_name.clone(), d)))
+        .collect();
+
+    let blueprint_names: HashMap<String, (String, Option<u32>)> = export_recipes.iter()
+        .filter_map(|(result_type, recipe)| {
+            let display = display_names.get(result_type)?;
+            let name   = format!("{} Blueprint", display);
+            let ducats = ducat_by_unique.get(&recipe.blueprint_unique).copied();
+            Some((recipe.blueprint_unique.clone(), (name, ducats)))
+        })
+        .collect();
+
+    // Fetch the canonical reward name list from the Warframe Wiki.
+    // This is non-blocking on failure — if the wiki is unreachable, we fall back
+    // to the existing prime/forma filters in the overlay catalog builder.
+    let wiki_reward_names = fetch_wiki_reward_names();
+
+    Ok(FetchResult { items, recipes, relic_drops, relic_rewards, blueprint_names, wiki_reward_names })
 }
 
 pub fn fallback_items() -> Vec<WfcdItem> {

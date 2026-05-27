@@ -1,11 +1,22 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Component, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import Foundry from "./Foundry";
 import MarketHelper from "./MarketHelper";
 import RelicHelper from "./RelicHelper";
+import Overlay from "./Overlay";
+import ModularWindow from "./ModularWindow";
 import { HelpTip } from "./HelpTip";
 import "./App.css";
+
+const _params = new URLSearchParams(window.location.search);
+// If the URL contains ?overlay, render the overlay instead of the main app
+const IS_OVERLAY = _params.has("overlay");
+// If the URL contains ?modular, render the standalone modular window
+const IS_MODULAR = _params.has("modular");
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
   constructor(props: any) { super(props); this.state = { err: null }; }
@@ -78,6 +89,7 @@ const CATEGORIES = [
   { id: "Melee",      label: "Melee" },
   { id: "Companions", label: "Companions" },
   { id: "Archwing",   label: "Archwing" },
+  { id: "Parts",      label: "Parts" },
   { id: "Blueprints", label: "Blueprints" },
   { id: "Misc",       label: "Miscellaneous" },
 ];
@@ -124,9 +136,127 @@ function timeStr(ts: number) {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// ─── Standalone modular window page (runs in pop-out Tauri window) ────────────
+
+function ModularWindowPage() {
+  const [tracked, setTracked] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [sectionOrder, setSectionOrder] = useState<string[]>(["tracking", "favorites"]);
+
+  useEffect(() => {
+    invoke<string>("load_settings").then(json => {
+      if (!json) return;
+      try {
+        const s = JSON.parse(json);
+        if (Array.isArray(s.tracked)) setTracked(s.tracked);
+        if (Array.isArray(s.favorites)) setFavorites(s.favorites);
+        if (Array.isArray(s.modularSectionOrder)) setSectionOrder(s.modularSectionOrder);
+      } catch {}
+    }).catch(() => {});
+    invoke<CatalogItem[]>("get_all_items").then(setCatalog).catch(() => {});
+    invoke<Record<string, number>>("get_current_quantities").then(setQuantities).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<InventoryUpdate>("inventory-update", e => {
+      setQuantities(e.payload.quantities);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen("settings-updated", () => {
+      invoke<string>("load_settings").then(json => {
+        if (!json) return;
+        try {
+          const s = JSON.parse(json);
+          if (Array.isArray(s.tracked)) setTracked(s.tracked);
+          if (Array.isArray(s.favorites)) setFavorites(s.favorites);
+          if (Array.isArray(s.modularSectionOrder)) setSectionOrder(s.modularSectionOrder);
+        } catch {}
+      }).catch(() => {});
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const saveModularSettings = useCallback((patch: object) => {
+    invoke("save_settings", { json: JSON.stringify(patch) }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const save = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        Promise.all([win.outerPosition(), win.outerSize()]).then(([pos, size]) => {
+          saveModularSettings({
+            modularWinX: pos.x, modularWinY: pos.y,
+            modularWinWidth: size.width, modularWinHeight: size.height,
+          });
+        }).catch(() => {});
+      }, 400);
+    };
+    const unlistenMove = win.onMoved(save);
+    const unlistenResize = win.onResized(save);
+    return () => {
+      if (t) clearTimeout(t);
+      unlistenMove.then(fn => fn());
+      unlistenResize.then(fn => fn());
+    };
+  }, [saveModularSettings]);
+
+  const handleTrackedChange = (next: string[]) => {
+    setTracked(next);
+    saveModularSettings({ tracked: next });
+  };
+  const handleUntrack = (id: string) => {
+    const next = tracked.filter(i => i !== id);
+    setTracked(next);
+    saveModularSettings({ tracked: next });
+  };
+  const handleFavoritesChange = (next: string[]) => {
+    setFavorites(next);
+    saveModularSettings({ favorites: next });
+  };
+  const handleUnfavorite = (id: string) => {
+    const next = favorites.filter(i => i !== id);
+    setFavorites(next);
+    saveModularSettings({ favorites: next });
+  };
+  const handleSectionOrderChange = (next: string[]) => {
+    setSectionOrder(next);
+    saveModularSettings({ modularSectionOrder: next });
+  };
+
+  return (
+    <div style={{ display: "flex", height: "100vh", background: "var(--surface)", overflow: "hidden" }}>
+      <ModularWindow
+        tracked={tracked}
+        onTrackedChange={handleTrackedChange}
+        onUntrack={handleUntrack}
+        favorites={favorites}
+        onFavoritesChange={handleFavoritesChange}
+        onUnfavorite={handleUnfavorite}
+        quantities={quantities}
+        catalog={catalog}
+        sectionOrder={sectionOrder}
+        onSectionOrderChange={handleSectionOrderChange}
+      />
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  // If we're the overlay window, render only the overlay UI
+  if (IS_OVERLAY) return <Overlay />;
+  // If we're the pop-out modular window, render the standalone modular UI
+  if (IS_MODULAR) return <ModularWindowPage />;
+
   const [activeModule, setActiveModule] = useState<Module>("inventory");
 
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
@@ -137,6 +267,9 @@ export default function App() {
   const [masteryRank, setMasteryRank] = useState<number | null>(null);
   const [masteryData, setMasteryData] = useState<Record<string, number>>({});
   const [wfConnected, setWfConnected] = useState(false);
+  const [overlayStatus, setOverlayStatus] = useState("");
+  const [subsummedWarframes, setSubsummedWarframes] = useState<Set<string>>(new Set());
+  const [archonShards, setArchonShards] = useState<Record<string, {type: string; tauforged: boolean; color: string; boost?: string}[]>>({});
   const [lastApiRefresh, setLastApiRefresh] = useState<number | null>(null);
   const wfConnectedRef = useRef(false);
   const catalogRef = useRef<CatalogItem[]>([]);
@@ -161,11 +294,50 @@ export default function App() {
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [overlayEnabled, setOverlayEnabled] = useState<boolean>(
+    () => localStorage.getItem("ff-overlay-enabled") !== "false"
+  );
+  const [overlayPriority, setOverlayPriority] = useState<string>(
+    () => localStorage.getItem("ff-overlay-priority") ?? "completion"
+  );
   const [clearMsg, setClearMsg] = useState("");
+  const [appVersion, setAppVersion] = useState("");
+  const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+  const [textScale, setTextScale] = useState(() => {
+    const s = parseFloat(localStorage.getItem("ff-text-scale") ?? "1");
+    document.documentElement.style.setProperty("--ff-scale", s.toString());
+    return s;
+  });
+  const [colorblindMode, setColorblindMode] = useState(() =>
+    localStorage.getItem("ff-colorblind") === "true"
+  );
   const [manualId, setManualId] = useState("");
   const [manualNonce, setManualNonce] = useState("");
   const [manualMsg, setManualMsg] = useState("");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
+
+  // ── Modular Window state ───────────────────────────────────────────────────
+  const [tracked, setTracked] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [modularWidth, setModularWidth] = useState(240);
+  const [modularSectionOrder, setModularSectionOrder] = useState<string[]>(["tracking", "favorites"]);
+  const [modularPopout, setModularPopout] = useState(false);
+  const modularWinRef = useRef<WebviewWindow | null>(null);
+  const modularWinGeomRef = useRef<{ x?: number; y?: number; w?: number; h?: number }>({});
+
+  // ── Settings helpers ──────────────────────────────────────────────────────
+  // Refs so we can read the latest state in the save callback without stale closures
+  const settingsLoadedRef = useRef(false);
+  const settingsRef = useRef({
+    overlayEnabled: true, overlayPriority: "completion", textScale: 1, colorblindMode: false,
+    tracked: [] as string[], favorites: [] as string[], modularWidth: 240,
+    modularSectionOrder: ["tracking", "favorites"] as string[], modularPopout: false,
+  });
+  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, tracked, favorites, modularWidth, modularSectionOrder, modularPopout };
+
+  const saveAllSettings = useCallback(() => {
+    invoke("save_settings", { json: JSON.stringify(settingsRef.current) }).catch(() => {});
+  }, []); // eslint-disable-line
 
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -177,6 +349,41 @@ export default function App() {
       const savedMods = localStorage.getItem("ff-api-mod-copies");
       if (savedMods) setApiModCopies(JSON.parse(savedMods));
     } catch {}
+
+    // Load user settings from file — survives reinstalls unlike localStorage
+    invoke<string>("load_settings").then(json => {
+      if (!json) return;
+      try {
+        const s = JSON.parse(json);
+        if (typeof s.overlayEnabled === "boolean") {
+          setOverlayEnabled(s.overlayEnabled);
+          localStorage.setItem("ff-overlay-enabled", String(s.overlayEnabled));
+        }
+        if (typeof s.overlayPriority === "string") {
+          setOverlayPriority(s.overlayPriority);
+          localStorage.setItem("ff-overlay-priority", s.overlayPriority);
+        }
+        if (typeof s.textScale === "number") {
+          setTextScale(s.textScale);
+          document.documentElement.style.setProperty("--ff-scale", s.textScale.toString());
+          localStorage.setItem("ff-text-scale", s.textScale.toString());
+        }
+        if (typeof s.colorblindMode === "boolean") {
+          setColorblindMode(s.colorblindMode);
+          localStorage.setItem("ff-colorblind", String(s.colorblindMode));
+        }
+        if (Array.isArray(s.tracked)) setTracked(s.tracked);
+        if (Array.isArray(s.favorites)) setFavorites(s.favorites);
+        if (typeof s.modularWidth === "number") setModularWidth(s.modularWidth);
+        if (Array.isArray(s.modularSectionOrder)) setModularSectionOrder(s.modularSectionOrder);
+        if (typeof s.modularPopout === "boolean") setModularPopout(s.modularPopout);
+        if (typeof s.modularWinX === "number") modularWinGeomRef.current.x = s.modularWinX;
+        if (typeof s.modularWinY === "number") modularWinGeomRef.current.y = s.modularWinY;
+        if (typeof s.modularWinWidth === "number") modularWinGeomRef.current.w = s.modularWinWidth;
+        if (typeof s.modularWinHeight === "number") modularWinGeomRef.current.h = s.modularWinHeight;
+        settingsLoadedRef.current = true;
+      } catch {}
+    }).catch(() => {});
 
     invoke<CatalogItem[]>("get_all_items").then(items => { setCatalog(items); catalogRef.current = items; });
     invoke<Record<string, number>>("get_current_quantities").then(setQuantities);
@@ -190,6 +397,25 @@ export default function App() {
       setItemCount(s.count);
       setRecipeCount(s.recipe_count);
     });
+
+    // Check for updates from GitHub
+    getVersion().then(v => {
+      setAppVersion(v);
+      fetch("https://api.github.com/repos/Sikewyrm/FrameForge/releases/latest")
+        .then(r => r.json())
+        .then(d => {
+          const latest = (d.tag_name ?? "").replace(/^v/, "");
+          const semverGt = (a: string, b: string) => {
+            const [ma, mi, pa] = a.split(".").map(Number);
+            const [mb, mii, pb] = b.split(".").map(Number);
+            if (ma !== mb) return ma > mb;
+            if (mi !== mii) return mi > mii;
+            return pa > pb;
+          };
+          if (latest && semverGt(latest, v)) setUpdateAvailable(latest);
+        })
+        .catch(() => {});
+    }).catch(() => {});
 
     // Auto-start monitor on launch so scanning begins immediately
     invoke<boolean>("get_monitor_status").then(active => {
@@ -211,6 +437,11 @@ export default function App() {
       if (p.mastery_rank != null) setMasteryRank(p.mastery_rank);
       if (p.mastery_data && Object.keys(p.mastery_data).length > 0)
         setMasteryData(prev => ({ ...prev, ...p.mastery_data }));
+      // When Warframe restarts (was running → stopped → running again),
+      // clear manual credentials so fresh ones are scanned from the new session
+      if (!p.warframe_running && wfConnectedRef.current) {
+        manualCredsRef.current = null;
+      }
       setWarframeRunning(p.warframe_running);
       setLastScan(p.scanned_at);
       if (p.changes.length > 0) {
@@ -225,6 +456,52 @@ export default function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // ── Sync modular state from pop-out window ────────────────────────────────
+  // When the pop-out saves (unstar, reorder), Rust emits settings-updated.
+  // Compare before setting to avoid a save → emit → re-read → save loop.
+  useEffect(() => {
+    const unlisten = listen("settings-updated", () => {
+      invoke<string>("load_settings").then(json => {
+        if (!json) return;
+        try {
+          const s = JSON.parse(json);
+          const cur = settingsRef.current;
+          if (Array.isArray(s.favorites) && JSON.stringify(s.favorites) !== JSON.stringify(cur.favorites))
+            setFavorites(s.favorites);
+          if (Array.isArray(s.tracked) && JSON.stringify(s.tracked) !== JSON.stringify(cur.tracked))
+            setTracked(s.tracked);
+          if (Array.isArray(s.modularSectionOrder) && JSON.stringify(s.modularSectionOrder) !== JSON.stringify(cur.modularSectionOrder))
+            setModularSectionOrder(s.modularSectionOrder);
+        } catch {}
+      }).catch(() => {});
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []); // eslint-disable-line
+
+  // ── Persist main window geometry on move/resize ───────────────────────────
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const save = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        Promise.all([win.outerPosition(), win.outerSize()]).then(([pos, size]) => {
+          invoke("save_settings", { json: JSON.stringify({
+            windowX: pos.x, windowY: pos.y,
+            windowWidth: size.width, windowHeight: size.height,
+          }) }).catch(() => {});
+        }).catch(() => {});
+      }, 400);
+    };
+    const unlistenMove = win.onMoved(save);
+    const unlistenResize = win.onResized(save);
+    return () => {
+      if (t) clearTimeout(t);
+      unlistenMove.then(fn => fn());
+      unlistenResize.then(fn => fn());
+    };
+  }, []); // eslint-disable-line
+
   // ── Monitor toggle ─────────────────────────────────────────────────────────
 
   const toggleMonitor = useCallback(async () => {
@@ -236,6 +513,14 @@ export default function App() {
       setMonitoring(true);
     }
   }, [monitoring]);
+
+  const toggleTracked = useCallback((id: string) => {
+    setTracked(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  }, []);
+
+  const toggleFavorite = useCallback((id: string) => {
+    setFavorites(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  }, []);
 
   // ── Fetch item list ────────────────────────────────────────────────────────
 
@@ -269,6 +554,10 @@ export default function App() {
     }
   };
 
+  // Auto-refresh item database on every app start so the OCR catalog stays current.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { handleFetch(); }, []);
+
   // ── Warframe API: process inventory response ──────────────────────────────
 
   const applyInventoryData = useCallback((data: any) => {
@@ -280,22 +569,33 @@ export default function App() {
       "MechSuits", "KubrowPets",
       "CrewShipWeapons", "OperatorAmps", "OperatorSuits",
     ];
+    const masteryUpdate: Record<string, number> = {};
     for (const key of ownedArrayKeys) {
       const arr = data[key];
       if (!Array.isArray(arr)) continue;
       for (const item of arr) {
         const t: string = item.ItemType;
-        if (t) apiQty[t] = (apiQty[t] ?? 0) + 1;
+        if (!t) continue;
+        apiQty[t] = (apiQty[t] ?? 0) + 1;
+        // Extract mastery rank from XP field — 30,000 XP per rank, cap at 30
+        if (item.XP != null) {
+          masteryUpdate[t] = Math.min(30, Math.floor(item.XP / 30000));
+        }
       }
     }
+    if (Object.keys(masteryUpdate).length > 0)
+      setMasteryData(prev => ({ ...prev, ...masteryUpdate }));
     for (const r of (Array.isArray(data.Recipes) ? data.Recipes : [])) {
       const t: string = r.ItemType;
-      if (t) apiQty[t] = (apiQty[t] ?? 0) + (r.ItemCount ?? 1);
+      if (t) {
+        apiQty[t] = (apiQty[t] ?? 0) + (r.ItemCount ?? 1);
+      }
     }
-    // MiscItems: only pull relics (refinement-specific paths like /Relics/O/LithO7Bronze)
+    // MiscItems: pull everything (relics, resources like Carbides/Cubic Diodes, etc.)
+    // so the API is authoritative and mission-pickup counts from the scanner don't override.
     for (const m of (Array.isArray(data.MiscItems) ? data.MiscItems : [])) {
       const t: string = m.ItemType;
-      if (t && t.includes("/Relics/")) apiQty[t] = (apiQty[t] ?? 0) + (m.ItemCount ?? 1);
+      if (t) apiQty[t] = (apiQty[t] ?? 0) + (m.ItemCount ?? 1);
     }
     const rawModMap: Record<string, number> = {};
     for (const r of (Array.isArray(data.RawUpgrades) ? data.RawUpgrades : [])) {
@@ -323,6 +623,49 @@ export default function App() {
     setApiModCopies(copies);
     setApiQuantities(apiQty);
     if (data.PlayerLevel != null) setMasteryRank(data.PlayerLevel);
+
+    // Extract Archon Shard data from Suits
+    // API format: suit.ArchonCrystalUpgrades = [{Color: "ACC_YELLOW", UpgradeType: "/Lotus/.../ArchonCrystalUpgradeWarframeAbilityStrength"}, ...]
+    const COLOR_MAP: Record<string, { type: string; color: string }> = {
+      ACC_RED:     { type: "Crimson", color: "#ff3030" },
+      ACC_ORANGE:  { type: "Amber",   color: "#ff8800" },
+      ACC_BLUE:    { type: "Azure",   color: "#00aaff" },
+      ACC_GREEN:   { type: "Emerald", color: "#00cc55" },
+      ACC_YELLOW:  { type: "Topaz",   color: "#ffcc00" },
+      ACC_VIOLET:  { type: "Violet",  color: "#9944ff" },
+      ACC_PURPLE:  { type: "Violet",  color: "#9944ff" }, // fallback alias
+    };
+    const newShards: Record<string, { type: string; tauforged: boolean; color: string; boost: string }[]> = {};
+    for (const suit of (Array.isArray(data.Suits) ? data.Suits : [])) {
+      const upgrades = suit.ArchonCrystalUpgrades;
+      if (!Array.isArray(upgrades) || upgrades.length === 0) continue;
+      const uniqueName: string = suit.ItemType ?? "";
+      if (!uniqueName) continue;
+      newShards[uniqueName] = upgrades.map((u: any) => {
+        const colorRaw: string = (u.Color ?? "").toUpperCase();
+        const upgradeType: string = u.UpgradeType ?? "";
+        const tauforged = colorRaw.includes("TAU") || upgradeType.toLowerCase().includes("tau");
+        // Strip color prefix for map lookup (e.g. "ACC_YELLOW_TAUFORGED" → "ACC_YELLOW")
+        const colorKey = Object.keys(COLOR_MAP).find(k => colorRaw.startsWith(k)) ?? "";
+        const info = COLOR_MAP[colorKey] ?? { type: colorRaw || "Unknown", color: "#888" };
+        // Extract boost name from UpgradeType path last segment
+        const seg = upgradeType.split("/").pop() ?? "";
+        const boost = seg
+          .replace(/ArchonCrystalUpgrade(Warframe)?/g, "")
+          .replace(/([A-Z])/g, " $1").trim();
+        return { type: info.type, tauforged, color: info.color, boost };
+      });
+    }
+    if (Object.keys(newShards).length > 0) setArchonShards(prev => ({ ...prev, ...newShards }));
+
+    // Extract subsumed warframes from InfestedFoundry (Helminth)
+    const consumed = data.InfestedFoundry?.ConsumedSuits;
+    if (Array.isArray(consumed)) {
+      const s = new Set<string>(
+        consumed.map((e: any) => (typeof e === "string" ? e : e?.ItemType ?? "")).filter(Boolean)
+      );
+      setSubsummedWarframes(s);
+    }
 
     // XPInfo from API → fill mastery data for items no longer owned (memory scanner can't see these)
     if (Array.isArray(data.XPInfo)) {
@@ -397,37 +740,227 @@ export default function App() {
       localStorage.setItem("ff-api-mod-copies", JSON.stringify(apiModCopies));
   }, [apiModCopies]);
 
-  // ── Auto-refresh API every 30 s (starts immediately on mount) ────────────
+  useEffect(() => { if (settingsLoadedRef.current) saveAllSettings(); }, [tracked]);   // eslint-disable-line
+  useEffect(() => { if (settingsLoadedRef.current) saveAllSettings(); }, [favorites]); // eslint-disable-line
+  useEffect(() => { if (settingsLoadedRef.current) saveAllSettings(); }, [modularWidth]); // eslint-disable-line
+  useEffect(() => { if (settingsLoadedRef.current) saveAllSettings(); }, [modularSectionOrder]); // eslint-disable-line
+  useEffect(() => { if (settingsLoadedRef.current) saveAllSettings(); }, [modularPopout]); // eslint-disable-line
+
+  // ── Modular pop-out window ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (modularPopout) {
+      if (modularWinRef.current) return;
+      const g = modularWinGeomRef.current;
+      const win = new WebviewWindow("modular-popout", {
+        url: "index.html?modular",
+        title: "FrameForge — Modular Window",
+        width: g.w ?? modularWidth,
+        height: g.h ?? 700,
+        ...(g.x !== undefined ? { x: g.x } : {}),
+        ...(g.y !== undefined ? { y: g.y } : {}),
+        minWidth: 180,
+        minHeight: 300,
+        resizable: true,
+        decorations: true,
+        alwaysOnTop: false,
+      });
+      modularWinRef.current = win;
+      win.once("tauri://destroyed", () => {
+        modularWinRef.current = null;
+        setModularPopout(false);
+      });
+    } else {
+      modularWinRef.current?.close().catch(() => {});
+      modularWinRef.current = null;
+    }
+  }, [modularPopout]); // eslint-disable-line
+
+  // ── Auto-refresh API: 8 s while connecting, 30 s once connected ─────────
 
   useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
     const doFetch = async () => {
+      if (cancelled) return;
       let accountId = "", nonce = "", steamId = "";
       try {
         [accountId, nonce, steamId] = await invoke<[string, string, string]>("scan_warframe_credentials");
+        // Cache successful auto-scan so fallback works if scan fails next time
+        manualCredsRef.current = { accountId, nonce };
       } catch {
-        // Memory scan failed — fall back to manually entered credentials if available
+        // Scan failed — fall back to last known credentials (auto-scanned or manual)
         const mc = manualCredsRef.current;
-        if (!mc) return;
+        if (!mc) { schedule(); return; }
         accountId = mc.accountId; nonce = mc.nonce; steamId = "";
       }
       try {
         const data = await invoke<any>("fetch_warframe_inventory", { accountId, nonce, steamId });
-        applyInventoryData(data);
-        setWfConnected(true);
-        wfConnectedRef.current = true;
-      } catch { /* API call failed — retry next tick */ }
+        if (!cancelled) {
+          applyInventoryData(data);
+          setWfConnected(true);
+          wfConnectedRef.current = true;
+          setWarframeRunning(true);
+        }
+      } catch {
+        // API rejected the credentials — clear cached creds so next scan starts fresh
+        if (wfConnectedRef.current) {
+          setWfConnected(false);
+          wfConnectedRef.current = false;
+          manualCredsRef.current = null;
+        }
+      }
+      schedule();
     };
+
+    const schedule = () => {
+      if (cancelled) return;
+      timeoutId = setTimeout(doFetch, wfConnectedRef.current ? 30_000 : 8_000);
+    };
+
     doFetch();
-    const id = setInterval(doFetch, 30_000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   }, [applyInventoryData]);
+
+  // ── Relic reward overlay ──────────────────────────────────────────────────
+  useEffect(() => {
+    let overlayWin: WebviewWindow | null = null;
+    // Set to true when a dismiss arrives while the window is still being created.
+    // Checked in tauri://created to close immediately instead of showing items.
+    let dismissed   = false;
+    // Pending items buffered if they arrive before tauri://created fires.
+    let pendingItems: { items: string[]; positions: number[] } | null = null;
+
+    const closeOverlay = () => {
+      dismissed = true;
+      pendingItems = null;
+      if (overlayWin) {
+        overlayWin.close().catch(() => {});
+        overlayWin = null;
+      }
+    };
+
+    const unsubStatus = listen<string>("ff-status", (e) => {
+      setOverlayStatus(e.payload);
+      setTimeout(() => setOverlayStatus(""), 4000);
+    });
+
+    // "relic-trigger" fires the moment EE.log detects the reward screen —
+    // we pre-create the overlay window immediately so it's ready by the time
+    // OCR finishes (window creation takes 1-2 s; OCR also takes ~700 ms).
+    const unsubTrigger = listen<null>("relic-trigger", async () => {
+      dismissed = false;
+      pendingItems = null;
+      const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
+      if (overlayWin || !enabled) return;
+      try {
+        const rect = await invoke<[number, number, number, number]>("get_warframe_window_rect");
+        const [wx, wy, ww, wh] = rect;
+        const stripY = wy + Math.round(wh * 0.60);
+        const stripH = Math.round(wh * 0.30);
+        const pri    = localStorage.getItem("ff-overlay-priority") ?? "completion";
+        overlayWin = new WebviewWindow("relic-overlay", {
+          url: `index.html?overlay&ww=${ww}&wh=${wh}&priority=${pri}`,
+          title: "FrameForge Overlay",
+          transparent: true, decorations: false,
+          alwaysOnTop: true, skipTaskbar: true,
+          resizable: false, focus: false,
+          x: wx, y: stripY, width: ww, height: stripH,
+        });
+
+        const _triggerWin = overlayWin;
+        overlayWin.once("tauri://destroyed", () => { overlayWin = null; pendingItems = null; });
+        overlayWin.once("tauri://created", async () => {
+          await _triggerWin.setIgnoreCursorEvents(true).catch(() => {});
+          if (dismissed) {
+            // Dismiss arrived while window was being created — close immediately
+            _triggerWin.close().catch(() => {});
+            dismissed = false;
+            overlayWin = null;
+            return;
+          }
+          if (pendingItems) {
+            // Items arrived before the window was ready — send them now
+            const { emit } = await import("@tauri-apps/api/event");
+            await emit("relic-rewards", pendingItems);
+            pendingItems = null;
+          }
+        });
+      } catch { /* Warframe not running */ }
+    });
+
+    const unsubRelic = listen<boolean>("relic-screen", () => { closeOverlay(); });
+
+    const unsub = listen<{ items: string[]; positions: number[] } | null>("relic-rewards", async (e) => {
+      const rewards = e.payload;
+
+      if (rewards && rewards.items.length >= 1) {
+        if (dismissed) return;
+        const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
+        if (!enabled) return;
+
+        if (overlayWin) {
+          // Window already exists (pre-created by relic-trigger or previous emit)
+          const { emit } = await import("@tauri-apps/api/event");
+          await emit("relic-rewards", rewards);
+        } else {
+          // relic-trigger didn't fire or window wasn't ready — create now as fallback
+          pendingItems = rewards;
+          try {
+            const rect = await invoke<[number, number, number, number]>("get_warframe_window_rect");
+            const [wx, wy, ww, wh] = rect;
+            const stripY = wy + Math.round(wh * 0.54);
+            const stripH = Math.round(wh * 0.28);
+            const pri    = localStorage.getItem("ff-overlay-priority") ?? "completion";
+            overlayWin = new WebviewWindow("relic-overlay", {
+              url: `index.html?overlay&ww=${ww}&wh=${wh}&priority=${pri}`,
+              title: "FrameForge Overlay",
+              transparent: true, decorations: false,
+              alwaysOnTop: true, skipTaskbar: true,
+              resizable: false, focus: false,
+              x: wx, y: stripY, width: ww, height: stripH,
+            });
+    
+            const _fallbackWin = overlayWin;
+            overlayWin.once("tauri://destroyed", () => { overlayWin = null; pendingItems = null; });
+            overlayWin.once("tauri://created", async () => {
+              await _fallbackWin.setIgnoreCursorEvents(true).catch(() => {});
+              if (dismissed) { _fallbackWin.close().catch(() => {}); overlayWin = null; dismissed = false; return; }
+              if (pendingItems) {
+                const { emit } = await import("@tauri-apps/api/event");
+                await emit("relic-rewards", pendingItems);
+                pendingItems = null;
+              }
+            });
+          } catch { /* Warframe not running */ }
+        }
+      } else {
+        // Null = dismiss. Close overlay or set flag if window still being created.
+        closeOverlay();
+      }
+    });
+
+    return () => {
+      unsub.then(fn => fn());
+      unsubRelic.then(fn => fn());
+      unsubTrigger.then(fn => fn());
+      unsubStatus.then(fn => fn());
+      if (overlayWin) { overlayWin.close(); overlayWin = null; }
+    };
+  }, []);
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const mergedQty = useMemo(
-    () => ({ ...quantities, ...apiQuantities }),
-    [quantities, apiQuantities]
-  );
+  const mergedQty = useMemo(() => {
+    // Strip blueprint paths from scanner data before merging.
+    // /Lotus/Types/Recipes/ paths appear in mission memory when items drop —
+    // they cannot be reliably distinguished from real inventory.
+    // The Warframe API's Recipes field is the authoritative source for blueprints.
+    const scannerFiltered = Object.fromEntries(
+      Object.entries(quantities).filter(([k]) => !k.includes("/Types/Recipes/"))
+    );
+    return { ...scannerFiltered, ...apiQuantities };
+  }, [quantities, apiQuantities]);
 
   const modCopiesMap = useMemo(() => {
     const map: Record<string, ModCopy[]> = {};
@@ -466,6 +999,7 @@ export default function App() {
   const visibleItems = useMemo(() => {
     const q = search.toLowerCase();
     return catalog
+      .filter(i => i.name !== "Blueprint")
       .filter(i => category === "all" || i.category === category)
       .filter(i => !q || i.name.toLowerCase().includes(q))
       .filter(i => !filterOwned    || (mergedQty[i.unique_name] ?? 0) > 0)
@@ -508,6 +1042,13 @@ export default function App() {
       {/* ── Header ── */}
       <header className="header">
         <span className="header-title">FrameForge</span>
+          {updateAvailable && (
+            <a
+              className="update-badge"
+              title={`v${updateAvailable} available — click to download`}
+              onClick={() => invoke("plugin:opener|open_url", { url: "https://github.com/Sikewyrm/FrameForge/releases/latest" }).catch(() => {})}
+            >⬆ v{updateAvailable}</a>
+          )}
         {masteryRank !== null && (
           <span className="mastery-badge" title="Mastery Rank">MR {masteryRank}</span>
         )}
@@ -519,8 +1060,34 @@ export default function App() {
             className={`wf-dot ${warframeRunning ? "wf-on" : "wf-off"}`}
             title={warframeRunning ? "Warframe detected" : "Warframe not running"}
           />
+          {overlayStatus && (
+            <span style={{ fontSize: 11, color: '#9ecaed', marginLeft: 6,
+              background: 'rgba(100,160,220,0.12)', padding: '2px 6px',
+              borderRadius: 3, fontFamily: 'monospace' }}>
+              {overlayStatus}
+            </span>
+          )}
           {wfConnected && lastApiRefresh && (
             <span className="api-badge" title="Warframe API — auto-refreshes every 30s">⚡ API {timeStr(lastApiRefresh)}</span>
+          )}
+          {!wfConnected && warframeRunning && (
+            <span
+              className="api-badge"
+              style={{ color: "var(--muted)", cursor: "pointer" }}
+              title="Click to retry credential scan now"
+              onClick={async () => {
+                try {
+                  const [accountId, nonce, steamId] = await invoke<[string, string, string]>("scan_warframe_credentials");
+                  const data = await invoke<any>("fetch_warframe_inventory", { accountId, nonce, steamId });
+                  applyInventoryData(data);
+                  setWfConnected(true);
+                  wfConnectedRef.current = true;
+                  manualCredsRef.current = { accountId, nonce };
+                } catch (e) {
+                  alert(`Credential scan failed:\n${e}\n\nMake sure you are in the Orbiter (not in a mission or loading screen).`);
+                }
+              }}
+            >⚡ Connecting… (click to retry)</span>
           )}
           <button
             className={`btn-monitor ${monitoring ? "active" : ""}`}
@@ -529,16 +1096,27 @@ export default function App() {
             {monitoring ? "⏹ Stop" : "▶ Start monitor"}
           </button>
           <button
-            className="btn-discord"
+            className="btn-icon-brand btn-discord"
             title="Join our Discord"
             onClick={() => invoke("plugin:opener|open_url", { url: "https://discord.gg/7NMsN9J8vy" }).catch(() => {})}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/>
             </svg>
-            Discord
           </button>
-          <button className="btn-settings" title="Settings" onClick={() => { setShowSettings(true); setClearMsg(""); }}>⚙</button>
+          <button
+            className="btn-icon-brand btn-kofi"
+            title="Support on Ko-Fi"
+            onClick={() => invoke("plugin:opener|open_url", { url: "https://ko-fi.com/sikewyrm" }).catch(() => {})}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 2.833.723 4.311zm6.173.478c-.928.116-1.218-.443-1.218-.443s.001-1.929 0-2.535c-.003-.434-.423-.782-.857-.782-.434 0-.836.348-.836.782v3.09c0 .434.402.782.836.782.434 0 .857-.026.857-.026s-.038.639.525.98c.562.341 1.423.231 1.423.231 1.302-.269 2.023-1.63 1.27-2.079z"/>
+            </svg>
+          </button>
+          <button className="btn-settings" title="Settings" onClick={() => {
+              setShowSettings(true); setClearMsg("");
+              getVersion().then(v => setAppVersion(v)).catch(() => {});
+            }}>⚙</button>
         </div>
       </header>
 
@@ -553,47 +1131,103 @@ export default function App() {
 
             <div className="settings-body">
 
+              {/* ── Relic Overlay ── */}
               <div className="settings-section">
-                <div className="settings-section-title">Data</div>
+                <div className="settings-section-title">Relic Overlay</div>
+                {overlayStatus && (
+                  <div style={{ fontSize: 12, padding: '4px 8px', marginBottom: 6,
+                    background: 'rgba(255,255,255,0.05)', borderRadius: 4,
+                    color: '#9ecaed', fontFamily: 'monospace' }}>
+                    {overlayStatus}
+                  </div>
+                )}
                 <div className="settings-row">
                   <div className="settings-row-info">
-                    <span className="settings-row-label">Clear Cache</span>
-                    <span className="settings-row-desc">Reset all scanned quantities and change log. Does not remove the item database.</span>
+                    <span className="settings-row-label">Overlay</span>
+                    <span className="settings-row-desc">Show the reward overlay when a Void Fissure reward screen is detected.</span>
                   </div>
                   <button
-                    className="btn-danger"
-                    onClick={async () => {
-                      try {
-                        await invoke("clear_cache");
-                        setQuantities({});
-                        setChangeLog([]);
-                        setLastChanged({});
-                        setClearMsg("Cache cleared.");
-                      } catch (e) {
-                        setClearMsg(`Error: ${e}`);
+                    className="btn-secondary"
+                    style={{ minWidth: 64, background: overlayEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: overlayEnabled ? "var(--accent)" : undefined }}
+                    onClick={() => {
+                      const next = !overlayEnabled;
+                      setOverlayEnabled(next);
+                      localStorage.setItem("ff-overlay-enabled", String(next));
+                      settingsRef.current = { ...settingsRef.current, overlayEnabled: next };
+                      saveAllSettings();
+                      // If turning Off while overlay is open, close it immediately
+                      if (!next) {
+                        import("@tauri-apps/api/event").then(({ emit }) =>
+                          emit("relic-screen", true).catch(() => {})
+                        );
                       }
                     }}
-                  >
-                    Clear Cache
-                  </button>
+                  >{overlayEnabled ? "On" : "Off"}</button>
                 </div>
-                {clearMsg && <div className="settings-msg">{clearMsg}</div>}
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Pick priority</span>
+                    <span className="settings-row-desc">Which card the overlay arrow highlights as the best pick.</span>
+                  </div>
+                  <select
+                    className="settings-select"
+                    value={overlayPriority}
+                    disabled={!overlayEnabled}
+                    onChange={e => {
+                      const next = e.target.value;
+                      setOverlayPriority(next);
+                      localStorage.setItem("ff-overlay-priority", next);
+                      settingsRef.current = { ...settingsRef.current, overlayPriority: next };
+                      saveAllSettings();
+                    }}
+                  >
+                    <option value="completion">Item Completion</option>
+                    <option value="setPlat">Most Set Value (plat)</option>
+                    <option value="plat">Most Plat (item)</option>
+                    <option value="ducat">Most Ducats</option>
+                  </select>
+                </div>
               </div>
 
+              {/* ── Accessibility ── */}
               <div className="settings-section">
-                <div className="settings-section-title">Item Database</div>
+                <div className="settings-section-title">Accessibility</div>
                 <div className="settings-row">
                   <div className="settings-row-info">
-                    <span className="settings-row-label">Refresh Item List</span>
-                    <span className="settings-row-desc">{itemCount.toLocaleString()} items · {recipeCount.toLocaleString()} recipes cached</span>
+                    <span className="settings-row-label">Colorblind Mode</span>
+                    <span className="settings-row-desc">Adds ✓ / ✓✓ checkmarks to colored reward boxes in Relics so status is clear without relying on color alone.</span>
                   </div>
-                  <button className="btn-secondary" onClick={() => { setShowSettings(false); handleFetch(); }} disabled={fetching}>
-                    {fetching ? "Fetching…" : "Refresh"}
-                  </button>
+                  <button
+                    className="btn-secondary"
+                    style={{ minWidth: 64, background: colorblindMode ? "rgba(56,139,253,.15)" : undefined, borderColor: colorblindMode ? "var(--accent)" : undefined }}
+                    onClick={() => {
+                      const next = !colorblindMode;
+                      setColorblindMode(next);
+                      localStorage.setItem("ff-colorblind", String(next));
+                      settingsRef.current = { ...settingsRef.current, colorblindMode: next };
+                      saveAllSettings();
+                    }}
+                  >{colorblindMode ? "On" : "Off"}</button>
                 </div>
-                {fetchMsg && <div className="settings-msg">{fetchMsg}</div>}
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Text Size</span>
+                    <span className="settings-row-desc">{Math.round(textScale * 100)}%</span>
+                  </div>
+                  <input type="range" min="0.8" max="1.4" step="0.05" value={textScale}
+                    style={{ width: 120 }}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      setTextScale(v);
+                      document.documentElement.style.setProperty("--ff-scale", v.toString());
+                      localStorage.setItem("ff-text-scale", v.toString());
+                      settingsRef.current = { ...settingsRef.current, textScale: v };
+                      saveAllSettings();
+                    }} />
+                </div>
               </div>
 
+              {/* ── Account ── */}
               <div className="settings-section">
                 <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   Manual Account Connection
@@ -622,7 +1256,6 @@ export default function App() {
                         const data = await invoke<any>("fetch_warframe_inventory", {
                           accountId: id, nonce: nc, steamId: ""
                         });
-                        // Store in memory-only ref for auto-refresh — never written to disk
                         manualCredsRef.current = { accountId: id, nonce: nc };
                         applyInventoryData(data);
                         setWfConnected(true);
@@ -634,6 +1267,47 @@ export default function App() {
                 {manualMsg && <div className="settings-msg" style={{ color: manualMsg.startsWith("F") ? "var(--red)" : "var(--green)" }}>{manualMsg}</div>}
               </div>
 
+              {/* ── Data ── */}
+              <div className="settings-section">
+                <div className="settings-section-title">Data</div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Item Database</span>
+                    <span className="settings-row-desc">{itemCount.toLocaleString()} items · {recipeCount.toLocaleString()} recipes cached</span>
+                  </div>
+                  <button className="btn-secondary" onClick={() => { setShowSettings(false); handleFetch(); }} disabled={fetching}>
+                    {fetching ? "Fetching…" : "Refresh"}
+                  </button>
+                </div>
+                {fetchMsg && <div className="settings-msg">{fetchMsg}</div>}
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Clear Cache</span>
+                    <span className="settings-row-desc">Reset all scanned quantities and change log.</span>
+                  </div>
+                  <button
+                    className="btn-danger"
+                    onClick={async () => {
+                      try {
+                        await invoke("clear_cache");
+                        setQuantities({});
+                        setApiQuantities({});
+                        setApiModCopies([]);
+                        setChangeLog([]);
+                        setLastChanged({});
+                        setWfConnected(false);
+                        wfConnectedRef.current = false;
+                        localStorage.removeItem("ff-api-quantities");
+                        localStorage.removeItem("ff-api-mod-copies");
+                        setClearMsg("Cache cleared.");
+                      } catch (e) { setClearMsg(`Error: ${e}`); }
+                    }}
+                  >Clear Cache</button>
+                </div>
+                {clearMsg && <div className="settings-msg">{clearMsg}</div>}
+              </div>
+
+              {/* ── Monitor ── */}
               <div className="settings-section">
                 <div className="settings-section-title">Monitor</div>
                 <div className="settings-row">
@@ -641,9 +1315,74 @@ export default function App() {
                     <span className="settings-row-label">Memory Scanner</span>
                     <span className="settings-row-desc">{monitoring ? "Running — scans every 10 seconds" : "Stopped"}</span>
                   </div>
-                  <button className={`btn-secondary ${monitoring ? "btn-danger" : ""}`} onClick={() => { toggleMonitor(); }}>
+                  <button className={`btn-secondary ${monitoring ? "btn-danger" : ""}`} onClick={toggleMonitor}>
                     {monitoring ? "Stop" : "Start"}
                   </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                  {[
+                    { label: "Memory Scanner",    ok: monitoring,      detail: monitoring ? `Running · last scan ${lastScan ? new Date(lastScan*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—"}` : "Stopped" },
+                    { label: "Warframe API",       ok: wfConnected,     detail: wfConnected ? `Connected · ${lastApiRefresh ? new Date(lastApiRefresh*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—"}` : warframeRunning ? "Game detected — scanning credentials…" : "Not connected" },
+                    { label: "Warframe detected", ok: warframeRunning, detail: warframeRunning ? "Game is running" : "Game not detected" },
+                  ].map(s => (
+                    <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.ok ? "var(--green)" : "var(--muted)", flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, color: "var(--text)", minWidth: 140 }}>{s.label}</span>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>{s.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── Modular Window ── */}
+              <div className="settings-section">
+                <div className="settings-section-title">Modular Window</div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Pop-out</span>
+                    <span className="settings-row-desc">Detach the Modular Window into its own floating window.</span>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    style={{ minWidth: 64, background: modularPopout ? "rgba(56,139,253,.15)" : undefined, borderColor: modularPopout ? "var(--accent)" : undefined }}
+                    onClick={() => {
+                      const next = !modularPopout;
+                      setModularPopout(next);
+                      settingsRef.current = { ...settingsRef.current, modularPopout: next };
+                      saveAllSettings();
+                    }}
+                  >{modularPopout ? "On" : "Off"}</button>
+                </div>
+              </div>
+
+              {/* ── Support ── */}
+              <div className="settings-section">
+                <div className="settings-section-title">Support</div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Session Log</span>
+                    <span className="settings-row-desc">
+                      Step-by-step log of the last overlay attempt. Share this when reporting overlay issues.
+                      Written to <code>%TEMP%\frameforge_overlay_session.txt</code>.
+                    </span>
+                  </div>
+                  <button className="btn-secondary" onClick={async () => {
+                    try {
+                      const text = await invoke<string>("get_overlay_session_log");
+                      alert(text);
+                    } catch (e) { alert(`Error: ${e}`); }
+                  }}>View Log</button>
+                </div>
+              </div>
+
+              {/* ── About (always last) ── */}
+              <div className="settings-section">
+                <div className="settings-section-title">About</div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">FrameForge</span>
+                    <span className="settings-row-desc">Version <strong>{appVersion}</strong></span>
+                  </div>
                 </div>
               </div>
 
@@ -739,7 +1478,7 @@ export default function App() {
               </div>
               <div className="filter-bar">
                 <button className={`fchip ${filterOwned?"fchip-on":""}`} onClick={()=>setFilterOwned(v=>!v)}>Owned</button>
-                <button className={`fchip ${filterRecent?"fchip-on":""}`} onClick={()=>setFilterRecent(v=>!v)}>Recent</button>
+                <button className={`fchip ${filterRecent?"fchip-on":""}`} onClick={()=>setFilterRecent(v=>!v)}>Changed recently</button>
                 <button className={`fchip ${filterPrime?"fchip-on":""}`} onClick={()=>setFilterPrime(v=>!v)}>Prime</button>
                 <button className={`fchip ${filterVaulted?"fchip-on":""}`} onClick={()=>setFilterVaulted(v=>!v)}>🔒 Vaulted</button>
                 <button className={`fchip ${filterUnvaulted?"fchip-on":""}`} onClick={()=>setFilterUnvaulted(v=>!v)}>🔓 Unvaulted</button>
@@ -757,14 +1496,13 @@ export default function App() {
                 <button className={`fchip ${sortMode==="qty-asc"?"fchip-on":""}`} onClick={()=>setSortMode("qty-asc")}>Qty ↑</button>
                 <button className={`fchip ${sortMode==="name-asc"?"fchip-on":""}`} onClick={()=>setSortMode("name-asc")}>A-Z</button>
                 <button className={`fchip ${sortMode==="name-desc"?"fchip-on":""}`} onClick={()=>setSortMode("name-desc")}>Z-A</button>
-                <button className={`fchip ${sortMode==="recent"?"fchip-on":""}`} onClick={()=>setSortMode("recent")}>Recent</button>
                 <span className="item-count-label" style={{marginLeft:"auto"}}>{visibleItems.length} item{visibleItems.length!==1?"s":""}{visibleItems.length===1000?" (capped)":""}</span>
                 <HelpTip items={[
-                  { icon: "★",  label: "★ above image",  desc: "Mastered — item levelled to rank 30" },
-                  { icon: "R5", label: "R{n} above image", desc: "Current rank, not yet mastered" },
-                  { icon: "⚒",  label: "⚒ on image",      desc: "Currently building in Foundry" },
-                  { swatch: "rgba(63,185,80,.35)",  label: "Green left border", desc: "Recently gained" },
-                  { swatch: "rgba(248,81,73,.35)",  label: "Red left border",   desc: "Recently lost / used" },
+                  { icon: "★",  label: "★  Mastered",  desc: "Shown above image — item levelled to rank 30" },
+                  { icon: "R5", label: "R{n}  Rank",   desc: "Shown above image — current rank, not yet mastered" },
+                  { icon: "⚒",  label: "⚒  Building",  desc: "Shown on image — currently crafting in Foundry" },
+                  { swatch: "rgba(63,185,80,.5)",  label: "Green border", desc: "Item recently gained" },
+                  { swatch: "rgba(248,81,73,.5)",  label: "Red border",   desc: "Item recently lost or consumed" },
                 ]} />
               </div>
 
@@ -817,6 +1555,11 @@ export default function App() {
                     return [(
                       <div key={item.unique_name}
                         className={`inv-card ${isZero ? "inv-card-zero" : ""} ${isRecent ? (recentChange && recentChange.delta > 0 ? "inv-card-gained" : "inv-card-lost") : ""}`}>
+                        <button
+                          className={`inv-fav-star ${favorites.includes(item.unique_name) ? "active" : ""}`}
+                          title={favorites.includes(item.unique_name) ? "Remove from Modular Window" : "Add to Modular Window"}
+                          onClick={e => { e.stopPropagation(); toggleFavorite(item.unique_name); }}
+                        >{favorites.includes(item.unique_name) ? "★" : "☆"}</button>
                         {/* Fixed-height mastery slot — always present so image stays at same vertical position */}
                         <div className="inv-mastery-row">
                           {isMastered
@@ -830,13 +1573,14 @@ export default function App() {
                           <ItemImg imageName={item.image_name} category={item.category} size={48} />
                           {craftJob && <span className="inv-foundry-icon" title={`Building — ${craftJob.item_name}`}>⚒</span>}
                         </div>
-                        {/* Name */}
+                        {/* Name + category */}
                         <div className="inv-card-name">
                           {item.name}
                           {isRecent && secAgo !== null && (
                             <span className="item-updated">{Math.floor(secAgo / 60) === 0 ? "· now" : `· ${Math.floor(secAgo / 60)}m`}</span>
                           )}
                         </div>
+                        <div className="inv-card-cat">{item.category}</div>
                         {/* Quantity + recent delta */}
                         <div className={`inv-card-qty ${isZero ? "inv-card-qty-zero" : ""}`}>
                           {fmt(item.qty)}
@@ -856,14 +1600,20 @@ export default function App() {
                   {changeLog.length === 0 ? (
                     <span className="log-empty">No changes recorded yet.</span>
                   ) : (
-                    changeLog.map((c, i) => (
-                      <div key={c.id || i} className="log-row">
-                        <span className="log-name">{c.item_name}</span>
-                        <span className={`log-delta ${deltaClass(c.delta)}`}>{deltaText(c.delta)}</span>
-                        <span className="log-range">{fmt(c.old_qty)} → {fmt(c.new_qty)}</span>
-                        <span className="log-time">{timeStr(c.timestamp)}</span>
-                      </div>
-                    ))
+                    changeLog.map((c, i) => {
+                      const logItem = catalogRef.current.find(ci => ci.unique_name === c.unique_name);
+                      return (
+                        <div key={c.id || i} className="log-row">
+                          <span className="log-name">
+                            {c.item_name}
+                            {logItem && <span className="log-cat">{logItem.category}</span>}
+                          </span>
+                          <span className={`log-delta ${deltaClass(c.delta)}`}>{deltaText(c.delta)}</span>
+                          <span className="log-range">{fmt(c.old_qty)} → {fmt(c.new_qty)}</span>
+                          <span className="log-time">{timeStr(c.timestamp)}</span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -873,20 +1623,38 @@ export default function App() {
 
         {/* ── Foundry module ── */}
         {activeModule === "foundry" && (
-          <Foundry quantities={mergedQty} masteryData={masteryData} refreshKey={itemsRefreshKey} crafting={crafting} />
+          <ErrorBoundary>
+            <Foundry quantities={mergedQty} masteryData={masteryData} refreshKey={itemsRefreshKey} crafting={crafting} colorblindMode={colorblindMode} subsummedWarframes={subsummedWarframes} archonShards={archonShards} tracked={tracked} onTrackToggle={toggleTracked} />
+          </ErrorBoundary>
         )}
 
         {/* ── Market Helper module ── */}
         {activeModule === "market" && (
-          <MarketHelper quantities={mergedQty} refreshKey={itemsRefreshKey} crafting={crafting} />
+          <MarketHelper quantities={mergedQty} apiQuantities={apiQuantities} refreshKey={itemsRefreshKey} crafting={crafting} />
         )}
 
         {/* ── Relic Helper module ── */}
         {activeModule === "relics" && (
           <ErrorBoundary>
-            <RelicHelper quantities={mergedQty} apiQuantities={apiQuantities} masteryData={masteryData} refreshKey={itemsRefreshKey} />
+            <RelicHelper quantities={mergedQty} apiQuantities={apiQuantities} masteryData={masteryData} refreshKey={itemsRefreshKey} colorblindMode={colorblindMode} />
           </ErrorBoundary>
         )}
+
+        {/* ── Modular Window — always visible unless popped out ── */}
+        {!modularPopout && <ModularWindow
+          tracked={tracked}
+          onTrackedChange={setTracked}
+          onUntrack={toggleTracked}
+          favorites={favorites}
+          onFavoritesChange={setFavorites}
+          onUnfavorite={toggleFavorite}
+          quantities={mergedQty}
+          catalog={catalog}
+          width={modularWidth}
+          onWidthChange={setModularWidth}
+          sectionOrder={modularSectionOrder}
+          onSectionOrderChange={setModularSectionOrder}
+        />}
 
       </div>
     </div>
