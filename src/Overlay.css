@@ -1,0 +1,148 @@
+/* CSS variables duplicated from App.css so this standalone window has them */
+:root {
+  --surface:  #161b22;
+  --border:   #30363d;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --accent:   #388bfd;
+  --green:    #3fb950;
+  --red:      #f85149;
+}
+body { background: transparent !important; margin: 0; overflow: hidden; }
+
+.ov-root {
+  position: relative;
+  width: 100%; height: 100%;
+}
+
+/* ─── Pick arrow ─────────────────────────────────────────────────────────── */
+.ov-arrow {
+  position: absolute;
+  top: 2px;
+  width: 36px; height: 28px;
+  pointer-events: none;
+  opacity: 0.65;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+}
+
+/* ─── Card shell ─────────────────────────────────────────────────────────── */
+.ov-card {
+  position: absolute;
+  top: 34px;
+  background: rgba(22, 27, 34, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 8px 6px;
+  display: flex; flex-direction: column; gap: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+}
+
+/* ─── Item name ──────────────────────────────────────────────────────────── */
+.ov-name {
+  font-size: 14px; font-weight: 700;
+  color: #f0e0a0; line-height: 1.25;
+  text-align: center;
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+/* ─── Price row: plat | [lock] | ducats ─────────────────────────────────── */
+.ov-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.ov-price-plat,
+.ov-price-ducat {
+  display: flex; align-items: center; gap: 2px;
+  font-size: 13px; font-weight: 700;
+  white-space: nowrap;
+}
+.ov-price-plat  { color: #c7b3ff; }
+.ov-price-ducat { color: #f0c040; }
+
+.ov-price-na { color: var(--muted); font-weight: 400; }
+
+/* Vaulted lock badge — only shown when item is vaulted */
+.ov-lock {
+  font-size: 13px; line-height: 1;
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  border-radius: 4px;
+  padding: 1px 4px;
+  flex-shrink: 0;
+}
+
+/* ─── Ownership status bar ───────────────────────────────────────────────── */
+/* Matches Foundry: gold = owned, red = not yet complete */
+.ov-own-bar {
+  text-align: center;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+.ov-own-yes {
+  background: rgba(240, 192, 64, 0.15);
+  border: 1px solid rgba(240, 192, 64, 0.35);
+  color: #f0c040;
+}
+.ov-own-no {
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.28);
+  color: #f85149;
+}
+
+/* ─── Set total price ────────────────────────────────────────────────────── */
+.ov-set-price {
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+  font-size: 13px; font-weight: 700; color: #c7b3ff;
+}
+
+/* ─── 2×2 Component grid ─────────────────────────────────────────────────── */
+.ov-comp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+
+.ov-grid-cell {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 3px 4px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  min-width: 0;
+  text-align: center;
+}
+
+/* Owned part — gold, matching Foundry craft-card-owned */
+.ov-grid-owned {
+  background: rgba(240, 192, 64, 0.12);
+  border-color: rgba(240, 192, 64, 0.3);
+}
+.ov-grid-owned .ov-grid-name { color: #f0c040; }
+.ov-grid-owned .ov-grid-qty  { color: rgba(240, 192, 64, 0.65); }
+
+/* Missing part — muted/dark, matching Foundry comp-row-none */
+.ov-grid-miss {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+.ov-grid-miss .ov-grid-name { color: var(--muted); }
+.ov-grid-miss .ov-grid-qty  { color: rgba(139, 148, 158, 0.6); }
+
+.ov-grid-name {
+  font-size: 11px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 1.3;
+}
+.ov-grid-qty  { font-size: 10px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+
+/* ─── Category badge ─────────────────────────────────────────────────────── */
+.ov-cat {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  color: rgba(139,148,158,0.5); letter-spacing: 0.05em; text-align: center;
+}

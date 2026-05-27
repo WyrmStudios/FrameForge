@@ -1,0 +1,297 @@
+.modular-window {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.modular-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background .15s;
+}
+.modular-resize-handle:hover { background: rgba(56,139,253,.35); }
+
+.modular-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  min-width: 0;
+}
+
+.modular-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modular-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  flex: 1;
+}
+
+.modular-section-wrap {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.modular-section-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px 4px 10px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.modular-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  flex: 1;
+}
+
+.modular-section-arrows {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+/* ── Arrow buttons (shared) ── */
+.modular-arrow-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 3px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: background .1s, color .1s;
+  line-height: 1;
+}
+.modular-arrow-btn svg { width: 10px; height: 6px; display: block; }
+.modular-arrow-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,.1);
+  color: var(--text);
+}
+.modular-arrow-btn:disabled { opacity: .2; cursor: default; }
+
+.modular-empty {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* ── Divider ── */
+.modular-divider {
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Tracked list ── */
+.modular-tracked-list {
+  flex-shrink: 0;
+}
+
+/* ── Tracked item group (row + inline requirements) ── */
+.modular-tracked-group {
+  border-bottom: 2px solid rgba(48,54,61,.7);
+}
+.modular-tracked-group:last-child { border-bottom: none; }
+
+.modular-tracked-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+  background: rgba(255,255,255,.02);
+  transition: background .1s;
+}
+.modular-tracked-row:hover { background: rgba(255,255,255,.06); }
+
+.modular-tracked-group.tracking-owned .modular-item-name { color: #f0c040; }
+.modular-tracked-group.tracking-ready .modular-item-name { color: var(--green); }
+
+/* ── Item arrows (bigger than section arrows) ── */
+.modular-item-arrows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex-shrink: 0;
+}
+.modular-item-arrows .modular-arrow-btn {
+  padding: 2px 5px;
+}
+.modular-item-arrows .modular-arrow-btn svg {
+  width: 13px;
+  height: 8px;
+}
+
+/* ── Tracked name + chevron area ── */
+.modular-tracked-name-area {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.modular-tracked-name-area.has-reqs {
+  cursor: pointer;
+}
+.modular-tracked-name-area.has-reqs:hover .modular-item-name {
+  color: var(--text);
+}
+
+.modular-tracked-chevron {
+  width: 10px;
+  height: 6px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform .15s;
+}
+.modular-tracked-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.modular-item-name {
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.modular-item-status {
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.modular-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 0;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: color .1s;
+}
+.modular-remove-btn:hover { color: var(--red); }
+
+/* ── Inline requirements (shown below each tracked item) ── */
+.modular-inline-reqs {
+  padding: 2px 8px 5px 28px;
+  border-top: 1px solid rgba(48,54,61,.4);
+  background: rgba(0,0,0,.18);
+}
+
+.modular-req-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.modular-req-name {
+  flex: 1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.modular-req-row.req-missing .modular-req-name { color: var(--text); }
+.modular-req-row.req-ok .modular-req-name { color: var(--muted); }
+
+.modular-req-counts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.modular-req-all-good {
+  padding: 3px 0 4px;
+  font-size: 11px;
+  color: var(--green);
+}
+
+/* ── Favorites list ── */
+.modular-fav-list {
+  flex-shrink: 0;
+}
+
+.modular-fav-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+  border-bottom: 1px solid rgba(48,54,61,.35);
+  transition: background .1s;
+}
+.modular-fav-item:last-child { border-bottom: none; }
+.modular-fav-item:hover { background: rgba(255,255,255,.03); }
+
+.modular-fav-name {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.modular-fav-qty {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  min-width: 24px;
+  text-align: right;
+}
+
+.modular-fav-star {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #f0c040;
+  font-size: 13px;
+  padding: 0;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: color .1s;
+}
+.modular-fav-star:hover { color: rgba(139,148,158,.6); }

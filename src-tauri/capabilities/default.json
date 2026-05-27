@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window and overlay",
+  "windows": ["main", "relic-overlay", "modular-popout"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-close"
+  ]
+}
