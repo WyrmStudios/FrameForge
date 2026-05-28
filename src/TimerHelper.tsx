@@ -16,8 +16,8 @@ interface WsMission  { type: string; node: string; }
 interface WsArchon   { expiry: string; boss: string; faction: string; missions: WsMission[]; active: boolean; }
 interface WsTrader   { expiry: string; activation: string; character: string; location: string; active: boolean; }
 interface WsNight    { expiry: string; season: number; active: boolean; }
-interface WsFissure  { id: string; expiry: string; node: string; missionType: string; tier: string; tierNum: number; isStorm: boolean; isHard: boolean; active: boolean; }
-interface WsStorm    { id: string; expiry: string; node: string; missionType: string; enemy: string; tier: string; tierNum: number; active: boolean; }
+export interface WsFissure  { id: string; expiry: string; node: string; missionType: string; enemy: string; tier: string; tierNum: number; isStorm: boolean; isHard: boolean; active: boolean; }
+export interface WsStorm    { id: string; expiry: string; node: string; missionType: string; enemy: string; tier: string; tierNum: number; active: boolean; }
 interface WsAlert    { id: string; expiry: string; missionType: string; faction: string; node: string; rewardItem?: string; rewardCredits: number; }
 interface WsInvasion { id: string; node: string; attacker: string; defender: string; attReward: string; defReward: string; pct: number; }
 interface WsDarvo    { expiry: string; item: string; discount: number; originalPrice: number; salePrice: number; amountTotal: number; amountSold: number; }
@@ -137,8 +137,7 @@ export const TIMER_LABELS: Record<string, string> = {
   "deep-archimedea":"Deep Archimedea",
 };
 
-export function getTimerInfo(id: string, ws: WorldState, now: number): { state: string; expiry: string } | null {
-  const cd = (exp: string) => exp;
+export function getTimerInfo(id: string, ws: WorldState): { state: string; expiry: string } | null {
   switch (id) {
     case "cetus-cycle":    return ws.cetus    ? { state: ws.cetus.isDay ? "Day" : "Night",        expiry: ws.cetus.expiry }    : null;
     case "vallis-cycle":   return ws.vallis   ? { state: ws.vallis.isWarm ? "Warm" : "Cold",      expiry: ws.vallis.expiry }   : null;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./ModularWindow.css";
-import { WorldState, TIMER_LABELS, getTimerInfo, fmtMs, FissureWatch, matchesWatch } from "./TimerHelper";
+import { WorldState, TIMER_LABELS, getTimerInfo, fmtMs, FissureWatch, matchesWatch, WsFissure, WsStorm } from "./TimerHelper";
 
 interface CatalogItem {
   unique_name: string;
@@ -352,7 +352,7 @@ export default function ModularWindow({
     ) : (
       <div className="modular-fav-list">
         {timerFavorites.map((id, idx) => {
-          const info = worldState ? getTimerInfo(id, worldState, timerNow) : null;
+          const info = worldState ? getTimerInfo(id, worldState) : null;
           const label = TIMER_LABELS[id] ?? id;
           const remaining = info ? fmtMs(new Date(info.expiry).getTime() - timerNow) : "—";
           return (
@@ -401,7 +401,7 @@ export default function ModularWindow({
           Axi: "#e5c04a", Requiem: "#9b6dff", Omnia: "#e0e0e0",
         };
         // Match each source array with explicit variant so checks are unambiguous
-        type MatchedFissure = { f: { tier: string; tierNum: number; missionType: string; enemy: string; node: string; expiry: string }; variant: "normal" | "hard" | "storm" };
+        type MatchedFissure = { f: WsFissure | WsStorm; variant: "normal" | "hard" | "storm" };
         const matched: MatchedFissure[] = [
           ...(worldState?.fissures   ?? []).filter(f => fissureWatches.some(w => matchesWatch(w, f, "normal"))).map(f => ({ f, variant: "normal" as const })),
           ...(worldState?.spFissures ?? []).filter(f => fissureWatches.some(w => matchesWatch(w, f, "hard"))).map(f => ({ f, variant: "hard" as const })),
