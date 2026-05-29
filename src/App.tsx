@@ -1684,6 +1684,7 @@ export default function App() {
               fissureWatches={fissureWatches}
               onAddWatch={w => setFissureWatches(prev => [...prev, w])}
               onRemoveWatch={id => setFissureWatches(prev => prev.filter(w => w.id !== id))}
+              quantities={mergedQty}
             />
           </ErrorBoundary>
         )}

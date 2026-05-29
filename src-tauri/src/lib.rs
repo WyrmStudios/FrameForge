@@ -600,28 +600,22 @@ pub struct WfmPrice {
     pub buy_median: Option<f64>,
 }
 
-/// Fetch 48-hour median sell/buy price for a single item from warframe.market.
+/// Fetch 48-hour median sell price for a single item from warframe.market.
+/// Tries the slug as-is first, then retries with the Blueprint suffix added or
+/// removed — WFM is inconsistent about whether component blueprints include it.
 #[tauri::command]
 fn fetch_wfm_price(url_name: String) -> Result<WfmPrice, String> {
-    let url = format!("https://api.warframe.market/v1/items/{}/statistics", url_name);
-    let json: serde_json::Value = ureq::get(&url)
-        .call()
-        .map_err(|e| format!("wfm price: {}", e))?
-        .into_json()
-        .map_err(|e| format!("wfm price parse: {}", e))?;
-
-    // Statistics are now sell-only — no order_type field, just take the last (most recent) entry
-    let closed = &json["payload"]["statistics_closed"]["48hours"];
-    let sell_median = closed.as_array()
-        .and_then(|arr| arr.last())
-        .and_then(|e| e["median"].as_f64());
-
-    // Also try 90-day window if 48h has no data
-    let sell_median = if sell_median.is_some() { sell_median } else {
-        json["payload"]["statistics_closed"]["90days"].as_array()
-            .and_then(|arr| arr.last())
-            .and_then(|e| e["median"].as_f64())
-    };
+    let sell_median = wfm_price_for_slug(&url_name).map_err(|e| e)?
+        .or_else(|| {
+            if url_name.ends_with("_blueprint") {
+                let stripped = &url_name[..url_name.len() - "_blueprint".len()];
+                wfm_price_for_slug(stripped).unwrap_or(None)
+            } else {
+                let with_bp = format!("{}_blueprint", url_name);
+                wfm_price_for_slug(&with_bp).unwrap_or(None)
+            }
+        })
+        .map(|p| p as f64);
 
     Ok(WfmPrice { url_name, sell_median, buy_median: None })
 }
@@ -1712,6 +1706,35 @@ fn append_to_file(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     f.write_all(text.as_bytes())
 }
 
+// ─── Localisation lookup ──────────────────────────────────────────────────────
+
+static LANG: std::sync::OnceLock<std::collections::HashMap<String, String>> = std::sync::OnceLock::new();
+
+fn get_lang() -> &'static std::collections::HashMap<String, String> {
+    LANG.get_or_init(|| {
+        ureq::get("https://raw.githubusercontent.com/WFCD/warframe-worldstate-data/master/data/languages.json")
+            .call()
+            .ok()
+            .and_then(|r| r.into_json::<serde_json::Value>().ok())
+            .and_then(|v| v.as_object().map(|obj| {
+                obj.iter().filter_map(|(k, val)| {
+                    let text = val.get("value")?.as_str()?;
+                    Some((k.clone(), text.to_string()))
+                }).collect()
+            }))
+            .unwrap_or_default()
+    })
+}
+
+/// Resolve a /Lotus/Language/... path to its English display name.
+fn loc(path: &str) -> String {
+    if let Some(name) = get_lang().get(path) {
+        return name.clone();
+    }
+    // Fallback: strip the path prefix and convert the last component from PascalCase
+    path_display_name(path)
+}
+
 // ─── Node name lookup ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -1897,18 +1920,22 @@ fn ws_faction(f: &str) -> String {
 /// Extract a display name from a /Lotus/ asset path.
 fn path_display_name(path: &str) -> String {
     let last = path.split('/').last().unwrap_or(path);
+    // Strip known internal prefixes that are never part of the display name
+    let stripped = last
+        .strip_prefix("MPV")   // MegaPrimeVault bundles, e.g. MPVRhinoPrimeSinglePack
+        .unwrap_or(last);
     // Convert PascalCase → "Pascal Case"
-    let mut out = String::with_capacity(last.len() + 8);
+    let mut out = String::with_capacity(stripped.len() + 8);
     let mut prev_was_upper = false;
-    for (i, ch) in last.chars().enumerate() {
+    for (i, ch) in stripped.chars().enumerate() {
         if ch.is_uppercase() && i > 0 && !prev_was_upper {
             out.push(' ');
         }
         out.push(ch);
         prev_was_upper = ch.is_uppercase();
     }
-    // Strip common suffixes
-    for suffix in &[" Item", " Resource Item", " Reward", " Blueprint"] {
+    // Strip common suffixes that add no value
+    for suffix in &[" Item", " Resource Item", " Reward"] {
         if out.ends_with(suffix) {
             out.truncate(out.len() - suffix.len());
             break;
@@ -1917,8 +1944,32 @@ fn path_display_name(path: &str) -> String {
     out
 }
 
+/// Map store item paths to catalog unique_names where possible.
+/// /Lotus/StoreItems/X   → /Lotus/X        (direct catalog items like mods, primes)
+/// /Lotus/Types/StoreItems/... → unchanged  (bundle packages — no catalog entry)
+fn store_to_unique(path: &str) -> String {
+    path.replacen("/Lotus/StoreItems/", "/Lotus/", 1)
+}
+
+/// Resolve a store item path to a display name using the catalog, falling back to path parsing.
+fn item_display_name(path: &str, catalog: &std::collections::HashMap<String, String>) -> String {
+    // Try /Lotus/StoreItems/X → /Lotus/X mapping
+    let unique = store_to_unique(path);
+    if let Some(name) = catalog.get(&unique) {
+        return name.clone();
+    }
+    // Try /Lotus/Types/StoreItems/... → /Lotus/Types/... (cosmetics, song items, etc.)
+    if let Some(rest) = path.strip_prefix("/Lotus/Types/StoreItems/") {
+        let alt = format!("/Lotus/Types/{}", rest);
+        if let Some(name) = catalog.get(&alt) {
+            return name.clone();
+        }
+    }
+    path_display_name(path)
+}
+
 /// Parse DE raw worldstate JSON into the shape TimerHelper.tsx expects.
-fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64) -> serde_json::Value {
+fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::collections::HashMap<String, String>) -> serde_json::Value {
     use serde_json::{json, Value};
 
     // ── World cycles ──────────────────────────────────────────────────────
@@ -1997,12 +2048,47 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64) -> serde_json::V
             let expiry_ms     = ws_ms(&t["Expiry"]);
             let node          = t["Node"].as_str().unwrap_or("");
             let active = now_ms >= activation_ms && now_ms < expiry_ms;
+            let manifest: Vec<Value> = if active {
+                t["Manifest"].as_array().map(|arr| arr.iter().map(|item| {
+                    let raw_path = item["ItemType"].as_str().unwrap_or("");
+                    let name = item_display_name(raw_path, catalog);
+                    json!({
+                        "name": name,
+                        "uniqueName": store_to_unique(raw_path),
+                        "primePrice": item["PrimePrice"].as_i64().unwrap_or(0),
+                        "regularPrice": item["RegularPrice"].as_i64().unwrap_or(0),
+                    })
+                }).collect()).unwrap_or_default()
+            } else { vec![] };
             json!({
                 "activation": ms_to_iso(activation_ms),
                 "expiry":     ms_to_iso(expiry_ms),
                 "character":  "Baro Ki'Teer",
                 "location":   resolve_node(node),
                 "active":     active,
+                "manifest":   manifest,
+            })
+        })
+        .unwrap_or(Value::Null);
+
+    // ── Prime Resurgence (PrimeVaultTraders) ──────────────────────────────
+    let prime_resurgence = raw["PrimeVaultTraders"].as_array()
+        .and_then(|a| a.first())
+        .map(|t| {
+            let activation_ms = ws_ms(&t["Activation"]);
+            let expiry_ms     = ws_ms(&t["Expiry"]);
+            let active = now_ms >= activation_ms && now_ms < expiry_ms;
+            let manifest: Vec<Value> = t["Manifest"].as_array().map(|arr| arr.iter().map(|item| {
+                let raw_path = item["ItemType"].as_str().unwrap_or("");
+                let name = item_display_name(raw_path, catalog);
+                let aya = item["PrimePrice"].as_i64().unwrap_or(0);
+                json!({ "name": name, "uniqueName": store_to_unique(raw_path), "ayaPrice": aya })
+            }).collect()).unwrap_or_default();
+            json!({
+                "activation": ms_to_iso(activation_ms),
+                "expiry":     ms_to_iso(expiry_ms),
+                "active":     active,
+                "manifest":   manifest,
             })
         })
         .unwrap_or(Value::Null);
@@ -2261,7 +2347,7 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64) -> serde_json::V
         .map(|g| {
             let expiry_ms = ws_ms(&g["Expiry"]);
             let desc = g["Desc"].as_str().unwrap_or("");
-            let label = path_display_name(desc);
+            let label = loc(desc);
             json!({ "expiry": ms_to_iso(expiry_ms), "label": label })
         })
         .unwrap_or(Value::Null);
@@ -2270,7 +2356,7 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64) -> serde_json::V
         "cetus": cetus, "vallis": vallis, "cambion": cambion, "zariman": zariman,
         "bounties": bounties,
         "sortie": sortie, "archonHunt": archon_hunt,
-        "voidTrader": void_trader, "nightwave": nightwave,
+        "voidTrader": void_trader, "primeResurgence": prime_resurgence, "nightwave": nightwave,
         "circuit": circuit, "kahl": kahl, "deepArchimedea": deep_archimedea,
         "activeEvent": active_event,
         "darvo": darvo,
@@ -2285,8 +2371,13 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64) -> serde_json::V
 /// Fetch and parse the DE official Warframe worldstate.
 /// Runs on a blocking thread so the async runtime is never stalled.
 #[tauri::command]
-async fn fetch_worldstate() -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(|| -> Result<serde_json::Value, String> {
+async fn fetch_worldstate(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    // Snapshot catalog for name lookups — do this before entering spawn_blocking
+    let catalog: std::collections::HashMap<String, String> = {
+        let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
+        items.iter().map(|i| (i.unique_name.clone(), i.name.clone())).collect()
+    };
+    tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -2297,7 +2388,7 @@ async fn fetch_worldstate() -> Result<serde_json::Value, String> {
             .map_err(|e| format!("worldstate fetch failed: {}", e))?
             .into_json::<serde_json::Value>()
             .map_err(|e| format!("worldstate parse failed: {}", e))?;
-        Ok(parse_worldstate_value(&raw, now_ms))
+        Ok(parse_worldstate_value(&raw, now_ms, &catalog))
     })
     .await
     .map_err(|e| format!("task error: {}", e))?

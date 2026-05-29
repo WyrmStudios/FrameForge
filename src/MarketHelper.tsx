@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./HelpTip";
 
@@ -150,9 +150,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
   const [prices, setPrices]             = useState<Map<string, WfmPrice>>(new Map());
   const [priceAges, setPriceAges]       = useState<Map<string, number>>(new Map()); // urlName → fetchedAt ms
   const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
-  const [fetchedSets, setFetchedSets]   = useState<Set<string>>(new Set());
 
-  const PRICE_TTL = 60 * 60 * 1000; // 1 hour
   const PRICE_CACHE_KEY = "ff-wfm-prices-v1";
   const [search, setSearch]             = useState("");
   const [sortMode, setSortMode]         = useState<SortMode>("ducats-owned");
@@ -209,15 +207,28 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
 
   const wfmLookup = useMemo(() => {
     const map = new Map<string, string>();
+
+    // Pass 1: exact matches — highest priority, never overwritten
+    for (const w of wfmItems) {
+      map.set(normalizeForWfm(w.item_name), w.url_name);
+    }
+
+    // Pass 2: fill gaps only — add Blueprint ↔ no-Blueprint aliases for keys
+    // that don't already have an exact entry, so we handle WFM's inconsistency
+    // (some items listed with "Blueprint" suffix, some without)
     for (const w of wfmItems) {
       const key = normalizeForWfm(w.item_name);
-      map.set(key, w.url_name);
-      // Also map without "_blueprint" suffix so catalog names like
-      // "Atlas Prime Chassis" match WFM's "Atlas Prime Chassis Blueprint"
       if (key.endsWith("_blueprint")) {
-        map.set(key.slice(0, -"_blueprint".length), w.url_name);
+        // WFM has "…Blueprint" → also expose without suffix for catalog names that omit it
+        const stripped = key.slice(0, -"_blueprint".length);
+        if (!map.has(stripped)) map.set(stripped, w.url_name);
+      } else {
+        // WFM has no "Blueprint" → also expose with suffix for catalog names that include it
+        const withBp = key + "_blueprint";
+        if (!map.has(withBp)) map.set(withBp, w.url_name);
       }
     }
+
     return map;
   }, [wfmItems]);
 
@@ -307,7 +318,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
     primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (quantities[i.unique_name] ?? 0) - 1), 0),
   [primeItems, quantities]);
 
-  // Fetch price for a single URL — sequential within each set to avoid rate limiting
+  // Fetch price for a single URL
   const fetchOnePrice = useCallback(async (urlName: string) => {
     try {
       const price = await invoke<{ url_name: string; sell_median?: number }>("fetch_wfm_price", { urlName });
@@ -318,63 +329,81 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
     setLoadingPrices(prev => { const n = new Set(prev); n.delete(urlName); return n; });
   }, []);
 
-  const fetchPricesForSet = useCallback(async (setKey: string, parts: CatalogItem[]) => {
-    if (fetchedSets.has(setKey)) return;
-    setFetchedSets(prev => new Set(prev).add(setKey));
-    const urls: string[] = [];
-    const setUrl = wfmLookup.get(normalizeForWfm(setKey + " Set"));
-    if (setUrl) urls.push(setUrl);
-    for (const p of parts) {
-      const key = normalizeForWfm(p.name);
-      const url = wfmLookup.get(key);
-      if (url && !urls.includes(url)) urls.push(url);
-    }
-    // Only fetch URLs that are missing or stale (older than 1 hour)
-    const now = Date.now();
-    const staleUrls = urls.filter(u => {
-      const age = priceAges.get(u);
-      return !age || now - age > PRICE_TTL;
-    });
-    if (staleUrls.length === 0) return; // All prices are fresh from cache
-    setLoadingPrices(prev => { const n = new Set(prev); staleUrls.forEach(u => n.add(u)); return n; });
-    for (const urlName of staleUrls) {
-      await fetchOnePrice(urlName);
-      await new Promise(r => setTimeout(r, 250));
-    }
-  }, [wfmLookup, fetchedSets, fetchOnePrice, priceAges, PRICE_TTL]);
+  // Refs so the continuous loop always reads current state without stale closures
+  const pricesRef     = useRef(prices);
+  const priceAgesRef  = useRef(priceAges);
+  const quantitiesRef = useRef(quantities);
+  const setsRef       = useRef(sets);
+  const lookupRef     = useRef(wfmLookup);
+  useEffect(() => { pricesRef.current     = prices;     }, [prices]);
+  useEffect(() => { priceAgesRef.current  = priceAges;  }, [priceAges]);
+  useEffect(() => { quantitiesRef.current = quantities; }, [quantities]);
+  useEffect(() => { setsRef.current       = sets;       }, [sets]);
+  useEffect(() => { lookupRef.current     = wfmLookup;  }, [wfmLookup]);
 
-  const ownedSetCount = useMemo(() =>
-    Array.from(sets.entries()).filter(([_, p]) => p.some(i => (quantities[i.unique_name] ?? 0) > 0)).length,
-  [sets, quantities]);
-
+  // Continuous price refresh loop — runs forever, priority order each cycle:
+  //   P0: owned sets with no price yet
+  //   P1: any set still showing "—" (null price)
+  //   P2: owned sets (oldest fetch first)
+  //   P3: everything else (oldest fetch first)
   useEffect(() => {
     if (wfmLookup.size === 0) return;
-
-    const allSetsArr = Array.from(sets.entries());
-    const owned = allSetsArr.filter(([_, p]) => p.some(i => (quantities[i.unique_name] ?? 0) > 0));
-    const others = allSetsArr.filter(([_, p]) => !p.some(i => (quantities[i.unique_name] ?? 0) > 0));
-
     let cancelled = false;
 
-    const runBatch = async (items: [string, CatalogItem[]][], batchSize: number, delay: number) => {
-      for (let i = 0; i < items.length; i += batchSize) {
-        if (cancelled) break;
-        const batch = items.slice(i, i + batchSize);
-        await Promise.all(batch.map(([key, parts]) => fetchPricesForSet(key, parts)));
-        if (i + batchSize < items.length) await new Promise(r => setTimeout(r, delay));
+    const getSetUrls = (setKey: string, parts: CatalogItem[]): string[] => {
+      const lookup = lookupRef.current;
+      const urls: string[] = [];
+      const setUrl = lookup.get(normalizeForWfm(setKey + " Set"));
+      if (setUrl) urls.push(setUrl);
+      for (const p of parts) {
+        const key = normalizeForWfm(p.name);
+        const url = lookup.get(key) ?? key; // fall back to slug derived from name
+        if (!urls.includes(url)) urls.push(url);
       }
+      return urls;
     };
 
     const run = async () => {
-      // Phase 1: owned sets — batch 2, 800ms between batches
-      await runBatch(owned, 2, 800);
-      // Phase 2: everything else — 1 at a time, 3s apart (background, low priority)
-      if (!cancelled) await runBatch(others, 1, 3000);
+      while (!cancelled) {
+        const ages    = priceAgesRef.current;
+        const px      = pricesRef.current;
+        const qty     = quantitiesRef.current;
+        const allSets = Array.from(setsRef.current.entries());
+
+        type Job = { url: string; priority: number; age: number };
+        const jobs: Job[] = [];
+        const seen = new Set<string>();
+
+        for (const [key, parts] of allSets) {
+          const owned = parts.some(p => (qty[p.unique_name] ?? 0) > 0);
+          for (const url of getSetUrls(key, parts)) {
+            if (seen.has(url)) continue;
+            seen.add(url);
+            const hasPrice = px.get(url)?.sell_median != null;
+            const age      = ages.get(url) ?? 0;
+            const priority = !hasPrice ? (owned ? 0 : 1) : (owned ? 2 : 3);
+            jobs.push({ url, priority, age });
+          }
+        }
+
+        // Sort by priority, then oldest-fetched first within same priority
+        jobs.sort((a, b) => a.priority - b.priority || a.age - b.age);
+
+        for (const { url } of jobs) {
+          if (cancelled) break;
+          setLoadingPrices(prev => new Set(prev).add(url));
+          await fetchOnePrice(url);
+          await new Promise(r => setTimeout(r, 350));
+        }
+
+        // Pause between cycles before starting the next sweep
+        if (!cancelled) await new Promise(r => setTimeout(r, 5_000));
+      }
     };
 
     run();
     return () => { cancelled = true; };
-  }, [wfmLookup.size, ownedSetCount]); // eslint-disable-line
+  }, [wfmLookup.size, fetchOnePrice]); // eslint-disable-line
 
   const visibleSets = useMemo(() => {
     const q = search.toLowerCase();
@@ -454,9 +483,10 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
         {visibleSets.length === 0 ? (
           <div className="empty-msg" style={{ gridColumn: "1/-1" }}>No sets match. Adjust filters or own some prime parts first.</div>
         ) : visibleSets.map(([setKey, parts]) => {
-          const setUrl     = wfmLookup.get(normalizeForWfm(setKey + " Set"));
-          const parent     = parentItems.get(setKey) ?? parts[0];
-          const setPriceData = setUrl ? prices.get(setUrl) : undefined;
+          const setNormalKey = normalizeForWfm(setKey + " Set");
+          const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
+          const parent       = parentItems.get(setKey) ?? parts[0];
+          const setPriceData = prices.get(setUrl);
           const setParts: SetPart[] = [...parts]
             .sort((a, b) => {
               const qa = quantities[a.unique_name] ?? 0;
@@ -464,16 +494,17 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
               return qb - qa || a.name.localeCompare(b.name);
             })
             .map(p => {
-              const url = wfmLookup.get(normalizeForWfm(p.name));
-              const priceData = url ? prices.get(url) : undefined;
+              const normalKey = normalizeForWfm(p.name);
+              const url = wfmLookup.get(normalKey) ?? normalKey;
+              const priceData = prices.get(url);
               return { item: p, qty: quantities[p.unique_name] ?? 0,
-                sellMedian: priceData?.sell_median, loading: url ? loadingPrices.has(url) : false };
+                sellMedian: priceData?.sell_median, loading: loadingPrices.has(url) };
             });
           return (
             <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
               setPrice={setPriceData}
-              setPriceLoading={setUrl ? loadingPrices.has(setUrl) : false}
-              pricesFetched={fetchedSets.has(setKey)}
+              setPriceLoading={loadingPrices.has(setUrl)}
+              pricesFetched={priceAges.size > 0}
               crafting={crafting} />
           );
         })}

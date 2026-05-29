@@ -14,7 +14,9 @@ interface WsSortieVariant { missionType: string; modifier: string; node: string;
 interface WsSortie   { expiry: string; boss: string; faction: string; variants: WsSortieVariant[]; active: boolean; }
 interface WsMission  { type: string; node: string; }
 interface WsArchon   { expiry: string; boss: string; faction: string; missions: WsMission[]; active: boolean; }
-interface WsTrader   { expiry: string; activation: string; character: string; location: string; active: boolean; }
+interface WsManifestItem { name: string; uniqueName?: string; primePrice?: number; regularPrice?: number; ayaPrice?: number; }
+interface WsTrader   { expiry: string; activation: string; character: string; location: string; active: boolean; manifest: WsManifestItem[]; }
+interface WsPrimeResurgence { expiry: string; activation: string; active: boolean; manifest: WsManifestItem[]; }
 interface WsNight    { expiry: string; season: number; active: boolean; }
 export interface WsFissure  { id: string; expiry: string; node: string; missionType: string; enemy: string; tier: string; tierNum: number; isStorm: boolean; isHard: boolean; active: boolean; }
 export interface WsStorm    { id: string; expiry: string; node: string; missionType: string; enemy: string; tier: string; tierNum: number; active: boolean; }
@@ -71,7 +73,8 @@ export interface WorldState {
   sortie?:         WsSortie;
   archonHunt?:     WsArchon;
   voidTrader?:     WsTrader;
-  nightwave?:      WsNight;
+  nightwave?:        WsNight;
+  primeResurgence?:  WsPrimeResurgence;
   circuit?:        WsCircuit;
   kahl?:           WsSimple;
   deepArchimedea?: WsSimple;
@@ -131,7 +134,8 @@ export const TIMER_LABELS: Record<string, string> = {
   "daily-reset":    "Daily Reset",
   "weekly-reset":   "Weekly Reset",
   "void-trader":    "Void Trader",
-  "nightwave":      "Nightwave",
+  "nightwave":        "Nightwave",
+  "prime-resurgence": "Prime Resurgence",
   "circuit":        "The Circuit",
   "kahl":           "Kahl / Break Narmer",
   "deep-archimedea":"Deep Archimedea",
@@ -153,7 +157,8 @@ export function getTimerInfo(id: string, ws: WorldState): { state: string; expir
     case "daily-reset":    return { state: "UTC 00:00", expiry: nextUtcMidnight() };
     case "weekly-reset":   return { state: "Monday",    expiry: nextWeeklyReset() };
     case "void-trader":    return ws.voidTrader ? { state: ws.voidTrader.active ? "Here" : "Away", expiry: ws.voidTrader.active ? ws.voidTrader.expiry : ws.voidTrader.activation } : null;
-    case "nightwave":      return ws.nightwave?.active ? { state: `S${ws.nightwave.season}`, expiry: ws.nightwave.expiry } : null;
+    case "nightwave":         return ws.nightwave?.active ? { state: `S${ws.nightwave.season}`, expiry: ws.nightwave.expiry } : null;
+    case "prime-resurgence":  return ws.primeResurgence?.active ? { state: "Active", expiry: ws.primeResurgence.expiry } : null;
     case "circuit":        return ws.circuit    ? { state: "Weekly",  expiry: ws.circuit.expiry }        : null;
     case "kahl":           return ws.kahl       ? { state: "Weekly",  expiry: ws.kahl.expiry }           : null;
     case "deep-archimedea":return ws.deepArchimedea ? { state: "Weekly", expiry: ws.deepArchimedea.expiry } : null;
@@ -184,17 +189,24 @@ interface Props {
   fissureWatches: FissureWatch[];
   onAddWatch: (w: FissureWatch) => void;
   onRemoveWatch: (id: string) => void;
+  quantities: Record<string, number>;
 }
 
 type FissureTab = "normal" | "hard" | "storm";
 
-export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatches, onAddWatch, onRemoveWatch }: Props) {
+export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatches, onAddWatch, onRemoveWatch, quantities }: Props) {
   const [ws, setWs] = useState<WorldState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [fissureTab, setFissureTab] = useState<FissureTab>("normal");
   const [showWatchForm, setShowWatchForm] = useState(false);
+  const [openInventory, setOpenInventory] = useState<Set<string>>(new Set());
+  const toggleInventory = (id: string) => setOpenInventory(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [wTier, setWTier] = useState("Any");
   const [wMission, setWMission] = useState("Any");
   const [wVariant, setWVariant] = useState<FissureWatch["variant"]>("any");
@@ -219,14 +231,63 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
 
   function StarBtn({ id }: { id: string }) {
     return (
-      <button className={`timer-star${isFav(id) ? " fav" : ""}`} onClick={() => onFavoriteToggle(id)} title={isFav(id) ? "Unpin" : "Pin to Modular Window"}>
+      <button
+        className={`timer-star${isFav(id) ? " fav" : ""}`}
+        onClick={e => { e.stopPropagation(); onFavoriteToggle(id); }}
+        title={isFav(id) ? "Unpin" : "Pin to Modular Window"}
+      >
         {isFav(id) ? "★" : "☆"}
       </button>
     );
   }
 
+  const Chevron = ({ open }: { open: boolean }) => (
+    <svg className="exp-tile-chevron" viewBox="0 0 10 6" fill="none" style={{ transform: open ? "" : "rotate(-90deg)" }}>
+      <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+
+  function ExpHeader({ id, name, state, sc, countdown, open, showChevron = true }: {
+    id?: string; name: string; state: string; sc?: string; countdown: string; open: boolean; showChevron?: boolean;
+  }) {
+    return (
+      <div className="exp-tile-header">
+        <div className="exp-tile-name-row">
+          <span className="exp-tile-name">{name}</span>
+          {showChevron && <Chevron open={open} />}
+        </div>
+        <div className="exp-tile-meta-row">
+          {id && <StarBtn id={id} />}
+          <span className={`timer-tile-state ${sc ?? "st-neutral"}`}>{state}</span>
+          <span className="exp-tile-cd">{countdown}</span>
+        </div>
+      </div>
+    );
+  }
+
   function SectionHeader({ label, children }: { label: string; children?: React.ReactNode }) {
     return <div className="timer-group-label">{label}{children}</div>;
+  }
+
+  // Compact tile for use inside a 2-column grid
+  function TimerTile({ id, label, state, stateClass, expiry, until }: {
+    id?: string; label: string; state: string; stateClass?: string; expiry: string; until?: string;
+  }) {
+    return (
+      <div className="timer-tile">
+        {id && <StarBtn id={id} />}
+        <div className="timer-tile-inner">
+          <div className="timer-tile-top">
+            <span className="timer-tile-name">{label}</span>
+            <span className={`timer-tile-cd`}>{fmtMs(new Date(expiry).getTime() - now)}</span>
+          </div>
+          <div className="timer-tile-bottom">
+            <span className={`timer-tile-state ${stateClass ?? "st-neutral"}`}>{state}</span>
+            {until && <span className="timer-tile-until">{until}</span>}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (loading) return <div className="timer-loading">Loading worldstate…</div>;
@@ -237,230 +298,164 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
 
       {/* ── World Cycles ──────────────────────────────────────────────────── */}
       <SectionHeader label="World Cycles" />
-
-      {ws?.cetus && (
-        <div className="timer-row">
-          <StarBtn id="cetus-cycle" />
-          <span className="timer-name">Cetus</span>
-          <span className={`timer-state ${ws.cetus.isDay ? "st-day" : "st-night"}`}>{ws.cetus.isDay ? "Day" : "Night"}</span>
-          <span className="timer-cd">{cd(ws.cetus.expiry)}</span>
-          <span className="timer-until">until {ws.cetus.isDay ? "Night" : "Day"}</span>
-        </div>
-      )}
-
-      {ws?.vallis && (
-        <div className="timer-row">
-          <StarBtn id="vallis-cycle" />
-          <span className="timer-name">Orb Vallis</span>
-          <span className={`timer-state ${ws.vallis.isWarm ? "st-warm" : "st-cold"}`}>{ws.vallis.isWarm ? "Warm" : "Cold"}</span>
-          <span className="timer-cd">{cd(ws.vallis.expiry)}</span>
-          <span className="timer-until">until {ws.vallis.isWarm ? "Cold" : "Warm"}</span>
-        </div>
-      )}
-
-      {ws?.cambion && (
-        <div className="timer-row">
-          <StarBtn id="cambion-cycle" />
-          <span className="timer-name">Cambion Drift</span>
-          <span className="timer-state st-fass">Active</span>
-          <span className="timer-cd">{cd(ws.cambion.expiry)}</span>
-          <span className="timer-until">next cycle</span>
-        </div>
-      )}
-
-      {ws?.zariman && (
-        <div className="timer-row">
-          <StarBtn id="zariman-cycle" />
-          <span className="timer-name">Zariman</span>
-          <span className="timer-state st-neutral">Active</span>
-          <span className="timer-cd">{cd(ws.zariman.expiry)}</span>
-          <span className="timer-until">reset</span>
-        </div>
-      )}
+      <div className="timer-section-grid">
+        {ws?.cetus    && <TimerTile id="cetus-cycle"   label="Cetus"         state={ws.cetus.isDay ? "Day" : "Night"}     stateClass={ws.cetus.isDay ? "st-day" : "st-night"}  expiry={ws.cetus.expiry}   until={`until ${ws.cetus.isDay ? "Night" : "Day"}`} />}
+        {ws?.vallis   && <TimerTile id="vallis-cycle"  label="Orb Vallis"    state={ws.vallis.isWarm ? "Warm" : "Cold"}   stateClass={ws.vallis.isWarm ? "st-warm" : "st-cold"} expiry={ws.vallis.expiry}  until={`until ${ws.vallis.isWarm ? "Cold" : "Warm"}`} />}
+        {ws?.cambion  && <TimerTile id="cambion-cycle" label="Cambion Drift" state="Active"                               stateClass="st-fass"                                 expiry={ws.cambion.expiry} until="next cycle" />}
+        {ws?.zariman  && <TimerTile id="zariman-cycle" label="Zariman"       state="Active"                               stateClass="st-neutral"                              expiry={ws.zariman.expiry} until="reset" />}
+      </div>
 
       {/* ── Bounties ──────────────────────────────────────────────────────── */}
       {ws?.bounties && Object.keys(ws.bounties).length > 0 && (
         <>
           <SectionHeader label="Bounties" />
-          {([
-            ["cetus",   "Cetus",          "bounty-cetus"],
-            ["vallis",  "Orb Vallis",     "bounty-vallis"],
-            ["cambion", "Cambion Drift",  "bounty-cambion"],
-            ["zariman", "Zariman",        "bounty-zariman"],
-            ["hex",     "Hex / Albrecht", "bounty-hex"],
-          ] as [string, string, string][]).map(([key, label, favId]) => {
-            const b = ws.bounties![key];
-            if (!b) return null;
-            return (
-              <div key={key} className="timer-row">
-                <StarBtn id={favId} />
-                <span className="timer-name">{label}</span>
-                <span className="timer-state st-neutral">{b.jobCount} jobs</span>
-                <span className="timer-cd">{cd(b.expiry)}</span>
-                <span className="timer-until">reset</span>
-              </div>
-            );
-          })}
+          <div className="timer-section-grid">
+            {([
+              ["cetus",   "Cetus",          "bounty-cetus"],
+              ["vallis",  "Orb Vallis",     "bounty-vallis"],
+              ["cambion", "Cambion Drift",  "bounty-cambion"],
+              ["zariman", "Zariman",        "bounty-zariman"],
+              ["hex",     "Hex / Albrecht", "bounty-hex"],
+            ] as [string, string, string][]).map(([key, label, favId]) => {
+              const b = ws.bounties![key];
+              if (!b) return null;
+              return <TimerTile key={key} id={favId} label={label} state={`${b.jobCount} jobs`} stateClass="st-neutral" expiry={b.expiry} until="reset" />;
+            })}
+          </div>
         </>
       )}
 
       {/* ── Daily & Weekly ────────────────────────────────────────────────── */}
       <SectionHeader label="Daily &amp; Weekly" />
-
-      <div className="timer-row">
-        <StarBtn id="daily-reset" />
-        <span className="timer-name">Daily Reset</span>
-        <span className="timer-state st-neutral">UTC 00:00</span>
-        <span className="timer-cd">{fmtMs(new Date(nextUtcMidnight()).getTime() - now)}</span>
+      <div className="timer-section-grid">
+        <TimerTile id="daily-reset"  label="Daily Reset"  state="UTC 00:00" stateClass="st-neutral" expiry={nextUtcMidnight()} />
+        <TimerTile id="weekly-reset" label="Weekly Reset" state="Monday"    stateClass="st-neutral" expiry={nextWeeklyReset()} />
+        {ws?.kahl           && <TimerTile id="kahl"            label="Kahl / Break Narmer" state="Weekly" stateClass="st-neutral" expiry={ws.kahl.expiry} />}
+        {ws?.deepArchimedea && <TimerTile id="deep-archimedea" label="Deep Archimedea"      state="Weekly" stateClass="st-neutral" expiry={ws.deepArchimedea.expiry} />}
       </div>
 
-      <div className="timer-row">
-        <StarBtn id="weekly-reset" />
-        <span className="timer-name">Weekly Reset</span>
-        <span className="timer-state st-neutral">Monday</span>
-        <span className="timer-cd">{fmtMs(new Date(nextWeeklyReset()).getTime() - now)}</span>
-      </div>
-
-      {ws?.sortie && (
-        <div className="timer-block">
-          <div className="timer-row">
-            <StarBtn id="sortie" />
-            <span className="timer-name">Sortie</span>
-            <span className="timer-state st-neutral">{ws.sortie.faction}</span>
-            <span className="timer-cd">{cd(ws.sortie.expiry)}</span>
-          </div>
-          <div className="timer-sublist">
-            {ws.sortie.variants?.map((v, i) => (
-              <div key={i} className="timer-subrow">
-                <span className="sub-node">{v.node}</span>
-                <span className="sub-type">{v.missionType}</span>
-                {v.modifier && <span className="sub-mod">{v.modifier}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {ws?.archonHunt && (
-        <div className="timer-block">
-          <div className="timer-row">
-            <StarBtn id="archon-hunt" />
-            <span className="timer-name">Archon Hunt</span>
-            <span className="timer-state st-neutral">{ws.archonHunt.boss}</span>
-            <span className="timer-cd">{cd(ws.archonHunt.expiry)}</span>
-          </div>
-          <div className="timer-sublist">
-            {ws.archonHunt.missions?.map((m, i) => (
-              <div key={i} className="timer-subrow">
-                <span className="sub-node">{m.node}</span>
-                <span className="sub-type">{m.type}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {ws?.circuit && (
-        <div className="timer-block">
-          <div className="timer-row">
-            <StarBtn id="circuit" />
-            <span className="timer-name">The Circuit</span>
-            <span className="timer-state st-duviri">Duviri</span>
-            <span className="timer-cd">{cd(ws.circuit.expiry)}</span>
-          </div>
-          {(ws.circuit.normalFrames?.length > 0 || ws.circuit.hardWeapons?.length > 0) && (
-            <div className="timer-sublist">
-              {ws.circuit.normalFrames?.length > 0 && (
-                <div className="timer-subrow"><span className="sub-node">Normal</span><span className="sub-type">{ws.circuit.normalFrames.join(" · ")}</span></div>
-              )}
-              {ws.circuit.hardWeapons?.length > 0 && (
-                <div className="timer-subrow"><span className="sub-node">Hard</span><span className="sub-type">{ws.circuit.hardWeapons.join(" · ")}</span></div>
-              )}
+      {/* ── Daily & Weekly — expandable tiles ─────────────────────────────── */}
+      <div className="timer-section-grid">
+        {ws?.sortie && (() => {
+          const open = openInventory.has("sortie");
+          return (
+            <div className={`exp-tile${open ? " open" : ""}`} onClick={() => toggleInventory("sortie")}>
+              <ExpHeader id="sortie" name="Sortie" state={ws.sortie.faction} countdown={cd(ws.sortie.expiry)} open={open} />
+              {open && <div className="exp-tile-body">
+                {ws.sortie.variants?.map((v, i) => (
+                  <div key={i} className="exp-tile-row">
+                    <span className="exp-row-type">{v.missionType}</span>
+                    {v.modifier && <span className="exp-row-mod">{v.modifier}</span>}
+                    <span className="exp-row-node">{v.node}</span>
+                  </div>
+                ))}
+              </div>}
             </div>
-          )}
-        </div>
-      )}
+          );
+        })()}
 
-      {ws?.kahl && (
-        <div className="timer-row">
-          <StarBtn id="kahl" />
-          <span className="timer-name">Kahl / Break Narmer</span>
-          <span className="timer-state st-neutral">Weekly</span>
-          <span className="timer-cd">{cd(ws.kahl.expiry)}</span>
-        </div>
-      )}
+        {ws?.archonHunt && (() => {
+          const open = openInventory.has("archon");
+          return (
+            <div className={`exp-tile${open ? " open" : ""}`} onClick={() => toggleInventory("archon")}>
+              <ExpHeader id="archon-hunt" name="Archon Hunt" state={ws.archonHunt.boss} countdown={cd(ws.archonHunt.expiry)} open={open} />
+              {open && <div className="exp-tile-body">
+                {ws.archonHunt.missions?.map((m, i) => (
+                  <div key={i} className="exp-tile-row">
+                    <span className="exp-row-type">{m.type}</span>
+                    <span className="exp-row-node">{m.node}</span>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          );
+        })()}
 
-      {ws?.deepArchimedea && (
-        <div className="timer-row">
-          <StarBtn id="deep-archimedea" />
-          <span className="timer-name">Deep Archimedea</span>
-          <span className="timer-state st-neutral">Weekly</span>
-          <span className="timer-cd">{cd(ws.deepArchimedea.expiry)}</span>
-        </div>
-      )}
+        {ws?.circuit && (() => {
+          const open = openInventory.has("circuit");
+          return (
+            <div className={`exp-tile${open ? " open" : ""}`} onClick={() => toggleInventory("circuit")}>
+              <ExpHeader id="circuit" name="The Circuit" state="Duviri" sc="st-duviri" countdown={cd(ws.circuit.expiry)} open={open} />
+              {open && <div className="exp-tile-body">
+                {ws.circuit.normalFrames?.length > 0 && <div className="exp-tile-row"><span className="exp-row-mod">Normal</span><span className="exp-row-node">{ws.circuit.normalFrames.join(" · ")}</span></div>}
+                {ws.circuit.hardWeapons?.length > 0  && <div className="exp-tile-row"><span className="exp-row-mod">Hard</span><span className="exp-row-node">{ws.circuit.hardWeapons.join(" · ")}</span></div>}
+              </div>}
+            </div>
+          );
+        })()}
+      </div>
 
       {/* ── Events ────────────────────────────────────────────────────────── */}
       <SectionHeader label="Events" />
-
-      {ws?.voidTrader && (
-        <div className="timer-row">
-          <StarBtn id="void-trader" />
-          <span className="timer-name">{ws.voidTrader.character}</span>
-          <span className={`timer-state ${ws.voidTrader.active ? "st-active" : "st-away"}`}>{ws.voidTrader.active ? "Here" : "Away"}</span>
-          <span className="timer-cd">{ws.voidTrader.active ? cd(ws.voidTrader.expiry) : fmtMs(new Date(ws.voidTrader.activation).getTime() - now)}</span>
-          <span className="timer-until">{ws.voidTrader.active ? ws.voidTrader.location : "until arrival"}</span>
-        </div>
-      )}
-
-      {ws?.nightwave?.active && (
-        <div className="timer-row">
-          <StarBtn id="nightwave" />
-          <span className="timer-name">Nightwave</span>
-          <span className="timer-state st-neutral">Season {ws.nightwave.season}</span>
-          <span className="timer-cd">{cd(ws.nightwave.expiry)}</span>
-        </div>
-      )}
-
-      {ws?.activeEvent && (
-        <div className="timer-row">
-          <span className="timer-star" style={{ visibility: "hidden" }}>☆</span>
-          <span className="timer-name">{ws.activeEvent.label}</span>
-          <span className="timer-state st-active">Event</span>
-          <span className="timer-cd">{cd(ws.activeEvent.expiry)}</span>
-        </div>
-      )}
-
-      {ws?.darvo && (
-        <div className="timer-block">
-          <div className="timer-row">
-            <span className="timer-star" style={{ visibility: "hidden" }}>☆</span>
-            <span className="timer-name">Darvo Deal</span>
-            <span className="timer-state st-neutral">-{ws.darvo.discount}%</span>
-            <span className="timer-cd">{cd(ws.darvo.expiry)}</span>
-          </div>
-          <div className="timer-sublist">
-            <div className="timer-subrow">
-              <span className="sub-node">{ws.darvo.item}</span>
-              <span className="sub-type" style={{ color: "#f0c040" }}>{ws.darvo.salePrice}p</span>
-              <span className="sub-mod" style={{ textDecoration: "line-through", color: "var(--muted)" }}>{ws.darvo.originalPrice}p</span>
+      <div className="timer-section-grid">
+        {ws?.voidTrader && (() => {
+          const open = openInventory.has("baro");
+          const active = ws.voidTrader.active;
+          return (
+            <div className={`exp-tile${open ? " open" : ""}${active ? "" : " tile-away"}`} onClick={() => active && toggleInventory("baro")}>
+              <ExpHeader id="void-trader" name={ws.voidTrader.character} state={active ? "Here" : "Away"} sc={active ? "st-active" : "st-away"} countdown={active ? cd(ws.voidTrader.expiry) : fmtMs(new Date(ws.voidTrader.activation).getTime() - now)} open={open} showChevron={active} />
+              {active && !open && <div className="exp-tile-location">{ws.voidTrader.location}</div>}
+              {active && open && <div className="exp-tile-body exp-tile-inventory" onClick={e => e.stopPropagation()}>
+                {ws.voidTrader.manifest.map((item, i) => {
+                  const owned = item.uniqueName ? (quantities[item.uniqueName] ?? 0) > 0 : false;
+                  return (
+                    <div key={i} className={`timer-inv-row${owned ? " inv-owned" : ""}`}>
+                      <span className="timer-inv-name">{item.name}</span>
+                      {owned && <span className="inv-owned-tag">Owned</span>}
+                      {item.primePrice ? <span className="timer-inv-price aya">{item.primePrice} <span className="inv-currency">Ducats</span></span> : null}
+                      {item.regularPrice ? <span className="timer-inv-price cr">{item.regularPrice?.toLocaleString()} <span className="inv-currency">cr</span></span> : null}
+                    </div>
+                  );
+                })}
+              </div>}
             </div>
-          </div>
-        </div>
-      )}
+          );
+        })()}
+
+        {ws?.primeResurgence?.active && (() => {
+          const open = openInventory.has("prime-resurgence");
+          return (
+            <div className={`exp-tile${open ? " open" : ""}`} onClick={() => toggleInventory("prime-resurgence")}>
+              <ExpHeader id="prime-resurgence" name="Prime Resurgence" state="Active" sc="st-active" countdown={cd(ws.primeResurgence!.expiry)} open={open} />
+              {open && <div className="exp-tile-body exp-tile-inventory" onClick={e => e.stopPropagation()}>
+                {ws.primeResurgence!.manifest.map((item, i) => {
+                  const owned = item.uniqueName ? (quantities[item.uniqueName] ?? 0) > 0 : false;
+                  return (
+                    <div key={i} className={`timer-inv-row${owned ? " inv-owned" : ""}`}>
+                      <span className="timer-inv-name">{item.name}</span>
+                      {owned && <span className="inv-owned-tag">Owned</span>}
+                      {item.ayaPrice ? <span className="timer-inv-price aya">{item.ayaPrice} <span className="inv-currency">Aya</span></span> : null}
+                    </div>
+                  );
+                })}
+              </div>}
+            </div>
+          );
+        })()}
+
+        {ws?.nightwave?.active && <TimerTile id="nightwave" label="Nightwave" state={`Season ${ws.nightwave.season}`} stateClass="st-neutral" expiry={ws.nightwave.expiry} />}
+        {ws?.activeEvent && <TimerTile label={ws.activeEvent.label} state="Event" stateClass="st-active" expiry={ws.activeEvent.expiry} />}
+        {ws?.darvo && <TimerTile label={`Darvo: ${ws.darvo.item}`} state={`-${ws.darvo.discount}%`} stateClass="st-neutral" expiry={ws.darvo.expiry} until={`${ws.darvo.salePrice}p`} />}
+      </div>
 
       {/* ── Alerts ────────────────────────────────────────────────────────── */}
       {ws?.alerts && ws.alerts.length > 0 && (
         <>
           <SectionHeader label={`Alerts (${ws.alerts.length})`} />
-          {ws.alerts.map(a => (
-            <div key={a.id} className="timer-row">
-              <span className="timer-star" style={{ visibility: "hidden" }}>☆</span>
-              <span className="timer-name">{a.missionType}</span>
-              <span className="timer-state st-neutral">{a.faction}</span>
-              <span className="timer-cd">{cd(a.expiry)}</span>
-              {a.rewardItem && <span className="timer-until">{a.rewardItem}</span>}
-            </div>
-          ))}
+          <div className="timer-section-grid">
+            {ws.alerts.map((a, i) => (
+              <div key={i} className="alert-tile">
+                <div className="alert-tile-top">
+                  <span className="alert-tile-type">{a.missionType}</span>
+                  <span className="alert-tile-cd">{cd(a.expiry)}</span>
+                </div>
+                <div className="alert-tile-bottom">
+                  <span className="alert-faction">{a.faction}</span>
+                  {a.rewardItem && <span className="alert-reward">{a.rewardItem}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
         </>
       )}
 
@@ -468,28 +463,24 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
       {ws?.invasions && ws.invasions.length > 0 && (
         <>
           <SectionHeader label={`Invasions (${ws.invasions.length})`} />
-          {ws.invasions.map(inv => (
-            <div key={inv.id} className="timer-invasion">
-              <div className="timer-row" style={{ borderBottom: "none", paddingBottom: 2 }}>
-                <span className="timer-star" style={{ visibility: "hidden" }}>☆</span>
-                <span className="timer-name">{inv.node}</span>
-                <span className="timer-state st-neutral">{inv.pct}%</span>
-              </div>
-              <div className="invasion-bar-wrap">
-                <div className="invasion-bar-inner" style={{ width: `${Math.min(100, inv.pct)}%` }} />
-              </div>
-              <div className="timer-sublist" style={{ marginTop: 2, marginBottom: 4 }}>
-                <div className="timer-subrow">
-                  <span className="sub-node invasion-att">{inv.attacker}</span>
-                  <span className="sub-type">{inv.attReward || "—"}</span>
+          <div className="timer-section-grid">
+            {ws.invasions.map((inv, i) => (
+              <div key={i} className="invasion-tile">
+                <div className="invasion-tile-node">{inv.node}</div>
+                <div className="invasion-bar-wrap" style={{ margin: "3px 0" }}>
+                  <div className="invasion-bar-inner" style={{ width: `${Math.min(100, inv.pct)}%` }} />
                 </div>
-                <div className="timer-subrow">
-                  <span className="sub-node invasion-def">{inv.defender}</span>
-                  <span className="sub-type">{inv.defReward || "—"}</span>
+                <div className="invasion-tile-factions">
+                  <span className="invasion-att">{inv.attacker}</span>
+                  <span className="invasion-tile-reward">{inv.attReward || "—"}</span>
+                </div>
+                <div className="invasion-tile-factions">
+                  <span className="invasion-def">{inv.defender}</span>
+                  <span className="invasion-tile-reward">{inv.defReward || "—"}</span>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </>
       )}
 
@@ -502,13 +493,17 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
         const storms = [...(ws?.voidStorms ?? [])].sort((a, b) => a.tierNum - b.tierNum);
         const list   = fissureTab === "normal" ? normal : fissureTab === "hard" ? hard : storms;
 
-        const FissureRow = ({ f, v }: { f: WsFissure | WsStorm; v: "normal" | "hard" | "storm" }) => (
-          <div className={`timer-row timer-fissure${fissureWatches.some(w => matchesWatch(w, f, v)) ? " fissure-watched" : ""}`}>
-            <span className="fissure-tier" style={{ color: TIER_COLOR[f.tier] ?? "#ccc" }}>{f.tier}</span>
-            <span className="timer-name">{f.missionType}</span>
-            {f.enemy && <span className="timer-state st-neutral" style={{ fontSize: 10 }}>{f.enemy}</span>}
-            <span className="timer-fissure-node">{f.node}</span>
-            <span className="timer-cd">{cd(f.expiry)}</span>
+        const FissureTile = ({ f, v }: { f: WsFissure | WsStorm; v: "normal" | "hard" | "storm" }) => (
+          <div className={`fissure-tile${fissureWatches.some(w => matchesWatch(w, f, v)) ? " fissure-watched" : ""}`}>
+            <div className="fissure-tile-top">
+              <span className="fissure-tier" style={{ color: TIER_COLOR[f.tier] ?? "#ccc" }}>{f.tier}</span>
+              <span className="fissure-tile-cd">{cd(f.expiry)}</span>
+            </div>
+            <div className="fissure-tile-mission">{f.missionType}</div>
+            <div className="fissure-tile-bottom">
+              {f.enemy && <span className="fissure-tile-enemy">{f.enemy}</span>}
+              <span className="fissure-tile-node">{f.node}</span>
+            </div>
           </div>
         );
 
@@ -577,7 +572,9 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
 
             {list.length === 0
               ? <div className="timer-empty">No active fissures.</div>
-              : list.map((f, i) => <FissureRow key={i} f={f} v={fissureTab === "hard" ? "hard" : fissureTab === "storm" ? "storm" : "normal"} />)
+              : <div className="fissure-grid">
+                  {list.map((f, i) => <FissureTile key={i} f={f} v={fissureTab === "hard" ? "hard" : fissureTab === "storm" ? "storm" : "normal"} />)}
+                </div>
             }
           </>
         );
