@@ -357,6 +357,18 @@ export default function App() {
     invoke("save_settings", { json: JSON.stringify(settingsRef.current) }).catch(() => {});
   }, []); // eslint-disable-line
 
+  // ── WFM auto-login at app start ───────────────────────────────────────────
+  // Restores the session into Rust's AppState so the Trading tab is instantly
+  // ready when the user opens it — no need to visit the tab first.
+  useEffect(() => {
+    (async () => {
+      const creds = await invoke<[string, string] | null>("wfm_load_credentials").catch(() => null);
+      if (creds) {
+        invoke("wfm_set_jwt", { jwt: creds[1] }).catch(() => {}); // silent — failure just means re-login on tab open
+      }
+    })();
+  }, []); // eslint-disable-line
+
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   useEffect(() => {

@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./HelpTip";
+import WfmTrading from "./WfmTrading";
+import ItemMarketPopup from "./ItemMarketPopup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,12 +67,13 @@ function ItemImg({ imageName, size = 32 }: { imageName?: string; size?: number }
 
 // ─── Set card ─────────────────────────────────────────────────────────────────
 
-interface SetPart { item: CatalogItem; qty: number; sellMedian?: number; loading: boolean; }
+interface SetPart { item: CatalogItem; qty: number; sellMedian?: number; loading: boolean; urlName: string; }
 
-function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting }: {
+function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
   setKey: string; parts: SetPart[]; parentItem?: CatalogItem;
   setPrice?: WfmPrice; setPriceLoading: boolean; pricesFetched: boolean;
-  crafting: CraftingJob[];
+  crafting: CraftingJob[]; onCardClick?: () => void;
+  onPartClick?: (urlName: string, displayName: string, imageName?: string) => void;
 }) {
   const totalDucats  = parts.reduce((s, p) => s + (p.item.ducats ?? 0) * p.qty, 0);
   const ownedCount   = parts.filter(p => p.qty > 0).length;
@@ -83,7 +86,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
 
   return (
     <div className={`market-card${isComplete ? " market-card-complete" : ""}`}>
-      <div className="market-card-left">
+      <div className={`market-card-left${onCardClick ? " market-card-clickable" : ""}`} onClick={onCardClick} title={onCardClick ? "View orders & prices" : undefined}>
         <div style={{ position: "relative", display: "inline-block" }}>
           <ItemImg imageName={parentItem?.image_name} size={64} />
           {isCrafting && (
@@ -115,8 +118,14 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
         {parts.map(part => {
           const qty      = part.qty;
           const qtyClass = qty === 0 ? "mqty-zero" : qty === 1 ? "mqty-one" : "mqty-dupe";
+          const canClick = !!onPartClick;
           return (
-            <div key={part.item.unique_name} className={`market-part-row${qty === 0 ? " part-missing" : ""}`}>
+            <div
+              key={part.item.unique_name}
+              className={`market-part-row${qty === 0 ? " part-missing" : ""}${canClick ? " market-part-clickable" : ""}`}
+              onClick={canClick ? () => onPartClick(part.urlName, part.item.name, part.item.image_name ?? undefined) : undefined}
+              title={canClick ? "View orders & prices" : undefined}
+            >
               <DucatIcon size={12} />
               <span className="mpart-ducat-val">{part.item.ducats ?? "—"}</span>
               <span className="mpart-sep">/</span>
@@ -152,6 +161,10 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
   const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
 
   const PRICE_CACHE_KEY = "ff-wfm-prices-v1";
+  const [activeMarketTab, setActiveMarketTab] = useState<"sets" | "trading">("sets");
+  const [wfmBadge, setWfmBadge]               = useState(0);
+  const [wfmUsername, setWfmUsername]         = useState<string | null>(null);
+  const [popup, setPopup] = useState<{ urlName: string; displayName: string; imageName?: string } | null>(null);
   const [search, setSearch]             = useState("");
   const [sortMode, setSortMode]         = useState<SortMode>("ducats-owned");
 
@@ -445,6 +458,27 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
 
   return (
     <div className="market-helper">
+      {/* ── Market tab strip ── */}
+      <div className="market-tab-strip">
+        <button className={activeMarketTab === "sets" ? "active" : ""} onClick={() => setActiveMarketTab("sets")}>
+          Prime Sets
+        </button>
+        <button className={activeMarketTab === "trading" ? "active" : ""} onClick={() => { setActiveMarketTab("trading"); setWfmBadge(0); }}>
+          Trading {wfmBadge > 0 && <span className="market-tab-badge">{wfmBadge}</span>}
+        </button>
+      </div>
+
+      {activeMarketTab === "trading" && (
+        <WfmTrading
+          wfmLookup={wfmLookup}
+          wfmItems={wfmItems}
+          quantities={quantities}
+          onNewWhisper={() => { if (activeMarketTab !== "trading") setWfmBadge(n => n + 1); }}
+          onLoginChange={u => setWfmUsername(u)}
+        />
+      )}
+
+      {activeMarketTab === "sets" && <>
       <div className="market-header">
         <input className="foundry-search" style={{ width: 200 }} placeholder="Search sets…"
           value={search} onChange={e => setSearch(e.target.value)} />
@@ -498,17 +532,31 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
               const url = wfmLookup.get(normalKey) ?? normalKey;
               const priceData = prices.get(url);
               return { item: p, qty: quantities[p.unique_name] ?? 0,
-                sellMedian: priceData?.sell_median, loading: loadingPrices.has(url) };
+                sellMedian: priceData?.sell_median, loading: loadingPrices.has(url), urlName: url };
             });
           return (
             <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
               setPrice={setPriceData}
               setPriceLoading={loadingPrices.has(setUrl)}
               pricesFetched={priceAges.size > 0}
-              crafting={crafting} />
+              crafting={crafting}
+              onCardClick={() => setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined })}
+              onPartClick={(urlName, displayName, imageName) => setPopup({ urlName, displayName, imageName })} />
           );
         })}
       </div>
+      </>}
+
+      {popup && (
+        <ItemMarketPopup
+          urlName={popup.urlName}
+          displayName={popup.displayName}
+          imageName={popup.imageName}
+          onClose={() => setPopup(null)}
+          isLoggedIn={!!wfmUsername}
+          myUsername={wfmUsername ?? undefined}
+        />
+      )}
     </div>
   );
 }

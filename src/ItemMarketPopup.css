@@ -1,0 +1,343 @@
+/* ── Overlay ── */
+.imp-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+}
+
+.imp-modal {
+  background: var(--surface);
+  border: 1px solid rgba(48,54,61,.8);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 680px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.imp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(48,54,61,.5);
+  flex-shrink: 0;
+}
+
+.imp-item-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.imp-thumb {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(255,255,255,.05);
+}
+
+.imp-thumb-placeholder {
+  width: 52px;
+  height: 52px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.07);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.imp-item-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.imp-median {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.imp-median span { color: #f0c040; font-weight: 600; }
+
+.imp-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color .1s;
+  align-self: flex-start;
+}
+.imp-close:hover { color: var(--red); }
+
+/* ── Chart ── */
+.imp-chart-wrap {
+  padding: 8px 16px 4px;
+  flex-shrink: 0;
+}
+
+.imp-chart {
+  width: 100%;
+  height: 56px;
+  display: block;
+}
+
+.imp-chart-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.imp-chart-last { color: var(--accent); font-weight: 600; }
+
+/* ── Orders ── */
+.imp-orders-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  flex: 1;
+  overflow: hidden;
+  border-top: 1px solid rgba(48,54,61,.4);
+}
+
+.imp-col {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.imp-col:first-child {
+  border-right: 1px solid rgba(48,54,61,.4);
+}
+
+.imp-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  border-bottom: 1px solid rgba(48,54,61,.3);
+  flex-shrink: 0;
+}
+
+.imp-col-best {
+  font-weight: 700;
+  color: #f0c040;
+}
+
+.imp-col > .imp-order-row,
+.imp-col > .imp-loading,
+.imp-col > .imp-none {
+  /* Scroll within each column */
+}
+
+.imp-col {
+  overflow-y: auto;
+}
+
+.imp-loading, .imp-none {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ── Order rows ── */
+.imp-order-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(48,54,61,.2);
+  font-size: 12px;
+  transition: background .1s;
+}
+.imp-order-row:last-child { border-bottom: none; }
+.imp-order-row:hover { background: rgba(255,255,255,.04); }
+
+.imp-order-price {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+}
+.imp-order-sell .imp-order-price { color: var(--green); }
+.imp-order-buy  .imp-order-price { color: var(--accent); }
+
+.imp-order-qty {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 24px;
+}
+
+.imp-order-user {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.imp-order-rank {
+  font-size: 10px;
+  color: var(--muted);
+  background: rgba(255,255,255,.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.imp-list-btn {
+  background: none;
+  border: 1px solid rgba(48,54,61,.6);
+  color: var(--muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: background .1s, color .1s, border-color .1s;
+}
+.imp-list-btn:hover {
+  background: rgba(56,139,253,.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Action bar ── */
+.imp-action-bar {
+  padding: 10px 14px;
+  border-top: 1px solid rgba(48,54,61,.5);
+  flex-shrink: 0;
+  background: rgba(0,0,0,.12);
+}
+
+.imp-action-sell, .imp-action-buy {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid;
+  transition: background .1s;
+  margin-right: 8px;
+}
+.imp-action-sell {
+  background: rgba(63,185,80,.15);
+  border-color: var(--green);
+  color: var(--green);
+}
+.imp-action-sell:hover { background: rgba(63,185,80,.28); }
+.imp-action-buy {
+  background: rgba(56,139,253,.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.imp-action-buy:hover { background: rgba(56,139,253,.28); }
+
+/* ── Create order form ── */
+.imp-create-form { display: flex; flex-direction: column; gap: 6px; }
+
+.imp-create-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.imp-create-row label {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.imp-type-btns {
+  display: flex;
+  gap: 3px;
+}
+.imp-type-btns button {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(48,54,61,.6);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.imp-type-btns button.active {
+  background: rgba(56,139,253,.2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.imp-num-input {
+  background: rgba(0,0,0,.25);
+  border: 1px solid rgba(48,54,61,.8);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  width: 72px;
+}
+.imp-num-input:focus { border-color: var(--accent); }
+.imp-qty-input { width: 48px; }
+
+.imp-plat-label { font-size: 12px; color: #f0c040; }
+
+.imp-post-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 16px;
+  cursor: pointer;
+  transition: opacity .1s;
+}
+.imp-post-btn:hover { opacity: .85; }
+.imp-post-btn:disabled { opacity: .4; cursor: default; }
+
+.imp-create-error {
+  font-size: 11px;
+  color: var(--red);
+}
+
+.imp-create-success {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+}
+
+.imp-login-hint {
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  border-top: 1px solid rgba(48,54,61,.5);
+  background: rgba(0,0,0,.12);
+}
