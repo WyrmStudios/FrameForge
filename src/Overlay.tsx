@@ -45,6 +45,7 @@ const PART_SUFF = [
   ' Upper Limb', ' Lower Limb', ' Receiver', ' Barrel', ' Stock',
   ' Blade', ' Handle', ' Guard', ' Hilt', ' Link', ' Gauntlet',
   ' Carapace', ' Cerebrum', ' Systems', ' Head', ' Strike', ' Boot',
+  ' String', ' Disc', ' Neuroptics', ' Chassis', ' Stars',
 ];
 
 function getSetName(itemName: string): string | null {
@@ -60,6 +61,55 @@ function getSetName(itemName: string): string | null {
 
 function shortName(fullName: string, setName: string): string {
   return fullName.startsWith(setName + ' ') ? fullName.slice(setName.length + 1) : fullName;
+}
+
+// ─── Ownership resolver ───────────────────────────────────────────────────────
+// Pure function — no closure captures, takes explicit snapshots of qty/crafting.
+// Counts the total available copies of a component:
+//   directQty  = inventory qty matched by catalog WFCD path
+//   altQty     = qty of the complementary form (blueprint ↔ built sub-part)
+//   craftQty   = active Foundry jobs for either form
+function resolveOwnedFn(
+  uniqueName: string,
+  displayName: string,
+  cat: Record<string, any>,
+  qty: Record<string, number>,
+  crafting: Record<string, number>,
+): number {
+  const clk = uniqueName.replace("/Lotus/StoreItems/", "/Lotus/");
+  const catEntry = cat[clk] ?? cat[uniqueName]
+    ?? (Object.values(cat).find((it: any) => it.name === displayName) as any);
+  const catClk = catEntry
+    ? (catEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/")
+    : clk;
+  const directQty = qty[catClk] ?? qty[clk] ?? qty[uniqueName] ?? 0;
+
+  let altQty = 0;
+  let altClk: string | null = null;
+  if (displayName.endsWith(' Blueprint')) {
+    const partName = displayName.slice(0, -' Blueprint'.length);
+    const partEntry = Object.values(cat).find(
+      (it: any) => it.name === partName && it.category === 'Parts'
+    ) as any;
+    if (partEntry) {
+      altClk = (partEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/");
+      altQty = qty[altClk] ?? qty[partEntry.unique_name] ?? 0;
+    }
+  } else {
+    const bpName = displayName + ' Blueprint';
+    const bpEntry = Object.values(cat).find(
+      (it: any) => it.name === bpName && it.category === 'Blueprints'
+    ) as any;
+    if (bpEntry) {
+      altClk = (bpEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/");
+      altQty = qty[altClk] ?? qty[bpEntry.unique_name] ?? 0;
+    }
+  }
+
+  const craftQty = crafting[catClk] ?? crafting[clk] ?? crafting[uniqueName]
+    ?? (altClk ? (crafting[altClk] ?? 0) : 0);
+
+  return directQty + altQty + craftQty;
 }
 
 // ─── Best-pick calculation ────────────────────────────────────────────────────
@@ -239,68 +289,21 @@ export default function Overlay() {
         const setName = getSetName(name);
         if (!setName) return;
 
-        const qty2 = quantRef.current;
-        const cat  = catalogRef.current;
+        // Read the catalog once for this card's async chain; quantities are read
+        // from quantRef.current AFTER the recipe await so they reflect any
+        // inventory-update that fired while we were waiting.
+        const cat       = catalogRef.current;
         const setPrefix = setName + " ";
 
         type RC = { unique_name: string; name: string; count: number; result_count: number };
         let components: ComponentRow[] | null = null;
 
         // The "built item" entry (weapon/warframe entity, not blueprint or part).
-        // Used for recipe lookup AND to check if the user already owns the built item.
         const setEntry = Object.values(cat).find(item =>
           item.name === setName &&
           item.category !== 'Blueprints' &&
           item.category !== 'Parts'
         );
-
-        // Resolve a component's total owned count:
-        //   directQty  = inventory qty matched by catalog WFCD path (more reliable than ExportRecipes path)
-        //   altQty     = inventory qty of the complementary form (blueprint ↔ built sub-part)
-        //   craftQty   = active Foundry jobs for either form
-        // "blueprint ↔ part" rule:
-        //   name ends with " Blueprint"  → also count the built Part (never a full weapon/warframe)
-        //   name has no " Blueprint"     → also count the Blueprint version in inventory
-        const resolveOwned = (uniqueName: string, displayName: string): number => {
-          const clk = uniqueName.replace("/Lotus/StoreItems/", "/Lotus/");
-          // Use catalog entry's own unique_name to bridge ExportRecipes ↔ WFCD path differences
-          const catEntry = cat[clk] ?? cat[uniqueName]
-            ?? (Object.values(cat).find((it: any) => it.name === displayName) as any);
-          const catClk = catEntry
-            ? (catEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/")
-            : clk;
-          const directQty = qty2[catClk] ?? qty2[clk] ?? qty2[uniqueName] ?? 0;
-
-          let altQty = 0;
-          let altClk: string | null = null;
-          if (displayName.endsWith(' Blueprint')) {
-            // Also count the built sub-component, but ONLY if it's a Part (not a full weapon/warframe)
-            const partName = displayName.slice(0, -' Blueprint'.length);
-            const partEntry = Object.values(cat).find(
-              (it: any) => it.name === partName && it.category === 'Parts'
-            ) as any;
-            if (partEntry) {
-              altClk = (partEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/");
-              altQty = qty2[altClk] ?? qty2[partEntry.unique_name] ?? 0;
-            }
-          } else {
-            // Also count the raw blueprint drop sitting in inventory
-            const bpName = displayName + ' Blueprint';
-            const bpEntry = Object.values(cat).find(
-              (it: any) => it.name === bpName && it.category === 'Blueprints'
-            ) as any;
-            if (bpEntry) {
-              altClk = (bpEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/");
-              altQty = qty2[altClk] ?? qty2[bpEntry.unique_name] ?? 0;
-            }
-          }
-
-          const craftQty =
-            craftingRef.current[catClk] ?? craftingRef.current[clk] ?? craftingRef.current[uniqueName]
-            ?? (altClk ? (craftingRef.current[altClk] ?? 0) : 0);
-
-          return directQty + altQty + craftQty;
-        };
 
         // Attempt 1: recipe lookup (gives exact ingredient list + correct needed counts)
         if (setEntry) {
@@ -313,6 +316,10 @@ export default function Overlay() {
               return cm?.category === 'Parts' || cm?.category === 'Blueprints';
             });
             if (parts.length >= 1) {
+              // Read quantities AFTER the recipe await — scanner may have committed
+              // items to current_quantities during the async gap.
+              const liveQty = quantRef.current;
+              const liveCraft = craftingRef.current;
               components = parts.map(c => {
                 const clk = c.unique_name.replace("/Lotus/StoreItems/", "/Lotus/");
                 const cm  = cat[clk] ?? cat[c.unique_name];
@@ -320,7 +327,7 @@ export default function Overlay() {
                   unique_name: c.unique_name,
                   name:        c.name,
                   needed:      c.count ?? 1,
-                  owned:       resolveOwned(c.unique_name, c.name),
+                  owned:       resolveOwnedFn(c.unique_name, c.name, cat, liveQty, liveCraft),
                   ducats:      cm?.ducats,
                 };
               });
@@ -331,6 +338,8 @@ export default function Overlay() {
         // Attempt 2: catalog prefix search — works even when recipe cache is empty.
         // Needed count defaults to 1 (imprecise for parts that require 2, but better than nothing).
         if (!components) {
+          const liveQty   = quantRef.current;
+          const liveCraft = craftingRef.current;
           const parts = Object.values(cat)
             .filter((item: any) => item.name?.startsWith(setPrefix) &&
                             (item.category === 'Parts' || item.category === 'Blueprints'))
@@ -338,7 +347,7 @@ export default function Overlay() {
               unique_name: item.unique_name,
               name:        item.name as string,
               needed:      1,
-              owned:       resolveOwned(item.unique_name, item.name as string),
+              owned:       resolveOwnedFn(item.unique_name, item.name as string, cat, liveQty, liveCraft),
               ducats:      item.ducats as number | undefined,
             }));
           if (parts.length >= 2) components = parts;
@@ -347,11 +356,14 @@ export default function Overlay() {
         if (!components) return;
 
         // "Owned" = user has enough components to build, OR already built the item.
+        const liveQty  = quantRef.current;
         const compSets = components.length > 0
           ? Math.floor(Math.min(...components.map(c => c.owned / c.needed)))
           : 0;
         const builtLk  = (setEntry?.unique_name ?? '').replace("/Lotus/StoreItems/", "/Lotus/");
-        const builtQty = setEntry ? (qty2[builtLk] ?? qty2[setEntry.unique_name] ?? 0) : 0;
+        const builtQty = setEntry
+          ? (liveQty[builtLk] ?? liveQty[setEntry.unique_name] ?? 0)
+          : 0;
         const completeSets = builtQty > 0 ? Math.max(compSets, 1) : compSets;
 
         setRewards(prev => prev.map((r, idx) => idx === i
@@ -426,7 +438,50 @@ export default function Overlay() {
       }
     });
 
-    return () => { unsub.then(fn => fn()); };
+    // On every inventory scan, fully recompute component owned counts AND the
+    // built-item check.  This fixes the race where processPayload ran before the
+    // scanner had committed items (all counts showed 0), and ensures warframes
+    // that appear in unique_quantities after 2+ consecutive scans flip the card.
+    const unsubInv = listen<{ quantities: Record<string, number> }>("inventory-update", (e) => {
+      const newQty = e.payload?.quantities;
+      if (!newQty) return;
+      quantRef.current = newQty;
+
+      setRewards(prev => prev.map(r => {
+        if (!r.components || !r.set_name) return r;
+
+        const cat = catalogRef.current;
+
+        // Recompute every component's owned count with the fresh quantities.
+        const updatedComponents = r.components.map(c => ({
+          ...c,
+          owned: resolveOwnedFn(c.unique_name, c.name, cat, newQty, craftingRef.current),
+        }));
+
+        const compSets = updatedComponents.length > 0
+          ? Math.floor(Math.min(...updatedComponents.map(c => c.owned / c.needed)))
+          : 0;
+
+        // Re-check whether the assembled item (warframe / weapon) is already owned.
+        const setEntry = Object.values(cat).find((item: any) =>
+          item.name === r.set_name &&
+          item.category !== 'Blueprints' &&
+          item.category !== 'Parts'
+        ) as any;
+        const builtLk  = setEntry
+          ? (setEntry.unique_name as string).replace("/Lotus/StoreItems/", "/Lotus/")
+          : '';
+        const builtQty = setEntry
+          ? (newQty[builtLk] ?? newQty[setEntry.unique_name] ?? 0)
+          : 0;
+
+        const completeSets = builtQty > 0 ? Math.max(compSets, 1) : compSets;
+
+        return { ...r, components: updatedComponents, complete_sets: completeSets };
+      }));
+    });
+
+    return () => { unsub.then(fn => fn()); unsubInv.then(fn => fn()); };
   }, []);
 
   if (rewards.length === 0) return null;

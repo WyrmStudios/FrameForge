@@ -180,9 +180,9 @@ const VARIANTS: { key: FissureWatch["variant"]; label: string }[] = [
 ];
 // Mission types available per variant (storms are Railjack — different pool)
 const MISSION_TYPES_BY_VARIANT: Record<FissureWatch["variant"], string[]> = {
-  any:    ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination","Skirmish","Volatile"],
-  normal: ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination"],
-  hard:   ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination"],
+  any:    ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination","Assault","Void Cascade","Void Flood","Alchemy","Skirmish","Volatile"],
+  normal: ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination","Assault","Void Cascade","Void Flood","Alchemy"],
+  hard:   ["Any","Rescue","Capture","Defense","Survival","Excavation","Interception","Disruption","Sabotage","Spy","Mobile Defense","Extermination","Assassination","Assault","Void Cascade","Void Flood","Alchemy"],
   storm:  ["Any","Skirmish","Volatile","Defense","Extermination","Sabotage","Assassination"],
 };
 

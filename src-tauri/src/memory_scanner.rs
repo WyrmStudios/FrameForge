@@ -157,8 +157,11 @@ fn scan_inventory_unique(data: &[u8], ac: &aho_corasick::AhoCorasick) -> Vec<(us
         };
         if has_count_before { continue; }
 
-        let pre  = start.saturating_sub(200);
-        let post = (end + 200).min(data.len());
+        // "ItemId": can sit thousands of bytes after "ItemType": once a large "Configs":
+        // block (many installed mods) is in between.  Search the same wide window used
+        // for the "Configs": check so heavily-modded warframes are not missed.
+        let pre  = start.saturating_sub(5000);
+        let post = (end + 10000).min(data.len());
         if !data[pre..post].windows(9).any(|w| w == b"\"ItemId\":") { continue; }
 
         let configs_end = (end + 5000).min(data.len());

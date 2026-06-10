@@ -11,7 +11,7 @@ mod ocr;
 mod wfcd;
 
 use db::{QuantityChange, SnapshotPoint, Trade, TrackedItem};
-use wfcd::{RecipeComponent, WfcdItem};
+use wfcd::{RecipeComponent, SyndicateOffer, WfcdItem};
 
 pub struct AppState {
     pub db_path: PathBuf,
@@ -36,6 +36,9 @@ pub struct AppState {
     pub wiki_reward_names: Mutex<std::collections::HashSet<String>>,
     /// Last-known quantities from memory scans. Shared with monitor thread.
     pub current_quantities: Arc<Mutex<HashMap<String, i64>>>,
+    /// Stable unique items (weapons/warframes) seen in 2+ consecutive scans.
+    /// Exposed so get_current_quantities can return them for overlay ownership checks.
+    pub unique_quantities: Arc<Mutex<HashMap<String, i64>>>,
     /// Last-known crafting jobs from memory scans. Shared with monitor thread.
     pub current_crafting: Arc<Mutex<Vec<CraftingJob>>>,
     pub monitor_active: Arc<AtomicBool>,
@@ -45,6 +48,9 @@ pub struct AppState {
     pub wfm_session: Arc<Mutex<Option<WfmSession>>>,
     /// Path to the persisted top-WFM-items cache (survives restarts).
     pub wfm_top_cache_path: PathBuf,
+    /// syndicate name → purchasable items (all known syndicates)
+    pub syndicate_catalog: Mutex<HashMap<String, Vec<SyndicateOffer>>>,
+    pub syndicate_catalog_path: PathBuf,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -246,7 +252,12 @@ fn get_all_items(state: State<AppState>) -> Vec<CatalogItem> {
 
 #[tauri::command]
 fn get_current_quantities(state: State<AppState>) -> HashMap<String, i64> {
-    state.current_quantities.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let mut q = state.current_quantities.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let uq = state.unique_quantities.lock().unwrap_or_else(|e| e.into_inner());
+    for (name, &qty) in uq.iter() {
+        q.entry(name.clone()).or_insert(qty);
+    }
+    q
 }
 
 #[tauri::command]
@@ -308,6 +319,12 @@ async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
     *state.blueprint_to_result.lock().map_err(|e| e.to_string())? = result.blueprint_names;
     if !result.wiki_reward_names.is_empty() {
         *state.wiki_reward_names.lock().map_err(|e| e.to_string())? = result.wiki_reward_names;
+    }
+    if !result.syndicate_catalog.is_empty() {
+        if let Ok(json) = serde_json::to_string(&result.syndicate_catalog) {
+            let _ = std::fs::write(&state.syndicate_catalog_path, json);
+        }
+        *state.syndicate_catalog.lock().map_err(|e| e.to_string())? = result.syndicate_catalog;
     }
     Ok(count)
 }
@@ -2897,6 +2914,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     let log_path = state.log_path.clone();
     let quantities_cache_path = state.quantities_cache_path.clone();
     let shared_quantities = state.current_quantities.clone();
+    let shared_unique     = state.unique_quantities.clone();
     let shared_crafting   = state.current_crafting.clone();
     let reward_app = app.clone();  // clone before app is moved into the inventory thread
 
@@ -2916,6 +2934,10 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         // This filters out transient reads: mission reward screens, clan showcases,
         // open-world drop popups — all appear for only 1 scan cycle.
         let mut pending: HashMap<String, (i64, u8)> = HashMap::new();
+        // Stability buffer for unique scanner items (weapons/warframes).
+        // explicit_count=false items are never committed to `known`, but two
+        // consecutive appearances mean the item is genuinely owned.
+        let mut unique_stable: HashMap<String, u8> = HashMap::new();
         // Track the last date we recorded daily snapshots (YYYY-MM-DD).
         // Initialise to yesterday so the first scan of a new day always fires.
         let mut last_snapshot_date = String::new();
@@ -2933,7 +2955,8 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
             // Windows keeps recently-closed process memory accessible, which means
             // the scanner would find stale data and re-populate a cleared cache.
             if !result.warframe_running {
-                pending.clear(); // also clear pending so stale candidates don't commit when game reopens
+                pending.clear();       // also clear pending so stale candidates don't commit when game reopens
+                unique_stable.clear(); // same for unique items
                 let _ = app.emit("inventory-update", InventoryUpdate {
                     quantities: known.clone(),
                     crafting: vec![],
@@ -3001,6 +3024,25 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
             // Clear pending entries for items no longer visible in memory
             pending.retain(|k, _| seen_this_scan.contains_key(k));
 
+            // Track warframe ownership across consecutive scans.
+            // Weapons are intentionally excluded: other players' equipped weapons appear in
+            // the same memory regions and would cause false "FULL ITEM OWNED" results.
+            // Warframes are 1-per-player in a squad, so false positives are far less likely.
+            for item in &result.items_found {
+                if item.explicit_count { continue; }
+                if !item.unique_name.starts_with("/Lotus/Powersuits/") { continue; }
+                let e = unique_stable.entry(item.unique_name.clone()).or_insert(0u8);
+                if *e < 2 { *e += 1; }
+            }
+            unique_stable.retain(|k, _| seen_this_scan.contains_key(k));
+
+            // Sync the shared unique_quantities map so get_current_quantities includes warframes.
+            if let Ok(mut uq) = shared_unique.lock() {
+                uq.clear();
+                for (name, &count) in &unique_stable {
+                    if count >= 2 { uq.insert(name.clone(), 1); }
+                }
+            }
 
             // Persist running quantities so restarts pick up where we left off.
             if let Ok(mut q) = shared_quantities.lock() {
@@ -3056,8 +3098,16 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 
             *shared_crafting.lock().unwrap_or_else(|e| e.into_inner()) = crafting.clone();
 
+            // Merge stable unique items (weapons/warframes) into the emit payload so
+            // the overlay can check `builtQty` without needing the companion API.
+            let mut emit_quantities = known.clone();
+            for (name, &count) in &unique_stable {
+                if count >= 2 {
+                    emit_quantities.entry(name.clone()).or_insert(1);
+                }
+            }
             let _ = app.emit("inventory-update", InventoryUpdate {
-                quantities: known.clone(),
+                quantities: emit_quantities,
                 crafting,
                 mastery_rank: result.mastery_rank,
                 mastery_data: result.mastery_data,
@@ -4644,6 +4694,98 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
     })
 }
 
+// ─── Syndicate stores ─────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct SyndicateStoreItem {
+    unique_name: String,
+    name: String,
+    category: String,
+    image_name: Option<String>,
+    tier: String,
+    ducats: Option<u32>,
+    /// Quantity of the item/blueprint itself in inventory.
+    owned: u32,
+    /// For blueprint items: unique_name of the crafted result.
+    result_unique: Option<String>,
+    /// For blueprint items: quantity of the crafted result in inventory.
+    result_owned: u32,
+}
+
+#[derive(serde::Serialize)]
+struct SyndicateStore {
+    name: String,
+    items: Vec<SyndicateStoreItem>,
+}
+
+/// Returns all syndicate stores with owned quantities cross-referenced from the live inventory.
+#[tauri::command]
+fn get_syndicate_stores(state: State<AppState>) -> Vec<SyndicateStore> {
+    // Preferred display order; any extra syndicates found in the catalog are appended after.
+    const ORDER: &[&str] = &[
+        "Steel Meridian", "Arbiters of Hexis", "Cephalon Suda",
+        "The Perrin Sequence", "Red Veil", "New Loka",
+        "Ostron", "Solaris United", "Entrati", "Necraloid",
+        "The Holdfasts", "Kahl's Garrison", "Cavia",
+        "The Quills", "Vox Solaris", "Ventkids",
+        "Cephalon Simaris", "Conclave", "Operational Supply",
+    ];
+    let catalog = state.syndicate_catalog.lock().unwrap_or_else(|e| e.into_inner());
+    let qtys    = state.current_quantities.lock().unwrap_or_else(|e| e.into_inner());
+
+    let mut result: Vec<SyndicateStore> = ORDER.iter()
+        .filter_map(|&name| {
+            catalog.get(name).map(|offers| {
+                let items = offers.iter().map(|o| {
+                    let owned = qtys.get(&o.unique_name).copied().unwrap_or(0) as u32;
+                    let result_owned = o.result_unique.as_ref()
+                        .and_then(|r| qtys.get(r))
+                        .copied()
+                        .unwrap_or(0) as u32;
+                    SyndicateStoreItem {
+                        unique_name: o.unique_name.clone(),
+                        name: o.name.clone(),
+                        category: o.category.clone(),
+                        image_name: o.image_name.clone(),
+                        tier: o.tier.clone(),
+                        ducats: o.ducats,
+                        owned,
+                        result_unique: o.result_unique.clone(),
+                        result_owned,
+                    }
+                }).collect();
+                SyndicateStore { name: name.to_string(), items }
+            })
+        })
+        .collect();
+
+    // Append any syndicates in the catalog that weren't in ORDER
+    let known: std::collections::HashSet<&str> = ORDER.iter().copied().collect();
+    for (name, offers) in catalog.iter() {
+        if known.contains(name.as_str()) { continue; }
+        let items = offers.iter().map(|o| {
+            let owned = qtys.get(&o.unique_name).copied().unwrap_or(0) as u32;
+            let result_owned = o.result_unique.as_ref()
+                .and_then(|r| qtys.get(r))
+                .copied()
+                .unwrap_or(0) as u32;
+            SyndicateStoreItem {
+                unique_name: o.unique_name.clone(),
+                name: o.name.clone(),
+                category: o.category.clone(),
+                image_name: o.image_name.clone(),
+                tier: o.tier.clone(),
+                ducats: o.ducats,
+                owned,
+                result_unique: o.result_unique.clone(),
+                result_owned,
+            }
+        }).collect();
+        result.push(SyndicateStore { name: name.clone(), items });
+    }
+    result
+}
+
 /// Fetch and parse the DE official Warframe worldstate.
 /// Runs on a blocking thread so the async runtime is never stalled.
 #[tauri::command]
@@ -4899,6 +5041,7 @@ pub fn run() {
     let settings_path = data_dir.join("settings.json");
     let log_path = data_dir.join("scan_log.txt");
     let wfm_top_cache_path = data_dir.join("wfm_top_cache.json");
+    let syndicate_catalog_path = data_dir.join("syndicate_catalog.json");
 
     let conn = db::init_db(&db_path).expect("Failed to initialize database");
 
@@ -4910,6 +5053,8 @@ pub fn run() {
     let initial_relic_rewards: HashMap<String, Vec<wfcd::RelicReward>> = std::fs::read_to_string(&relic_rewards_cache_path)
         .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let initial_quantities = load_quantities_cache(&quantities_cache_path);
+    let initial_syndicate_catalog: HashMap<String, Vec<SyndicateOffer>> = std::fs::read_to_string(&syndicate_catalog_path)
+        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -4930,11 +5075,14 @@ pub fn run() {
             blueprint_to_result: Mutex::new(HashMap::new()),
             wiki_reward_names: Mutex::new(std::collections::HashSet::new()),
             current_quantities: Arc::new(Mutex::new(initial_quantities)),
+            unique_quantities: Arc::new(Mutex::new(HashMap::new())),
             current_crafting: Arc::new(Mutex::new(vec![])),
             monitor_active: Arc::new(AtomicBool::new(false)),
             wfm_price_cache: Mutex::new(HashMap::new()),
             wfm_session: Arc::new(Mutex::new(None)),
             wfm_top_cache_path,
+            syndicate_catalog: Mutex::new(initial_syndicate_catalog),
+            syndicate_catalog_path,
         })
         .setup(|app| {
             use tauri::Manager;
@@ -5017,6 +5165,7 @@ pub fn run() {
             scan_warframe_api_urls,
             warframe_login,
             fetch_warframe_inventory,
+            get_syndicate_stores,
             fetch_worldstate,
             get_warframe_window_rect,
             get_overlay_session_log,

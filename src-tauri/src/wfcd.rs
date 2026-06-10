@@ -35,6 +35,20 @@ pub struct RelicReward {
     pub image_name: Option<String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SyndicateOffer {
+    pub unique_name: String,
+    pub name: String,
+    pub category: String,
+    pub image_name: Option<String>,
+    pub tier: String,
+    pub ducats: Option<u32>,
+    /// For Blueprint items: the unique_name of the item crafted from this blueprint.
+    /// None for mods, sigils, and other directly-owned items.
+    #[serde(default)]
+    pub result_unique: Option<String>,
+}
+
 pub struct FetchResult {
     pub items: Vec<WfcdItem>,
     /// parent unique_name → list of components needed to craft it
@@ -50,6 +64,8 @@ pub struct FetchResult {
     /// Lower-cased. Used as a name-based whitelist for the overlay catalog so that
     /// path-mismatch issues between ExportRecipes and WFCD never exclude a valid reward.
     pub wiki_reward_names: HashSet<String>,
+    /// syndicate name → items available for purchase from that syndicate's store
+    pub syndicate_catalog: HashMap<String, Vec<SyndicateOffer>>,
 }
 
 /// Fetch the complete list of relic reward display names from the Warframe Wiki's
@@ -237,6 +253,189 @@ fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
     Ok(map)
 }
 
+/// Fetch complete syndicate store catalog from warframe-drop-data/syndicates.json.
+/// This covers all vendor-purchased items: sigils, specters, health restores,
+/// weapon blueprints, augment mods — items that WFCD's `drops` field mostly omits.
+fn fetch_syndicate_store_catalog(items: &[WfcdItem]) -> HashMap<String, Vec<SyndicateOffer>> {
+    const URL: &str =
+        "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
+
+    let json: serde_json::Value = match ureq::get(URL)
+        .set("User-Agent", "FrameForge/1.0")
+        .call()
+        .ok()
+        .and_then(|r| r.into_json().ok())
+    {
+        Some(v) => v,
+        None => {
+            eprintln!("[syndicate] failed to fetch syndicates.json");
+            return HashMap::new();
+        }
+    };
+
+    // Lowercase name → index lookup into items slice
+    let by_name: HashMap<String, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| (item.name.to_lowercase(), i))
+        .collect();
+
+    let mut catalog: HashMap<String, Vec<SyndicateOffer>> = HashMap::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+
+    let syndicates_obj = match json.get("syndicates").and_then(|v| v.as_object()) {
+        Some(o) => o,
+        None => return catalog,
+    };
+
+    for (raw_key, entries_val) in syndicates_obj {
+        // Normalize "NecraLoid" → "Necraloid" to match SYNDICATE_META keys
+        let syn_name = if raw_key == "NecraLoid" {
+            "Necraloid".to_string()
+        } else {
+            raw_key.clone()
+        };
+
+        let entries = match entries_val.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+
+        for entry in entries {
+            let raw_item = match entry.get("item").and_then(|v| v.as_str()) {
+                Some(s) => s.trim(),
+                None => continue,
+            };
+
+            // Cephalon Simaris has non-item gate entries like "Complete Natah (Quest)"
+            if raw_item.starts_with("Complete ")
+                || raw_item.starts_with("Defeat ")
+                || raw_item.starts_with("Unlock ")
+            {
+                continue;
+            }
+
+            let raw_place = entry.get("place").and_then(|v| v.as_str()).unwrap_or("");
+
+            // Extract tier from "SyndicateName, Tier" → "Tier".
+            // For Cephalon Simaris the place holds the item name as the tier — use "" so
+            // all Simaris items land in one un-tiered group.
+            let tier = if syn_name == "Cephalon Simaris" {
+                String::new()
+            } else if raw_place.starts_with(raw_key.as_str()) {
+                let after = &raw_place[raw_key.len()..];
+                let t = after.trim_start_matches(", ").trim();
+                // Some entries have "Rank N\u{a0}: TierName" with non-breaking space — normalise
+                if t.contains('\u{00a0}') || t.starts_with("Rank ") {
+                    String::new()
+                } else {
+                    t.to_string()
+                }
+            } else {
+                String::new()
+            };
+
+            let (unique_name, display_name, category, image_name, ducats) =
+                resolve_syn_item(raw_item, items, &by_name);
+
+            if seen.insert((syn_name.clone(), unique_name.clone())) {
+                catalog.entry(syn_name.clone()).or_default().push(SyndicateOffer {
+                    unique_name,
+                    name: display_name,
+                    category,
+                    image_name,
+                    tier,
+                    ducats,
+                    result_unique: None,
+                });
+            }
+        }
+    }
+
+    catalog
+}
+
+/// Resolve a syndicates.json display name to a WFCD catalog entry.
+/// Returns (unique_name, display_name, category, image_name, ducats).
+fn resolve_syn_item(
+    raw: &str,
+    items: &[WfcdItem],
+    by_name: &HashMap<String, usize>,
+) -> (String, String, String, Option<String>, Option<u32>) {
+    // Normalize internal whitespace (some entries have double spaces)
+    let normed: String = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Strip leading "Nx " quantity prefix ("5x Roller Specter" → "Roller Specter")
+    let no_qty = {
+        let mut s = normed.clone();
+        if let Some(x_pos) = s.find("x ") {
+            if x_pos > 0 && s[..x_pos].chars().all(|c| c.is_ascii_digit()) {
+                s = s[x_pos + 2..].trim().to_string();
+            }
+        }
+        s
+    };
+
+    // Strip trailing " (Something)" only when string ends with ")" — augment mod labels like
+    // "Path of Statues (Atlas)" → "Path of Statues". Does NOT strip "(Large)" from
+    // "Squad Health Restore (Large) Blueprint" since that doesn't end with ")".
+    let strip_trailing_paren = |s: &str| -> String {
+        if s.ends_with(')') {
+            if let Some(p) = s.rfind(" (") {
+                return s[..p].trim().to_string();
+            }
+        }
+        s.to_string()
+    };
+
+    let no_paren = strip_trailing_paren(&normed);
+    let no_qty_no_paren = strip_trailing_paren(&no_qty);
+
+    let candidates: [&str; 4] = [&normed, &no_qty, &no_paren, &no_qty_no_paren];
+
+    for &candidate in &candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        if let Some(&idx) = by_name.get(&candidate.to_lowercase()) {
+            let item = &items[idx];
+            return (
+                item.unique_name.clone(),
+                item.name.clone(),
+                item.category.clone(),
+                item.image_name.clone(),
+                item.ducats,
+            );
+        }
+    }
+
+    // No WFCD match — create a stub so the item still appears in the completionist view.
+    // Stubs use a synthetic unique_name that never matches inventory paths.
+    let stub_id = format!(
+        "syndicate/stub/{}",
+        normed.to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join("_")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>()
+    );
+    let lower = normed.to_lowercase();
+    let category = if lower.contains("sigil") {
+        "Sigils"
+    } else if lower.contains("specter") {
+        "Specters"
+    } else if lower.ends_with("blueprint") || lower.contains("blueprint") {
+        "Blueprints"
+    } else if lower.contains("restore") {
+        "Consumables"
+    } else {
+        "Unknown"
+    };
+    (stub_id, normed, category.to_string(), None, None)
+}
+
 /// Build a recipe node. Prefers DE's ExportRecipes for sub-ingredients;
 /// falls back to WFCD nested `components` for items not in ExportRecipes.
 fn build_recipe_node(
@@ -316,6 +515,7 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         ("Arch-Melee",     "Archwing"),
         ("Gear",           "Misc"),
         ("Fish",           "Misc"),
+        ("Sigils",         "Sigils"),
     ];
 
     let mut items: Vec<WfcdItem> = Vec::new();
@@ -381,11 +581,19 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
             let ducats      = item.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32);
             let mastery_req = item.get("masteryReq").and_then(|v| v.as_u64()).map(|n| n as u32);
 
+            // The WFCD item's own category field is more specific than our file-based mapping.
+            // Use it for categories that have dedicated meaning (Sigils, Emotes, etc.)
+            // so they don't get swallowed into generic "Resources" or "Misc".
+            let wfcd_item_cat = item.get("category").and_then(|v| v.as_str()).unwrap_or("");
+
             // Correct category before inserting:
             // • Blueprint items always go to "Blueprints"
+            // • Items whose WFCD category is something specific → use it
             // • Non-relic items miscategorised under "Relics" → "Misc"
             let corrected_cat = if name.contains("Blueprint") {
                 "Blueprints".to_string()
+            } else if matches!(wfcd_item_cat, "Sigils" | "Emotes" | "Skins" | "Ephemera") {
+                wfcd_item_cat.to_string()
             } else if category == "Relics" {
                 let n = name.to_lowercase();
                 if n.ends_with("intact") || n.ends_with("exceptional")
@@ -403,10 +611,11 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                 items.push(WfcdItem {
                     name: name.clone(),
                     unique_name: unique_name.clone(),
-                    category: corrected_cat,
+                    category: corrected_cat.clone(),
                     image_name: image_name.clone(),
                     vaulted, ducats, mastery_req,
                 });
+
             }
 
             if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
@@ -472,8 +681,13 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                             || cunique.starts_with("/Lotus/Sentinels/")
                             || cunique.starts_with("/Lotus/Archwing/")
                         {
-                            if cname.starts_with(&name) { cname.to_string() }
-                            else { format!("{} {}", name, cname) }
+                            // These paths are the BUILT part, not the blueprint.
+                            // WFCD sometimes names them "Chassis Blueprint" already —
+                            // strip the " Blueprint" suffix so the built part gets the
+                            // correct name and Strategy A can create a distinct blueprint entry.
+                            let base = cname.strip_suffix(" Blueprint").unwrap_or(cname);
+                            if base.starts_with(&*name) { base.to_string() }
+                            else { format!("{} {}", name, base) }
                         } else {
                             format!("{} {}", name, cname)
                         };
@@ -494,13 +708,14 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                         } else {
                             raw_comp_name
                         };
+                        let comp_ducats = comp.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32);
                         items.push(WfcdItem {
                             name: comp_name.clone(),
                             unique_name: cunique.clone(),
                             category: comp_cat.to_string(),
                             image_name: comp_image.clone(),
                             vaulted: None,
-                            ducats: comp.get("ducats").and_then(|v| v.as_u64()).map(|n| n as u32),
+                            ducats: comp_ducats,
                             mastery_req: None,
                         });
 
@@ -526,6 +741,23 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
     // Fetch DE's authoritative recipe data (best-effort; fall back to WFCD-only if it fails)
     let export_recipes = fetch_export_recipes().unwrap_or_default();
 
+    // Reverse map: blueprint unique_name → result item unique_name
+    let bp_to_result: HashMap<String, String> = export_recipes.iter()
+        .map(|(result, recipe)| (recipe.blueprint_unique.clone(), result.clone()))
+        .collect();
+
+    // Fetch complete syndicate store catalog from warframe-drop-data (sigils, specters, etc.)
+    let mut syndicate_catalog = fetch_syndicate_store_catalog(&items);
+
+    // Fill result_unique on blueprint offers so the frontend can show crafted-item status
+    for offers in syndicate_catalog.values_mut() {
+        for offer in offers.iter_mut() {
+            if offer.category == "Blueprints" {
+                offer.result_unique = bp_to_result.get(&offer.unique_name).cloned();
+            }
+        }
+    }
+
     // ── Second pass: add Warframe component blueprints ────────────────────────
     // In Warframe, relics drop Chassis/Neuroptics/Systems BLUEPRINTs — separate items
     // from the built components.
@@ -540,26 +772,62 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
             .collect();
 
         let mut bp_items: Vec<WfcdItem> = Vec::new();
+        // Tracks result_types (built-part paths) that Strategy A already handled,
+        // so Strategy B doesn't create a duplicate synthetic blueprint for the same item.
+        let mut handled_by_a: HashSet<String> = HashSet::new();
 
         // Strategy A: ExportRecipes
         for (result_type, recipe) in &export_recipes {
-            let bp_unique = &recipe.blueprint_unique;
-            if seen.contains(bp_unique) { continue; }
             if !result_type.starts_with("/Lotus/Powersuits/") { continue; }
-            let result_name = match display_names.get(result_type) {
-                Some(n) => n.clone(),
-                None => continue,
-            };
-            if seen.insert(bp_unique.clone()) {
-                bp_items.push(WfcdItem {
-                    name:        format!("{} Blueprint", result_name),
-                    unique_name: bp_unique.clone(),
-                    category:    "Blueprints".to_string(),
-                    image_name:  image_by_unique.get(result_type).and_then(|i| i.clone()),
-                    vaulted:     None,
-                    ducats:      None,
-                    mastery_req: None,
-                });
+            let bp_unique = &recipe.blueprint_unique;
+
+            // Always mark the result_type as handled so Strategy B never creates a
+            // synthetic "X Blueprint" when the real blueprint already exists.
+            handled_by_a.insert(result_type.clone());
+
+            // Add the blueprint entry if it isn't in the catalog yet.
+            if !seen.contains(bp_unique) {
+                // Get the built-item name from display_names (older warframes that have the
+                // Powersuits path item already), or derive it from the recipe path item name.
+                let result_name = display_names.get(result_type).cloned();
+                if let Some(rname) = result_name {
+                    if seen.insert(bp_unique.clone()) {
+                        bp_items.push(WfcdItem {
+                            name:        format!("{} Blueprint", rname),
+                            unique_name: bp_unique.clone(),
+                            category:    "Blueprints".to_string(),
+                            image_name:  image_by_unique.get(result_type).and_then(|i| i.clone()),
+                            vaulted:     None,
+                            ducats:      None,
+                            mastery_req: None,
+                        });
+                    }
+                }
+            }
+
+            // Add the built result item (e.g. "Xaku Prime Chassis") if missing.
+            // WFCD stores newer warframe components only at their Recipe path, leaving
+            // the Powersuits result path absent from the catalog — so built parts that
+            // the memory scanner finds would never get a display name.
+            if !seen.contains(result_type) {
+                // Derive the built-item name from the blueprint catalog entry: strip " Blueprint".
+                let built_name = display_names.get(bp_unique.as_str())
+                    .and_then(|n| n.strip_suffix(" Blueprint"))
+                    .map(|s| s.to_string())
+                    .or_else(|| display_names.get(result_type).cloned());
+                if let Some(bname) = built_name {
+                    if seen.insert(result_type.clone()) {
+                        bp_items.push(WfcdItem {
+                            name:        bname,
+                            unique_name: result_type.clone(),
+                            category:    "Parts".to_string(),
+                            image_name:  image_by_unique.get(result_type).and_then(|i| i.clone()),
+                            vaulted:     None,
+                            ducats:      None,
+                            mastery_req: None,
+                        });
+                    }
+                }
             }
         }
 
@@ -569,6 +837,8 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
             if !item.unique_name.starts_with("/Lotus/Powersuits/") { continue; }
             if item.name.ends_with("Blueprint") { continue; }
             if item.category == "Blueprints" { continue; }
+            // Skip if Strategy A already created a blueprint for this built-part path
+            if handled_by_a.contains(&item.unique_name) { continue; }
             // Derive a synthetic blueprint unique_name by appending "Blueprint"
             let bp_unique = format!("{}Blueprint", item.unique_name);
             if seen.contains(&bp_unique) { continue; }
@@ -606,6 +876,63 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         );
 
         items.extend(bp_items);
+    }
+
+    // ── Pass 3: Fix warframe component naming ─────────────────────────────────
+    // ExportRecipes stores: blueprint_path → { resultType: component_path }.
+    // Example: XakuPrimeChassisBlueprint → { resultType: XakuPrimeChassisComponent }
+    // WFCD lists XakuPrimeChassisComponent as a warframe component, so our code
+    // (correctly) classifies it as "Blueprints" — but it is actually the BUILT PART.
+    // The actual relic-drop blueprint (XakuPrimeChassisBlueprint) is absent.
+    // Fix: rename component-path items to strip " Blueprint", add the real blueprint.
+    {
+        // result_type → blueprint_unique, restricted to WarframeRecipes components
+        let warframe_component_map: HashMap<String, String> = export_recipes
+            .iter()
+            .filter(|(result_type, recipe)| {
+                result_type.starts_with("/Lotus/Types/Recipes/WarframeRecipes/") &&
+                !result_type.ends_with("Blueprint") &&
+                recipe.blueprint_unique.starts_with("/Lotus/Types/Recipes/WarframeRecipes/")
+            })
+            .map(|(rt, recipe)| (rt.clone(), recipe.blueprint_unique.clone()))
+            .collect();
+
+        let mut bp_additions: Vec<WfcdItem> = Vec::new();
+
+        for item in items.iter_mut() {
+            if let Some(bp_unique) = warframe_component_map.get(&item.unique_name) {
+                if item.category == "Blueprints" && item.name.ends_with(" Blueprint") {
+                    let built_name = item.name[..item.name.len() - " Blueprint".len()].to_string();
+
+                    // Add the actual blueprint if it isn't already in the catalog
+                    if !seen.contains(bp_unique) {
+                        seen.insert(bp_unique.clone());
+                        bp_additions.push(WfcdItem {
+                            name:        item.name.clone(),
+                            unique_name: bp_unique.clone(),
+                            category:    "Blueprints".to_string(),
+                            image_name:  item.image_name.clone(),
+                            vaulted:     item.vaulted,
+                            ducats:      item.ducats,
+                            mastery_req: item.mastery_req,
+                        });
+                    }
+
+                    // Rename to reflect this is the built component, not the blueprint
+                    item.name     = built_name;
+                    item.category = "Parts".to_string();
+                }
+            }
+        }
+
+        items.extend(bp_additions);
+    }
+
+    // Safety net: remove any remaining "Foo Blueprint Blueprint" names.
+    for item in items.iter_mut() {
+        if item.name.contains(" Blueprint Blueprint") {
+            item.name = item.name.replace(" Blueprint Blueprint", " Blueprint");
+        }
     }
 
     // Build recipe trees
@@ -715,17 +1042,37 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
     // Build blueprint_names: blueprint_path → (display_name, ducats)
     // Lets the frontend create virtual catalog entries for component blueprints that
     // are tracked by the API but may be absent from the WFCD catalog.
-    // Ducats are pulled from any existing WFCD item that matches the blueprint path.
-    let ducat_by_unique: HashMap<String, u32> = items.iter()
-        .filter_map(|i| i.ducats.map(|d| (i.unique_name.clone(), d)))
+    // IMPORTANT: use the post-Pass3 items list — display_names was built before Pass 3
+    // renamed warframe components, so deriving names from it would produce
+    // "Xaku Prime Chassis Blueprint Blueprint" style duplicates.
+    let items_by_unique: HashMap<&str, &WfcdItem> = items.iter()
+        .map(|i| (i.unique_name.as_str(), i))
         .collect();
 
     let blueprint_names: HashMap<String, (String, Option<u32>)> = export_recipes.iter()
         .filter_map(|(result_type, recipe)| {
+            let bp_unique = &recipe.blueprint_unique;
+            // Primary: the blueprint item itself is in the post-Pass3 catalog
+            if let Some(item) = items_by_unique.get(bp_unique.as_str()) {
+                return Some((bp_unique.clone(), (item.name.clone(), item.ducats)));
+            }
+            // Fallback: derive name from result item, guarding against double "Blueprint"
+            if let Some(result_item) = items_by_unique.get(result_type.as_str()) {
+                let name = if result_item.name.ends_with(" Blueprint") {
+                    result_item.name.clone()
+                } else {
+                    format!("{} Blueprint", result_item.name)
+                };
+                return Some((bp_unique.clone(), (name, result_item.ducats)));
+            }
+            // Last resort: display_names (older content not in items), guard "Blueprint Blueprint"
             let display = display_names.get(result_type)?;
-            let name   = format!("{} Blueprint", display);
-            let ducats = ducat_by_unique.get(&recipe.blueprint_unique).copied();
-            Some((recipe.blueprint_unique.clone(), (name, ducats)))
+            let name = if display.ends_with(" Blueprint") {
+                display.clone()
+            } else {
+                format!("{} Blueprint", display)
+            };
+            Some((bp_unique.clone(), (name, None)))
         })
         .collect();
 
@@ -734,7 +1081,7 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
     // to the existing prime/forma filters in the overlay catalog builder.
     let wiki_reward_names = fetch_wiki_reward_names();
 
-    Ok(FetchResult { items, recipes, relic_drops, relic_rewards, blueprint_names, wiki_reward_names })
+    Ok(FetchResult { items, recipes, relic_drops, relic_rewards, blueprint_names, wiki_reward_names, syndicate_catalog })
 }
 
 pub fn fallback_items() -> Vec<WfcdItem> {

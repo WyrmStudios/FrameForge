@@ -59,6 +59,7 @@ import RivenAnalyzer from "./RivenAnalyzer";
 import RivenOverlayWindow from "./RivenOverlayWindow";
 import TimerHelper, { FissureWatch } from "./TimerHelper";
 import Statistics from "./Statistics";
+import Syndicates from "./Syndicates";
 import Overlay from "./Overlay";
 import ModularWindow from "./ModularWindow";
 import { HelpTip } from "./HelpTip";
@@ -125,7 +126,7 @@ interface InventoryUpdate {
   scanned_at: number;
 }
 
-type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics";
+type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -934,7 +935,7 @@ export default function App() {
 
     const schedule = () => {
       if (cancelled) return;
-      timeoutId = setTimeout(doFetch, wfConnectedRef.current ? 30_000 : 8_000);
+      timeoutId = setTimeout(doFetch, wfConnectedRef.current ? 300_000 : 8_000);
     };
 
     doFetch();
@@ -1736,6 +1737,14 @@ export default function App() {
             <img src="/riven-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
             <span className="module-label">Rivens</span>
           </button>
+          <button
+            className={`module-btn ${activeModule === "completionist" ? "module-active" : ""}`}
+            onClick={() => setActiveModule("completionist")}
+            title="Completionist"
+          >
+            <img src="/completionist-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
+            <span className="module-label">Completionist</span>
+          </button>
         </nav>
 
         {/* ── Inventory module ── */}
@@ -1978,6 +1987,15 @@ export default function App() {
         {activeModule === "statistics" && (
           <ErrorBoundary>
             <Statistics />
+          </ErrorBoundary>
+        )}
+
+        {/* ── Completionist module ── */}
+        {activeModule === "completionist" && (
+          <ErrorBoundary>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+              <Syndicates quantities={mergedQty} />
+            </div>
           </ErrorBoundary>
         )}
 

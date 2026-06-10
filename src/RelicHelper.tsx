@@ -58,6 +58,17 @@ function findCatalogItemGlobal(itemName: string, nameMap: Map<string, CatalogIte
   return nameMap.get(n) ?? nameMap.get(n + " blueprint") ?? nameMap.get(n.replace(" blueprint", ""));
 }
 
+/** True if the blueprint is in inventory OR the built version of it is. */
+function isCatalogItemOwned(cat: CatalogItem | undefined, quantities: Record<string, number>, nameMap: Map<string, CatalogItem>): boolean {
+  if (!cat) return false;
+  if ((quantities[cat.unique_name] ?? 0) > 0) return true;
+  if (cat.name.endsWith(" Blueprint")) {
+    const builtItem = nameMap.get(cat.name.slice(0, -" Blueprint".length).toLowerCase());
+    if (builtItem && (quantities[builtItem.unique_name] ?? 0) > 0) return true;
+  }
+  return false;
+}
+
 function extractPrimeName(name: string): string | null {
   const idx = name.indexOf(" Prime");
   return idx >= 0 ? name.slice(0, idx + " Prime".length) : null;
@@ -224,7 +235,7 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
   const safeRewards = drop.rewards.filter(r => r?.itemName);
   const allComplete = safeRewards.length > 0 && safeRewards.every(r => {
     const cat = findCatalogItem(r.itemName);
-    const isOwned = cat ? (quantities[cat.unique_name] ?? 0) > 0 : false;
+    const isOwned = isCatalogItemOwned(cat, quantities, nameMap);
     const p = extractPrimeName(r.itemName);
     const pItem = p ? nameMap.get(p.toLowerCase()) : undefined;
     const isComplete = pItem
@@ -270,7 +281,7 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
           );
           // Ownership: unique_name lookup is exact and reliable (same as inventory)
           const catalogItem = findCatalogItem(r.itemName);
-          const isOwned = catalogItem ? (quantities[catalogItem.unique_name] ?? 0) > 0 : false;
+          const isOwned = isCatalogItemOwned(catalogItem, quantities, nameMap);
           // Build list of image URLs to try in order (PartImg tries each, moves to next on 404)
           const imageItem = catalogItem?.image_name ? catalogItem : findCatalogItem(r.itemName);
           const primeName = extractPrimeName(r.itemName); // e.g. "Yareli Prime"
@@ -443,7 +454,7 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
       const allDone = d.rewards.length > 0 && d.rewards.every(r => {
         const cat = findCatalogItemGlobal(r.itemName, nameMap);
         const p = extractPrimeName(r.itemName);
-        return (cat ? (quantities[cat.unique_name] ?? 0) > 0 : false)
+        return isCatalogItemOwned(cat, quantities, nameMap)
           || (p ? ownedPrimeNames.has(p.toLowerCase()) : false);
       });
       return filterComplete ? allDone : !allDone;

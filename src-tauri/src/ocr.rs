@@ -238,7 +238,7 @@ pub fn ocr_pixels_rect(
 
     let (enhanced, ew, eh) = preprocess_for_ocr(&cropped, rect_w, rect_h);
     let bmp = to_bmp(&enhanced, ew, eh);
-    run_windows_ocr(bmp, ew).map(|(text, _)| text)
+    run_windows_ocr(bmp, ew, eh).map(|(text, _)| text)
 }
 
 /// OCR a rectangle WITHOUT preprocessing — for white-on-dark text that OCRs fine raw.
@@ -263,7 +263,7 @@ pub fn ocr_pixels_rect_raw(
         cropped[dst..dst + dst_stride].copy_from_slice(&pixels[src..src + dst_stride]);
     }
     let bmp = to_bmp(&cropped, rect_w, rect_h);
-    run_windows_ocr(bmp, rect_w).map(|(text, _)| text)
+    run_windows_ocr(bmp, rect_w, rect_h).map(|(text, _)| text)
 }
 
 /// Convenience: capture + OCR a vertical strip of the window (full width).
@@ -462,7 +462,7 @@ pub fn to_bmp(pixels_bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
 /// Run Windows.Media.Ocr on a BMP. Returns (full_text, line_positions).
 /// line_positions: Vec<(line_text, x_frac)> — X centre per line from word bounding rects.
 #[cfg(target_os = "windows")]
-pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32) -> Result<(String, Vec<(String, f32)>), String> {
+pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32, img_h: u32) -> Result<(String, Vec<(String, f32, f32)>), String> {
     // Ensure COM is initialized for this thread. Tokio spawn_blocking threads
     // start without a COM apartment; WinRT calls fail or return empty silently.
     // CoInitializeEx returns S_OK (first init), S_FALSE (already MTA), or
@@ -482,7 +482,7 @@ pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32) -> Result<(String, Vec<(String,
         Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
     };
 
-    (|| -> windows::core::Result<(String, Vec<(String, f32)>)> {
+    (|| -> windows::core::Result<(String, Vec<(String, f32, f32)>)> {
         let stream = InMemoryRandomAccessStream::new()?;
         let writer = DataWriter::CreateDataWriter(&stream)?;
         writer.WriteBytes(&bmp)?;
@@ -503,28 +503,34 @@ pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32) -> Result<(String, Vec<(String,
         let result = engine.RecognizeAsync(&bitmap)?.get()?;
 
         let mut full = String::new();
-        let mut lines_out: Vec<(String, f32)> = Vec::new();
+        let mut lines_out: Vec<(String, f32, f32)> = Vec::new();
         let lines: IVectorView<OcrLine> = result.Lines()?;
         let count = lines.Size()?;
         for i in 0..count {
             let line = lines.GetAt(i)?;
             let text = line.Text()?.to_string();
-            // Try word bounding rects for X position; fall back to 0.5 if unavailable
-            let x_frac = (|| -> windows::core::Result<f32> {
+            // Compute average word centre X and Y, normalised to [0,1].
+            // Both are needed: X drives column assignment; Y filters out
+            // screen-top HUD overlays (FPS counters, GPU widgets) that would
+            // otherwise create spurious x-clusters and inflate the card count.
+            let (x_frac, y_frac) = (|| -> windows::core::Result<(f32, f32)> {
                 let words = line.Words()?;
                 let wc = words.Size()?;
-                if wc == 0 || img_w == 0 { return Ok(0.5); }
-                let mut sum = 0.0f32;
+                if wc == 0 { return Ok((0.5, 0.5)); }
+                let (mut sx, mut sy) = (0.0f32, 0.0f32);
                 for j in 0..wc {
                     let w = words.GetAt(j)?;
                     let r = w.BoundingRect()?;
-                    sum += r.X + r.Width / 2.0;
+                    sx += r.X + r.Width  / 2.0;
+                    sy += r.Y + r.Height / 2.0;
                 }
-                Ok((sum / wc as f32) / img_w as f32)
-            })().unwrap_or(0.5);
+                let x = if img_w > 0 { (sx / wc as f32) / img_w as f32 } else { 0.5 };
+                let y = if img_h > 0 { (sy / wc as f32) / img_h as f32 } else { 0.5 };
+                Ok((x, y))
+            })().unwrap_or((0.5, 0.5));
             full.push_str(&text);
             full.push('\n');
-            lines_out.push((text, x_frac));
+            lines_out.push((text, x_frac, y_frac));
         }
         Ok((full, lines_out))
     })().map_err(|e| e.to_string())
@@ -1117,7 +1123,7 @@ pub fn extract_reward_items_twophase(
 
     // ── 1. Raw OCR ────────────────────────────────────────────────────────────
     let (raw_full, ocr_lines) =
-        match run_windows_ocr(to_bmp(pixels, pix_w, pix_h), pix_w) {
+        match run_windows_ocr(to_bmp(pixels, pix_w, pix_h), pix_w, pix_h) {
             Ok(r) => r,
             Err(e) => return (false, false, vec![], vec![],
                 format!("├─ Capture  : {}\n└─ OCR error: {}", capture_info, e)),
@@ -1166,6 +1172,7 @@ pub fn extract_reward_items_twophase(
     let raw_norm = normalise(&raw_full);
     let is_prime_like = |w: &str| -> bool {
         if w.starts_with("prim") && w.len() >= 4 { return true; }
+        if w == "pri" { return true; }  // OCR truncation: "Lavos Prime" → "Lavos Pri"
         if w.len() >= 3 && w.len() <= 7 { return lev_dist(w, "prime") <= 1; }
         false
     };
@@ -1185,9 +1192,13 @@ pub fn extract_reward_items_twophase(
     //   single-linkage: 0.50-0.41=0.09 < 0.10 (merged), 0.59-0.50=0.09 < 0.10 (merged) → 1 cluster
     //   centroid:       0.50-0.41=0.09 < 0.10 (extend, center→0.455), 0.59-0.455=0.135 > 0.10 → 2 clusters
     let ocr_cluster_count: usize = {
+        // Filter to lines that are (a) long enough to be item text and
+        // (b) NOT in the top 8% of the capture.  FPS counters, GPU widgets and
+        // other screen-edge HUD overlays sit at y < 0.08 and would otherwise
+        // create a spurious extra x-cluster, inflating the card count.
         let mut xs: Vec<f32> = ocr_lines.iter()
-            .filter(|(t, _)| t.trim().len() >= 3)
-            .map(|(_, x)| *x)
+            .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.08)
+            .map(|(_, x, _)| *x)
             .collect();
         xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         if xs.is_empty() { 0 }
@@ -1236,7 +1247,7 @@ pub fn extract_reward_items_twophase(
     let columns: Vec<(Vec<String>, f32)> = {
         let mut cols: Vec<(Vec<String>, f32)> =
             active_centers.iter().map(|&cx| (Vec::new(), cx)).collect();
-        for (text, x) in &ocr_lines {
+        for (text, x, _) in &ocr_lines {
             let idx = active_centers.iter().enumerate()
                 .min_by(|(_, a), (_, b)| {
                     (x - *a).abs().partial_cmp(&(x - *b).abs())
@@ -1415,7 +1426,7 @@ pub fn extract_reward_items_twophase(
                 500usize // no unique identifier → sort after items with known positions
             } else {
                 ocr_lines.iter().enumerate()
-                    .find(|(_, (line_text, _))| {
+                    .find(|(_, (line_text, _, _))| {
                         let lt = normalise(line_text);
                         key_words.iter().any(|&w| lt.contains(w))
                     })
@@ -1538,7 +1549,7 @@ pub fn extract_reward_items_twophase(
 pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)> { None }
 
 #[cfg(not(target_os = "windows"))]
-pub fn run_windows_ocr(_bmp: Vec<u8>, _w: u32) -> Result<(String, Vec<(String, f32)>), String> {
+pub fn run_windows_ocr(_bmp: Vec<u8>, _w: u32, _h: u32) -> Result<(String, Vec<(String, f32, f32)>), String> {
     Err("Windows only".into())
 }
 
