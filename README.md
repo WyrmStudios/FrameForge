@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-# FrameForge — Warframe Companion `v1.7.0`
-=======
 # FrameForge — Warframe Companion `v1.8.0`
->>>>>>> 8572a56 (Release v1.8.0)
+(Release v1.8.0)
 
 A desktop companion for Warframe that shows your live inventory, tracks crafting recipes, displays market prices, runs a full trading desk, manages a live timer dashboard, auto-detects relic reward screens, and analyses riven mods — all without modifying the game.
 
