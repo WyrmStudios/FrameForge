@@ -1,6 +1,6 @@
 name: 💡 Feature Request
 description: Suggest an idea or improvement for one of the apps.
-labels: ["enhancement", "needs-triage"]
+labels: ["Feature Request", "needs-triage"]
 body:
   - type: markdown
     attributes:
