@@ -478,7 +478,10 @@ export default function App() {
       const creds = await invoke<[string, string] | null>("wfm_load_credentials").catch(() => null);
       if (creds) {
         const session = await invoke<[string, string] | null>("wfm_set_jwt", { jwt: creds[1] }).catch(() => null);
-        if (session) setWfmLoggedIn(true);
+        if (session) {
+          setWfmLoggedIn(true);
+          invoke("wfm_set_status", { status: "invisible" }).catch(() => {});
+        }
       }
     })();
     // Fire-and-forget: populates WFM_TOP_CACHE so the Statistics tab is instant
@@ -1225,6 +1228,29 @@ export default function App() {
       unsubStatus.then(fn => fn());
       if (overlayWin) { overlayWin.close(); overlayWin = null; }
     };
+  }, []);
+
+  // ── In-game trade detection ───────────────────────────────────────────────
+  // Rust emits "trade-completed" from the EE.log monitor when it detects
+  // "The trade was successful!" — save directly to SQLite via add_trade.
+  useEffect(() => {
+    const unlisten = listen<{
+      withPlayer: string; direction: string; itemName: string;
+      quantity: number; platinum: number; timestamp: string;
+    }>("trade-completed", (e) => {
+      const p = e.payload;
+      invoke("add_trade", {
+        withPlayer: p.withPlayer,
+        direction:  p.direction,
+        itemName:   p.itemName,
+        itemUrl:    "",
+        quantity:   p.quantity,
+        platinum:   p.platinum,
+        source:     "in-game",
+        notes:      "",
+      }).catch(() => {});
+    });
+    return () => { unlisten.then(fn => fn()); };
   }, []);
 
   // ── Derived data ───────────────────────────────────────────────────────────

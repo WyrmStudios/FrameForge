@@ -27,6 +27,14 @@ interface WfmOrder {
 
 interface StatPoint { datetime: string; median: number; volume: number; }
 
+interface EditMode {
+  pt: number;
+  qty: number;
+  onPtChange: (v: number) => void;
+  onQtyChange: (v: number) => void;
+  onSave: () => void;
+}
+
 interface Props {
   urlName: string;
   displayName: string;
@@ -34,6 +42,7 @@ interface Props {
   onClose: () => void;
   isLoggedIn: boolean;
   myUsername?: string;
+  editMode?: EditMode;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString(); }
@@ -149,7 +158,7 @@ function CreateOrderForm({ urlName, prefillPrice, prefillType, onDone }: {
 
 // ── Main popup ────────────────────────────────────────────────────────────────
 
-export default function ItemMarketPopup({ urlName, displayName, imageName, onClose, isLoggedIn }: Props) {
+export default function ItemMarketPopup({ urlName, displayName, imageName, onClose, isLoggedIn, editMode }: Props) {
   const [orders, setOrders]     = useState<{ sell: WfmOrder[]; buy: WfmOrder[] } | null>(null);
   const [stats, setStats]       = useState<StatPoint[]>([]);
   const [loadingO, setLoadingO] = useState(true);
@@ -239,7 +248,19 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
         </div>
 
         {/* ── Action bar ── */}
-        {isLoggedIn && (
+        {editMode ? (
+          <div className="imp-action-bar imp-edit-bar">
+            <span className="imp-edit-label">Price</span>
+            <input className="imp-edit-input" type="number" min={1} value={editMode.pt}
+              onChange={e => editMode.onPtChange(+e.target.value)} />
+            <span className="imp-edit-label">p</span>
+            <span className="imp-edit-label" style={{ marginLeft: 8 }}>Qty</span>
+            <input className="imp-edit-input imp-edit-input-sm" type="number" min={1} value={editMode.qty}
+              onChange={e => editMode.onQtyChange(+e.target.value)} />
+            <button className="imp-action-sell" style={{ marginLeft: "auto" }} onClick={editMode.onSave}>Save</button>
+            <button className="imp-action-buy" onClick={onClose}>Cancel</button>
+          </div>
+        ) : isLoggedIn ? (
           <div className="imp-action-bar">
             {!showForm ? (
               <>
@@ -255,8 +276,7 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
                 onDone={() => { setShowForm(false); }} />
             )}
           </div>
-        )}
-        {!isLoggedIn && (
+        ) : (
           <div className="imp-login-hint">Log in to warframe.market in the Trading tab to place orders.</div>
         )}
       </div>

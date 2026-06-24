@@ -186,11 +186,31 @@ fn scan_inventory_resources(data: &[u8], unique_paths: &std::collections::HashSe
 
         let cap: i64 = if path.starts_with("/Lotus/Types/Recipes/") { 9_999 } else { 1_000_000 };
         if qty <= cap {
-            // Keep the FIRST occurrence (lowest address). The real inventory JSON is always
-            // at lower addresses than any injected companion-tool data, so first-wins is correct.
-            results.entry(path).or_insert_with(|| {
-                (qty, extract_context(data, count_pos, 300, 200))
-            });
+            if path.starts_with("/Lotus/Types/Items/FusionTreasures/") {
+                // FusionTreasures appears in both the authoritative inventory array
+                // and in InventoryChanges delta blobs (per-mission reward deltas).
+                // Delta blobs have "InventoryChanges" within ~1 KB before the match;
+                // skip them so we only count the real totals, not per-session deltas.
+                const INV_CHANGES: &[u8] = b"\"InventoryChanges\"";
+                let look_start = count_pos.saturating_sub(1024);
+                let in_delta = data[look_start..count_pos]
+                    .windows(INV_CHANGES.len())
+                    .any(|w| w == INV_CHANGES);
+                if in_delta { pos = count_pos + 1; continue; }
+
+                // Same sculpture type can appear multiple times in the FusionTreasures
+                // array with different Sockets values (empty vs filled). Sum them all.
+                let entry = results.entry(path).or_insert_with(|| {
+                    (0, extract_context(data, count_pos, 300, 200))
+                });
+                entry.0 += qty;
+            } else {
+                // Keep the FIRST occurrence (lowest address). The real inventory JSON is always
+                // at lower addresses than any injected companion-tool data, so first-wins is correct.
+                results.entry(path).or_insert_with(|| {
+                    (qty, extract_context(data, count_pos, 300, 200))
+                });
+            }
         }
 
         pos = path_end + 1;

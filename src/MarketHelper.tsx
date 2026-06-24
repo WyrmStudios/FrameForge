@@ -286,6 +286,13 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
     return map;
   }, [allItems]);
 
+  // item name (lowercase) → image_name — used by the Trading tab edit popup
+  const imageMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const i of allItems) if (i.image_name) m.set(i.name.toLowerCase(), i.image_name);
+    return m;
+  }, [allItems]);
+
   // ducats lookup by name for fallback (e.g. "Chassis" → 15 so "Chassis Blueprint" also gets 15)
   const ducatsByName = useMemo(() => {
     const m = new Map<string, number>();
@@ -516,6 +523,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
         <WfmTrading
           wfmLookup={wfmLookup}
           wfmItems={wfmItems}
+          imageMap={imageMap}
           quantities={quantities}
           onNewWhisper={() => { if (activeMarketTab !== "trading") setWfmBadge(n => n + 1); }}
           onLoginChange={u => setWfmUsername(u)}

@@ -366,6 +366,21 @@
   font-style: italic;
 }
 
+/* ── Listings search ── */
+.wfm-listings-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+  outline: none;
+}
+.wfm-listings-search:focus { border-color: var(--accent); }
+
 /* ── Orders list ── */
 .wfm-orders {
   display: flex;
@@ -571,3 +586,77 @@
   gap: 5px;
   flex-wrap: wrap;
 }
+
+/* ── Listing edit popup ── */
+.lep-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.lep-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 600px; max-width: 95vw;
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.lep-header {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.lep-title { font-size: 15px; font-weight: 600; flex: 1; }
+.lep-median { font-size: 12px; color: var(--muted); }
+.lep-median span { color: var(--accent); font-weight: 600; }
+.lep-close {
+  background: none; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer; padding: 0 2px; line-height: 1;
+}
+.lep-close:hover { color: var(--text); }
+.lep-cols {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 0; overflow-y: auto; flex: 1;
+}
+.lep-col { padding: 10px 12px; }
+.lep-col + .lep-col { border-left: 1px solid var(--border); }
+.lep-col-hdr {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px;
+}
+.lep-best { color: var(--accent); text-transform: none; font-weight: 600; }
+.lep-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.lep-pt  { width: 40px; font-weight: 600; color: var(--plat); }
+.lep-qty { width: 32px; color: var(--muted); }
+.lep-user { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lep-use {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); font-size: 10px; padding: 1px 5px; cursor: pointer;
+  white-space: nowrap;
+}
+.lep-use:hover { border-color: var(--accent); color: var(--accent); }
+.lep-loading, .lep-none, .lep-err {
+  font-size: 12px; color: var(--muted); padding: 6px 0;
+}
+.lep-err { color: var(--red); font-size: 11px; }
+.lep-edit-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.lep-edit-row > span { font-size: 12px; color: var(--muted); }
+.lep-input {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text); font-size: 13px; padding: 4px 7px; width: 70px; outline: none;
+}
+.lep-input:focus { border-color: var(--accent); }
+.lep-input-sm { width: 48px; }
+.lep-edit-row .wfm-btn-sm { margin-left: auto; }

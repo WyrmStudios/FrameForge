@@ -258,6 +258,16 @@
 }
 .imp-action-buy:hover { background: rgba(56,139,253,.28); }
 
+/* ── Edit mode bar ── */
+.imp-edit-bar { display: flex; align-items: center; gap: 6px; }
+.imp-edit-label { font-size: 12px; color: var(--muted); }
+.imp-edit-input {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text); font-size: 13px; padding: 4px 7px; width: 70px; outline: none;
+}
+.imp-edit-input:focus { border-color: var(--accent); }
+.imp-edit-input-sm { width: 48px; }
+
 /* ── Create order form ── */
 .imp-create-form { display: flex; flex-direction: column; gap: 6px; }
 

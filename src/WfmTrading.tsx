@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import ItemMarketPopup from "./ItemMarketPopup";
 import "./WfmTrading.css";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -27,6 +28,7 @@ interface WfmItemEntry { id: string; item_name: string; url_name: string; }
 interface Props {
   wfmLookup: Map<string, string>;
   wfmItems: WfmItemEntry[];
+  imageMap: Map<string, string>;
   quantities: Record<string, number>;
   onNewWhisper: () => void;
   onLoginChange: (username: string | null) => void;
@@ -139,12 +141,31 @@ function LoginPanel({ onLogin }: { onLogin: (u: string) => void }) {
 
 // ── Listings panel ────────────────────────────────────────────────────────────
 
-function ListingsPanel({ itemIdMap }: { username: string; itemIdMap: Map<string, string> }) {
+function orderName(o: WfmOrder, itemIdMap: Map<string, string>): string {
+  return (
+    o.item?.i18n?.en?.name
+    ?? o.item?.en?.item_name
+    ?? o.item?.urlName
+    ?? o.item?.url_name
+    ?? (o.item?.slug ? (o.item.slug as string).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : null)
+    ?? ((o as unknown as Record<string, unknown>).itemId ? itemIdMap.get((o as unknown as Record<string, unknown>).itemId as string) : null)
+    ?? "—"
+  );
+}
+
+function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap }: {
+  username: string; itemIdMap: Map<string, string>; wfmItems: WfmItemEntry[]; imageMap: Map<string, string>;
+}) {
   const [orders, setOrders] = useState<{ sell: WfmOrder[]; buy: WfmOrder[] }>({ sell: [], buy: [] });
   const [loading, setLoading] = useState(true);
-  const [editId, setEditId]   = useState<string | null>(null);
-  const [editPt, setEditPt]   = useState(0);
-  const [editQty, setEditQty] = useState(1);
+  const [search, setSearch]   = useState("");
+  const [editing, setEditing] = useState<{ id: string; urlName: string; name: string; imageName?: string; pt: number; qty: number } | null>(null);
+
+  // canonical name → WFM slug lookup built from the /v2/items list
+  const nameToUrl = useMemo(() =>
+    new Map(wfmItems.map(i => [i.item_name.toLowerCase(), i.url_name])),
+    [wfmItems]
+  );
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -166,15 +187,23 @@ function ListingsPanel({ itemIdMap }: { username: string; itemIdMap: Map<string,
   };
 
   const saveEdit = async () => {
-    if (!editId) return;
-    await invokeWfm("wfm_update_order", { orderId: editId, platinum: editPt, quantity: editQty, visible: true }).catch(() => {});
-    setEditId(null);
+    if (!editing) return;
+    await invokeWfm("wfm_update_order", { orderId: editing.id, platinum: editing.pt, quantity: editing.qty, visible: true }).catch(() => {});
+    setEditing(null);
     loadOrders();
   };
 
-  const startEdit = (o: WfmOrder) => { setEditId(o.id); setEditPt(o.platinum); setEditQty(o.quantity); };
+  const startEdit = (o: WfmOrder) => {
+    const name = orderName(o, itemIdMap);
+    const urlName = nameToUrl.get(name.toLowerCase())
+      ?? o.item?.slug ?? o.item?.urlName ?? o.item?.url_name ?? "";
+    const imageName = imageMap.get(name.toLowerCase());
+    setEditing({ id: o.id, urlName, name, imageName, pt: o.platinum, qty: o.quantity });
+  };
 
   const allOrders = [...orders.sell, ...orders.buy];
+  const q = search.trim().toLowerCase();
+  const visible = q ? allOrders.filter(o => orderName(o, itemIdMap).toLowerCase().includes(q)) : allOrders;
 
   return (
     <div className="wfm-panel">
@@ -183,43 +212,43 @@ function ListingsPanel({ itemIdMap }: { username: string; itemIdMap: Map<string,
         <button className="wfm-refresh-btn" onClick={loadOrders} title="Refresh">↻</button>
       </div>
       <div className="wfm-listings-hint">To post a new listing, click any set in the Prime Sets tab.</div>
+      <input
+        className="wfm-listings-search"
+        type="text"
+        placeholder="Search listings…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
       {loading ? <div className="wfm-empty">Loading…</div> :
-       allOrders.length === 0 ? <div className="wfm-empty">No active listings.</div> :
+       visible.length === 0 ? <div className="wfm-empty">{q ? "No listings match." : "No active listings."}</div> :
        <div className="wfm-orders">
-         {allOrders.map(o => (
-           <div key={o.id} className={`wfm-order-row${editId === o.id ? " editing" : ""}`}>
+         {visible.map(o => (
+           <div key={o.id} className="wfm-order-row">
              <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
-             <span className="wfm-order-name">{
-               // Try all known v2 name fields, then fall back to itemId lookup
-               o.item?.i18n?.en?.name
-               ?? o.item?.en?.item_name
-               ?? o.item?.urlName
-               ?? o.item?.url_name
-               ?? (o.item?.slug ? (o.item.slug as string).replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : null)
-               ?? ((o as unknown as Record<string, unknown>).itemId ? itemIdMap.get((o as unknown as Record<string, unknown>).itemId as string) : null)
-               ?? "—"
-             }</span>
-             {editId === o.id ? (
-               <>
-                 <input className="wfm-edit-input" type="number" value={editPt} onChange={e => setEditPt(+e.target.value)} />
-                 <span className="wfm-plat">p</span>
-                 <input className="wfm-edit-input wfm-edit-qty" type="number" value={editQty} onChange={e => setEditQty(+e.target.value)} />
-                 <button className="wfm-btn-sm wfm-btn-save" onClick={saveEdit}>Save</button>
-                 <button className="wfm-btn-sm" onClick={() => setEditId(null)}>Cancel</button>
-               </>
-             ) : (
-               <>
-                 <span className="wfm-order-price">{fmt(o.platinum)}p</span>
-                 <span className="wfm-order-qty">×{o.quantity}</span>
-                 <button className="wfm-btn-sm" onClick={() => startEdit(o)}>Edit</button>
-                 <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteOrder(o.id)}>✕</button>
-               </>
-             )}
+             <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
+             <span className="wfm-order-price">{fmt(o.platinum)}p</span>
+             <span className="wfm-order-qty">×{o.quantity}</span>
+             <button className="wfm-btn-sm" onClick={() => startEdit(o)}>Edit</button>
+             <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteOrder(o.id)}>✕</button>
            </div>
          ))}
        </div>
       }
-
+      {editing && editing.urlName && (
+        <ItemMarketPopup
+          urlName={editing.urlName}
+          displayName={editing.name}
+          imageName={editing.imageName}
+          onClose={() => setEditing(null)}
+          isLoggedIn={true}
+          editMode={{
+            pt: editing.pt, qty: editing.qty,
+            onPtChange: v => setEditing(e => e && { ...e, pt: v }),
+            onQtyChange: v => setEditing(e => e && { ...e, qty: v }),
+            onSave: saveEdit,
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -317,7 +346,7 @@ function MessagesPanel({ username: _username }: { username: string }) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, quantities: _quantities, onNewWhisper, onLoginChange }: Props) {
+export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, quantities: _quantities, onNewWhisper, onLoginChange }: Props) {
   const [tab, setTab]           = useState<"listings" | "messages">("listings");
   const [username, setUsername]         = useState<string | null>(null);
   const [checking, setChecking]         = useState(true);
@@ -357,9 +386,18 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, quantities
       if (resolvedUser) {
         setUsername(resolvedUser);
         onLoginChange(resolvedUser);
-        // Set invisible on every launch so the user controls when they appear online.
-        setWfmStatus("invisible");
-        invoke("wfm_set_status", { status: "invisible" }).catch(() => {});
+        if (existing) {
+          // Returning to the tab — restore the cached status (already updated by wfm_set_status).
+          // Avoids an HTTP round-trip and the brief "nothing selected" flash from an async fetch.
+          const cachedStatus = existing[1] as "online" | "ingame" | "invisible" | "offline";
+          if (cachedStatus === "online" || cachedStatus === "ingame" || cachedStatus === "invisible") {
+            setWfmStatus(cachedStatus);
+          }
+        } else {
+          // Fresh session start — default to invisible so the user controls when they appear.
+          setWfmStatus("invisible");
+          invoke("wfm_set_status", { status: "invisible" }).catch(() => {});
+        }
       }
       setChecking(false);
     })();
@@ -439,7 +477,7 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, quantities
       )}
 
       {tab === "listings"
-        ? <ListingsPanel username={username} itemIdMap={new Map(wfmItems.map(i => [i.id, i.item_name]))} />
+        ? <ListingsPanel username={username} itemIdMap={new Map(wfmItems.map(i => [i.id, i.item_name]))} wfmItems={wfmItems} imageMap={imageMap} />
         : <MessagesPanel username={username} />
       }
     </div>
