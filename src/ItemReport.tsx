@@ -81,9 +81,13 @@ interface CardProps {
   timeframe: Timeframe;
   onTimeframeChange: (tf: Timeframe) => void;
   onRemove: () => void;
+  onHandleMouseDown: (e: React.MouseEvent) => void;
+  onCardMouseEnter: () => void;
+  isDragSource: boolean;
+  isDragOver: boolean;
 }
 
-function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onRemove }: CardProps) {
+function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onRemove, onHandleMouseDown, onCardMouseEnter, isDragSource, isDragOver }: CardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const displayData = useMemo(() => {
@@ -104,8 +108,12 @@ function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onR
     n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString();
 
   return (
-    <div className="ir-card">
+    <div
+      className={`ir-card${isDragSource ? " ir-card-dragsource" : ""}${isDragOver ? " ir-card-dragover" : ""}`}
+      onMouseEnter={onCardMouseEnter}
+    >
       <div className="ir-card-header">
+        <span className="ir-drag-handle" title="Drag to reorder" onMouseDown={onHandleMouseDown}>⠿</span>
         <span className="ir-card-name">{item.display_name}</span>
         {confirmDelete ? (
           <div className="ir-confirm-row">
@@ -168,6 +176,69 @@ export default function ItemReport() {
   const [snapshots, setSnapshots] = useState<Record<string, SnapshotPoint[]>>({});
   const [timeframes, setTimeframes] = useState<Record<string, Timeframe>>({});
   const [loading, setLoading] = useState(true);
+
+  const [cardOrder, setCardOrder] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("ff-item-report-order") ?? "[]"); }
+    catch { return []; }
+  });
+  const [draggingFrom, setDraggingFrom] = useState<string | null>(null);
+  const [dragTarget, setDragTarget]     = useState<string | null>(null);
+  const draggingRef = useRef<string | null>(null);
+  const dragTargetRef = useRef<string | null>(null);
+
+  const orderedTracked = useMemo(() => {
+    if (cardOrder.length === 0) return tracked;
+    return [...tracked].sort((a, b) => {
+      const ai = cardOrder.indexOf(a.unique_name);
+      const bi = cardOrder.indexOf(b.unique_name);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  }, [tracked, cardOrder]);
+
+  const commitDrop = useCallback(() => {
+    const src = draggingRef.current;
+    const tgt = dragTargetRef.current;
+    if (src && tgt && src !== tgt) {
+      setCardOrder(prev => {
+        const base = orderedTracked.map(t => t.unique_name);
+        // Use most-recent prev if available, fall back to current visible order
+        const order = prev.length > 0 ? [...prev] : base;
+        // Ensure all current items are represented
+        for (const id of base) if (!order.includes(id)) order.push(id);
+        const from = order.indexOf(src);
+        const to   = order.indexOf(tgt);
+        if (from !== -1 && to !== -1) {
+          order.splice(from, 1);
+          order.splice(to, 0, src);
+        }
+        localStorage.setItem("ff-item-report-order", JSON.stringify(order));
+        return order;
+      });
+    }
+    draggingRef.current  = null;
+    dragTargetRef.current = null;
+    setDraggingFrom(null);
+    setDragTarget(null);
+  }, [orderedTracked]);
+
+  // Global mouseup ends the drag from anywhere
+  useEffect(() => {
+    if (!draggingFrom) return;
+    const up = () => commitDrop();
+    window.addEventListener("mouseup", up);
+    return () => window.removeEventListener("mouseup", up);
+  }, [draggingFrom, commitDrop]);
+
+  const startDrag = useCallback((id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current  = id;
+    dragTargetRef.current = id;
+    setDraggingFrom(id);
+    setDragTarget(id);
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -240,6 +311,14 @@ export default function ItemReport() {
     const q = debouncedQuery.toLowerCase();
     return catalog
       .filter(c => !trackedSet.has(c.unique_name) && c.name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+        const aExact = an === q, bExact = bn === q;
+        if (aExact !== bExact) return aExact ? -1 : 1;
+        const aStart = an.startsWith(q), bStart = bn.startsWith(q);
+        if (aStart !== bStart) return aStart ? -1 : 1;
+        return an.localeCompare(bn);
+      })
       .slice(0, 20);
   }, [catalog, debouncedQuery, trackedSet]);
 
@@ -326,8 +405,8 @@ export default function ItemReport() {
         </div>
       ) : (
         <div className="ir-scroll">
-          <div className="ir-grid">
-            {tracked.map(item => (
+          <div className={`ir-grid${draggingFrom ? " ir-grid-dragging" : ""}`}>
+            {orderedTracked.map(item => (
               <TrackedItemCard
                 key={item.unique_name}
                 item={item}
@@ -335,6 +414,14 @@ export default function ItemReport() {
                 timeframe={timeframes[item.unique_name] ?? "30"}
                 onTimeframeChange={tf => handleTimeframeChange(item.unique_name, tf)}
                 onRemove={() => handleRemove(item.unique_name)}
+                onHandleMouseDown={e => startDrag(item.unique_name, e)}
+                onCardMouseEnter={() => {
+                  if (!draggingRef.current) return;
+                  dragTargetRef.current = item.unique_name;
+                  setDragTarget(item.unique_name);
+                }}
+                isDragSource={draggingFrom === item.unique_name}
+                isDragOver={dragTarget === item.unique_name && draggingFrom !== item.unique_name}
               />
             ))}
           </div>

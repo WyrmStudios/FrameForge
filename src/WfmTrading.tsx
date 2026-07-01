@@ -29,7 +29,7 @@ interface Props {
   wfmLookup: Map<string, string>;
   wfmItems: WfmItemEntry[];
   imageMap: Map<string, string>;
-  quantities: Record<string, number>;
+  inventory: Record<string, unknown>;
   onNewWhisper: () => void;
   onLoginChange: (username: string | null) => void;
 }
@@ -346,7 +346,7 @@ function MessagesPanel({ username: _username }: { username: string }) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, quantities: _quantities, onNewWhisper, onLoginChange }: Props) {
+export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, inventory: _inventory, onNewWhisper, onLoginChange }: Props) {
   const [tab, setTab]           = useState<"listings" | "messages">("listings");
   const [username, setUsername]         = useState<string | null>(null);
   const [checking, setChecking]         = useState(true);

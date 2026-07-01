@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import "./ModularWindow.css";
 import { WorldState, TIMER_LABELS, getTimerInfo, fmtMs, FissureWatch, matchesWatch, WsFissure, WsStorm } from "./TimerHelper";
+import type { InventoryItem } from "./App";
 
 interface CatalogItem {
   unique_name: string;
@@ -22,10 +23,10 @@ type CompStatus = "none" | "blueprint" | "part";
 
 function fmt(n: number) { return n.toLocaleString(); }
 
-function compStatus(comp: RecipeComponent, quantities: Record<string, number>): CompStatus {
-  if ((quantities[comp.unique_name] ?? 0) >= (comp.count || 1)) return "part";
+function compStatus(comp: RecipeComponent, inventory: Record<string, InventoryItem>): CompStatus {
+  if ((inventory[comp.unique_name]?.quantity ?? 0) >= (comp.count || 1)) return "part";
   const bpUnique = comp.components[0]?.unique_name;
-  if (bpUnique && (quantities[bpUnique] ?? 0) > 0) return "blueprint";
+  if (bpUnique && (inventory[bpUnique]?.quantity ?? 0) > 0) return "blueprint";
   return "none";
 }
 
@@ -72,7 +73,7 @@ interface Props {
   onTimerFavoritesChange: (newOrder: string[]) => void;
   onTimerUnfavorite: (id: string) => void;
   fissureWatches: FissureWatch[];
-  quantities: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   catalog: CatalogItem[];
   width?: number;
   onWidthChange?: (w: number) => void;
@@ -85,7 +86,7 @@ export default function ModularWindow({
   favorites, onFavoritesChange, onUnfavorite,
   timerFavorites, onTimerFavoritesChange, onTimerUnfavorite,
   fissureWatches,
-  quantities, catalog, width, onWidthChange,
+  inventory, catalog, width, onWidthChange,
   sectionOrder, onSectionOrderChange,
 }: Props) {
   const [craftable, setCraftable] = useState<CatalogItem[]>([]);
@@ -169,12 +170,12 @@ export default function ModularWindow({
       }
       return Array.from(byName.values())
         .map(({ unique_name, name, needed, allKeys }) => {
-          const owned = Math.max(...allKeys.map(k => quantities[k] ?? 0));
+          const owned = Math.max(...allKeys.map(k => inventory[k]?.quantity ?? 0));
           return { unique_name, name, needed, owned, shortage: Math.max(0, needed - owned) };
         })
         .sort((a, b) => a.name.localeCompare(b.name));
     });
-  }, [tracked, trackedRecipes, quantities]);
+  }, [tracked, trackedRecipes, inventory]);
 
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     if (!onWidthChange) return;
@@ -245,9 +246,9 @@ export default function ModularWindow({
           const item = craftable.find(c => c.unique_name === id);
           if (!item) return null;
           const recipe = trackedRecipes.get(id);
-          const isOwned = (quantities[item.unique_name] ?? 0) > 0;
+          const isOwned = (inventory[item.unique_name]?.quantity ?? 0) > 0;
           const allDone = recipe && recipe.length > 0 &&
-            mergeComponents(recipe).every(c => compStatus(c, quantities) === "part");
+            mergeComponents(recipe).every(c => compStatus(c, inventory) === "part");
           const needs = perItemNeeds[idx] ?? [];
           const collapsed = collapsedReqs.has(id);
           const rows = needs.filter(r => trackingView === "all" || r.shortage > 0);
@@ -317,7 +318,7 @@ export default function ModularWindow({
           {favorites.map((id, idx) => {
             const item = catalog.find(c => c.unique_name === id);
             if (!item) return null;
-            const qty = quantities[id] ?? 0;
+            const qty = inventory[id]?.quantity ?? 0;
             return (
               <div key={id} className="modular-fav-item">
                 <div className="modular-item-arrows">

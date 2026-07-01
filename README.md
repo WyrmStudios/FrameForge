@@ -1,229 +1,104 @@
-# FrameForge — Warframe Companion `v1.12.0`
+# FrameForge — Warframe Companion `v2.0.0`
 
-A desktop companion for Warframe that shows your live inventory, tracks crafting recipes, displays market prices, runs a full trading desk, manages a live timer dashboard, auto-detects relic reward screens, and analyses riven mods — all without modifying the game.
+A desktop companion for Warframe — live inventory, market prices, trading, timers, relic overlay, and riven analysis. Read-only, no game modification.
 
-> **Windows only** — requires Windows 10 or 11. Inventory scanning requires Warframe to be running; all other features work standalone.
+> **Windows 10/11 only.** Inventory scanning requires Warframe to be running; all other features work standalone.
 
 ---
 
 ## Features
 
-### Live Inventory Scanning
-Your inventory is read directly from the Warframe process memory across 13 item categories — resources, mods, arcanes, relics, weapons, Warframes, companions, warframe blueprints, weapon component blueprints, crafted warframe parts, and more. No login required. The scanner is **strictly read-only**: it uses `ReadProcessMemory`, the same Windows API used by Overwolf and hardware monitors. It never writes to memory, injects code, or modifies the game.
+### Live Inventory
+Reads your inventory from Warframe's process memory (read-only, same API as Overwolf). Covers resources, mods, arcanes, relics, weapons, Warframes, companions, blueprints, and more — no login required. Inventory is persisted to disk and restored instantly on next launch.
 
-The scanner runs in 15-second rolling windows that carry over between cycles so it can cover all of Warframe's memory without stalling the UI. Inventory addresses are cached to disk so subsequent scans find your items almost instantly.
+### Foundry
+Browse every craftable item with full ingredient trees. Components are colour-coded by ownership status and show which relics drop them. Star items to track them in the Modular Window. Filter by Prime, Vaulted/Unvaulted, Owned/Unowned, Ready to build, and Mastered/Unmastered.
 
-Subsumed warframes (consumed by Helminth) are automatically detected and shown as unowned — they no longer appear as gold in the Foundry. The subsumed indicator icon has a red background so it stands out at a glance.
+### Market Helper
+Browse Prime sets with live platinum prices from [warframe.market](https://warframe.market). Click any item for a live order popup with sell/buy orders, 3-week price chart, and one-click listing (requires WFM login).
 
-A quantity change log records every item gain and loss with timestamps.
-
-All inventory data — unique items, mods, mastery rank, and Helminth subsumptions — is persisted to disk and restored immediately on next launch, so your inventory is visible the moment FrameForge opens even before a scan completes.
-
-An optional **Inventory Blob Logging** setting (`Settings → Memory Scanner`) saves a timestamped raw snapshot of the inventory JSON from memory to `%LOCALAPPDATA%\warframe-companion\blobs\` on each scan pass. Useful for diagnostics and analysis.
-
-### Foundry — Recipe Browser & Tracker
-Browse every craftable item with full ingredient trees. Each component is colour-coded by status (owned, blueprint only, missing) and shows which relics drop it. Star items to **track** them in the Modular Window, which shows a per-item breakdown of exactly what you still need to farm.
-
-Filter chips let you narrow down by: **Prime**, **Vaulted / Unvaulted**, **Owned / Unowned**, **Ready to build**, and **Mastered / Unmastered**. Filters and search are preserved when switching to other tabs and back.
-
-### Market Helper — Prime Sets
-Browse every Prime set with live platinum prices from [warframe.market](https://warframe.market). Shows total set value, per-part pricing, ducat values, and your ownership status. Click any set card or individual part to open a **live order popup** showing:
-- Current sell and buy orders sorted by price
-- 3-week price history chart
-- One-click listing from directly inside the popup (requires WFM login)
-
-### Trading (warframe.market)
-Log in to your warframe.market account to access full trading features:
-- **Active listings** — view, edit price/quantity, and delete your buy and sell orders
-- **Post listings** — list any item directly from the Prime Sets view or from the order popup
-- **Trade whispers** — incoming warframe.market trade offers captured live from your game's chat log and displayed with one-click invite and sold responses
-- **Online status** — set your WFM status to Online, In Game, or Invisible via WebSocket
-- Session token is stored securely in **Windows Credential Manager** — your password is never saved
+### Trading
+Full warframe.market integration — manage active listings, post new orders, receive trade whispers from in-game chat, and set your online status. Session token stored in Windows Credential Manager.
 
 ### Relic Helper
-Browse void fissure drop tables with rarity colour-coding (Bronze/Silver/Gold), ownership status, and platinum value. Supports all refinement levels: Intact, Exceptional, Flawless, Radiant.
+Browse void fissure drop tables with rarity colour-coding, ownership status, and platinum values. Supports all refinement levels (Intact → Radiant).
 
 ### Timers
-A live dashboard fetching data directly from DE's official Warframe worldstate:
+Live dashboard from DE's worldstate API:
+- World cycles (Cetus, Orb Vallis, Cambion Drift, Zariman) with countdowns
+- Bounty reset timers per open world
+- Daily/Weekly resets, Sortie, Archon Hunt, The Circuit, Deep Archimedea
+- Baro Ki'Teer, Prime Resurgence, Nightwave, Darvo deal, community events
+- Alerts, Invasions, Void Fissures with configurable fissure watches
 
-- **World Cycles** — Cetus (Day/Night), Orb Vallis (Warm/Cold), Cambion Drift, Zariman with countdown to next change
-- **Bounties** — reset timers per open world (Cetus, Orb Vallis, Cambion Drift, Zariman, Hex)
-- **Daily & Weekly** — Daily Reset, Weekly Reset, Sortie (expandable with missions), Archon Hunt, The Circuit (frame/weapon picks), Deep Archimedea, Kahl/Break Narmer
-- **Events** — Baro Ki'Teer with expandable inventory (Ducat/Credit prices + Owned badges), Prime Resurgence with expandable inventory (Aya prices + Owned badges), Nightwave, Darvo daily deal, active community events
-- **Alerts** — mission type, faction, reward, countdown
-- **Invasions** — attacker/defender factions, progress bar, rewards
-- **Void Fissures** — Normal, Steel Path, and Void Storm tabs as a grid of tiles. Watched fissures highlighted in blue. Supports all mission types including Assault, Void Cascade, Void Flood, and Alchemy.
-- **Fissure Watches** — configure Mode + Tier + Mission Type filters; matching fissures are highlighted in the fissure list and auto-surfaced in the Modular Window
-
-Any timer can be pinned to the Modular Window for at-a-glance viewing.
-
-### EULA Transparency — Both Sensitive Features Are Off By Default
-
-FrameForge places every feature that may touch Digital Extremes' EULA grey areas behind an explicit opt-in toggle, **disabled by default**:
-
-- **Memory Scanner** (`Settings → Memory Scanner`) — uses `ReadProcessMemory` to read live inventory data. DE's EULA broadly prohibits *"automation programs that interact with the Services in any way"*; read-only memory tools have historically been tolerated but are not explicitly permitted. Required for the Inventory tab and quantity tracking.
-- **Warframe Companion API** (`Settings → Warframe Companion API`) — connects to `api.warframe.com/api/inventory.php` for mod ranks and additional inventory detail. Not officially confirmed as permitted for third-party tools.
-
-Both show a clear warning before the user can enable them. The app works fully without either — Foundry, Market Helper, Relic Helper, Timers, and Statistics all function using only public data sources and local files.
-
-We are actively seeking official clarification from Digital Extremes. If DE confirms either feature is not permitted, it will be removed in the next release.
-
-### Status Bar
-The header shows three live connection chips so you always know what's running:
-
-| Chip | States |
-|---|---|
-| **Memory** | OFF · Idle · No Game · Scanning |
-| **WF API** | OFF · Waiting · Connecting… (clickable retry) · Connected `HH:MM` |
-| **WFM** | Not logged in (clickable → Market tab) · Online |
-
-### Statistics — Trade Tracker, Reports & Item History
-A full trade history, analytics dashboard, and per-item quantity tracking — all automatically populated from your activity:
-
-**Trades tab:**
-- Every in-game trade is detected automatically from `EE.log` the moment "The trade was successful!" appears — no button to press
-- WFM trades are logged automatically when you click **✓ Sold** in the Messages tab
-- Manual entry form for trades made outside of FrameForge
-- Each trade records: item name with rank (mods use text suffix e.g. `Ammo Case (R0)`; arcanes use Unicode rank dots decoded from the log e.g. `Arcane Agility (R4)`), quantity, platinum total, trading partner, direction, source, and timestamp
-- Trades with multiple different items are recorded as a comma-separated list
-
-**Reports tab:**
-- Date range filter: 7 Days / 30 Days / 90 Days / All Time
-- KPI cards: total earned, total spent, net profit, average per trade
-- **Cumulative platinum chart** — running net profit over time
-- **Daily bar chart** — green bars on days you earned, red bars on days you spent
-- **Items breakdown table** — every item with # sold, # bought, average sell price, and net platinum; sorted by most profitable
-- **Top trading partners** — top 10 players by total platinum exchanged
-
-**Item Report tab:**
-- Add any catalog item to your tracking list
-- A daily snapshot is recorded automatically each time the app is open
-- View a quantity history chart over the past 7 / 30 / 90 days or all time
-- Track farming progress, set completion, or any item you care about over time
+### Statistics
+- **Trades** — auto-detected from EE.log and WFM messages, with manual entry fallback
+- **Reports** — date-filtered KPIs, platinum charts, per-item breakdown, top trading partners
+- **Item Report** — track any item's quantity over time with daily snapshots and drag-to-reorder cards
 
 ### Riven Analyzer
-A dedicated tab for analysing riven mod rolls against the community-curated Sikewyrm spreadsheet (413+ weapons across all categories):
-
-- **Check Riven** — click the button while the riven screen is open in Warframe. FrameForge captures the card with Windows OCR and shows an instant analysis overlay.
-- **Per-stat quality rating** — each rolled stat is colour-coded: ✓ green = wanted, ○ yellow = not in wanted list, ✗ red = harmful negative, ✓ blue = safe negative.
-- **Comparison mode** — click **Refresh** after cycling to see the new roll side-by-side with the original. Both rolls are quality-rated so you can decide whether to keep or keep rolling.
-- **Group-based scoring** — slash-separated alternatives (e.g. `CD MS/TOX/DMG`) are counted as a single slot. A roll of CD+MS on a weapon that wants `CD MS/TOX/DMG` scores 100 %, not 28 %.
-- **Wanted stat list** — missing wanted groups shown compactly at the bottom (e.g. "Wanted: Multishot, Base Damage / Fire Rate / Toxicity").
-- **Database notes** — build context from the spreadsheet shown inline (e.g. minimum CC thresholds for Eidolon builds).
-- **All weapon types** — primary, secondary, melee, archwing weapons. Database refreshes via the ↻ button.
-- **Save rolls** — save up to 50 riven rolls with custom labels, edit inline, and delete when done. Useful for tracking a reroll session or comparing candidates before deciding.
+Analyses riven rolls against the community-curated [44bananas spreadsheet](https://docs.google.com/spreadsheets/d/1zbaeJBuBn44cbVKzJins_E3hTDpnmvOk8heYN-G8yy8) (413+ weapons). Click **Check Riven** while the riven screen is open for instant per-stat quality ratings. Comparison mode shows old vs new roll side-by-side after each cycle. Supports primary, secondary, melee, and archwing weapons.
 
 ### OCR Relic Reward Overlay
-When a void fissure reward screen opens in-game, FrameForge automatically captures and reads all four reward cards using Windows OCR and displays a transparent overlay with each item's platinum price, ducat value, and set completion — so you can pick the best reward instantly without alt-tabbing. Priority mode is configurable: Item Completion, Most Set Value, Most Plat, or Most Ducats.
-
-The top 10% of the capture is excluded from card detection — this prevents FPS counters, GPU overlays, and the game's own title bar from creating ghost card columns. Short HUD noise words (3 chars or fewer) are also filtered out from fuzzy matching so they cannot corrupt item name detection.
+When a void fissure reward screen opens, FrameForge automatically captures it via Windows OCR and shows a transparent overlay with platinum price, ducat value, and set completion for each card. Priority mode: Completion / Plat / Ducats / Set Value.
 
 ### Modular Window
-A customisable sidebar (or detachable floating window) with four reorderable sections:
-- **Tracking** — items being crafted with per-item ingredient requirements and collapse toggles
-- **Favorites** — watched inventory items with live quantities
-- **Timers** — pinned countdowns from the Timers tab
-- **Watched Fissures** — live fissures matching your configured watches
+Customisable sidebar with reorderable sections: tracked crafting items, favourite inventory items, pinned timers, and watched fissures.
+
+---
+
+## EULA Transparency
+
+Two features touch EULA grey areas and are **off by default** with explicit opt-in warnings:
+
+- **Memory Scanner** — `ReadProcessMemory` for live inventory. Read-only, same API as Overwolf.
+- **Warframe Companion API** — `api.warframe.com/api/inventory.php` for mod ranks and inventory detail.
+
+Everything else (Foundry, Market, Relics, Timers, Statistics) runs on public data only.
 
 ---
 
 ## Is This Safe?
 
-| | What FrameForge does |
+| | |
 |---|---|
-| **Memory access** | Read-only via `ReadProcessMemory` — never writes, never injects, never hooks |
-| **Game modification** | Nothing. No DLL injection, no code hooking, no writing to memory |
-| **Network requests** | `warframe.market` (prices + trading), DE worldstate API (timers), WFCD community GitHub repos (item catalog, drop rates, localisation), Warframe CDN (item images). No FrameForge server. No telemetry. |
-| **Your account** | WFM login uses the official v1 auth endpoint. Session token stored in Windows Credential Manager — never in a FrameForge file. Warframe Companion API credentials are read from game memory and never written to disk. |
-| **Your data** | Nothing leaves your machine except the network calls listed above |
+| Memory access | Read-only `ReadProcessMemory` — never writes, never injects |
+| Game modification | None |
+| Network | warframe.market, DE worldstate, WFCD GitHub repos. No FrameForge server, no telemetry |
+| Credentials | WFM token in Windows Credential Manager. Warframe API credentials never written to disk |
 
-**Don't take our word for it** — the full source code is in this repository under GPLv3. You can read every line, build it yourself, and verify exactly what it does.
+Source code is fully public under GPLv3 — build and verify it yourself.
 
 ---
 
 ## Requirements
 
 - Windows 10 or 11 (64-bit)
-- [Warframe](https://www.warframe.com/) installed for inventory scanning (Foundry, Market, Relics, and Timers work without it)
-- A [warframe.market](https://warframe.market) account for trading features (optional)
-- The OCR overlay works best in Windowed or Borderless Windowed mode; Fullscreen Exclusive also supported via DXGI capture
+- Warframe installed for inventory scanning (other features work without it)
+- [warframe.market](https://warframe.market) account for trading features (optional)
 
 ---
 
 ## Installation
 
-1. Go to [**Releases**](../../releases) and download the latest installer
-2. Run it — Windows SmartScreen may warn you because the binary is not yet code-signed; click **More info → Run anyway**
-3. Launch FrameForge from the Start menu or desktop shortcut
-
-> The SmartScreen warning appears because code-signing certificates cost ~$300/year. The source code is fully public for independent verification.
+1. Download the latest installer from [**Releases**](../../releases)
+2. Run it — click **More info → Run anyway** if SmartScreen warns you (no code-signing certificate)
+3. Launch FrameForge from Start or the desktop shortcut
 
 ---
 
 ## Building From Source
 
 ```powershell
-# Prerequisites: Node.js 20+, pnpm, Rust (MSVC toolchain)
+# Prerequisites: Node.js 20+, pnpm, Rust MSVC toolchain
 rustup default stable-x86_64-pc-windows-msvc
 
-# Clone and install dependencies
 git clone https://github.com/WyrmStudios/FrameForge.git
 cd FrameForge
 pnpm install
-
-# Development mode (Vite hot-reload + Tauri window)
-pnpm tauri dev
-
-# Production build — installer output: src-tauri/target/release/bundle/
-pnpm tauri build
+pnpm tauri dev      # dev mode with hot reload
+pnpm tauri build    # installer → src-tauri/target/release/bundle/
 ```
-
----
-
-## How It Works — Technical Overview
-
-### Memory Scanning (`memory_scanner.rs`)
-FrameForge enumerates committed, readable memory regions of the Warframe process using `VirtualQueryEx` and reads them with `ReadProcessMemory`. Three independent pattern matchers run over each region:
-- **Resource scanner** — stackable items via `"ItemCount":N,"ItemType":"/Lotus/..."` JSON patterns
-- **Mod scanner** — mods and arcanes from `RawUpgrades` using backwards brace-depth tracking to handle the `ItemCount → LastAdded → ItemType` field order
-- **Unique scanner** — weapons, Warframes, and companions via Aho-Corasick multi-pattern matching
-- **Pending recipe scanner** — active Foundry jobs via ISO-8601 completion timestamps
-
-The scan runs in 15-second rolling windows; `resume_addr` carries over between windows so the full address space is covered progressively without blocking the UI. When the inventory JSON location is found, its address is saved to `inventory_hints.json` and checked first on every subsequent window — making steady-state scans near-instant. Only `MEM_COMMIT` regions with readable page protection are scanned.
-
-### Timers (`lib.rs`)
-Worldstate data is fetched from `api.warframe.com/cdn/worldState.php`, parsed in Rust into a structured format, and served to the frontend via Tauri IPC. Node names are resolved from the WFCD sol nodes dataset. Event names are resolved from the WFCD localisation dataset.
-
-### Trading (`lib.rs`)
-WFM order management uses the v2 REST API (`api.warframe.market/v2/`). Authentication uses the v1 signin endpoint (returns a session token via `set-cookie`). Online status is set via WebSocket (`wss://ws.warframe.market/socket`) using the `@wfm|cmd/status/set` command with a 6-hour duration.
-
-### OCR Overlay (`ocr.rs`)
-1. `EE.log` is monitored for `openvoidprojectionrewardscreen`
-2. After a 350 ms delay, the top 48% of the Warframe window is captured via `PrintWindow` (GDI) or DXGI Desktop Duplication
-3. Windows WinRT OCR extracts text from the capture
-4. Lines in the top 10% of the capture are discarded — they are always game chrome or HUD overlays (FPS counters, GPU widgets), never reward card text
-5. Rarity bar colour analysis classifies each of the 4 reward slots
-6. Fuzzy string matching maps OCR output to catalog item names; words under 4 characters are excluded from fuzzy matching to prevent HUD noise matching short catalog words
-7. A transparent overlay displays each card's item name, price, ducat value, and set completion
-
-### Item Data (`wfcd.rs`)
-Item and recipe data is fetched on first launch and cached to disk:
-
-| Source | Used for |
-|---|---|
-| [warframe-items (WFCD)](https://github.com/WFCD/warframe-items) | Item catalog, categories, ducat values, vaulted status |
-| [warframe-public-export-plus](https://github.com/calamity-inc/warframe-public-export-plus) | Authoritative recipe trees (LZMA-compressed) |
-| [Warframe Wiki Module:Void](https://wiki.warframe.com) | Canonical relic reward display names |
-
----
-
-## Data & Privacy
-
-- **No account required** for inventory scanning, Foundry, Market Helper, Relic Helper, or Timers
-- **No telemetry** — FrameForge has no server and makes no analytics calls
-- **Local storage only** — a SQLite database of your quantity changes and trade history at `%LOCALAPPDATA%\warframe-companion\`
-- **WFM session token** — stored in Windows Credential Manager if "Stay logged in" is enabled; your password is never saved
-- **Warframe.market requests** are made from your machine directly to warframe.market (same as visiting in a browser)
 
 ---
 
@@ -234,27 +109,30 @@ Item and recipe data is fetched on first launch and cached to disk:
 | Frontend | React 19, TypeScript 5.8, Vite 7 |
 | Desktop shell | Tauri 2 |
 | Backend | Rust 2021 edition |
-| Database | SQLite via `rusqlite` (local only) |
-| Async runtime | `tokio` |
-| HTTP | `ureq` |
-| WebSocket | `tungstenite` (WFM status) |
-| Windows APIs | `ReadProcessMemory` / `VirtualQueryEx`, WinRT OCR, DXGI Desktop Duplication, GDI `PrintWindow`, Windows Credential Manager |
+| Database | SQLite (local only) |
+| Windows APIs | ReadProcessMemory, WinRT OCR, DXGI, GDI, Windows Credential Manager |
+
+---
+
+## Data & Privacy
+
+- No account required for most features
+- No telemetry — no FrameForge server
+- All data stored locally at `%LOCALAPPDATA%\warframe-companion\`
+- WFM session token stored in Windows Credential Manager if "Stay logged in" is enabled
 
 ---
 
 ## License
 
-FrameForge is free and open-source software released under the **GNU General Public License v3.0**.  
-See the [LICENSE](LICENSE) file for the full license text.
+GPLv3 — see [LICENSE](LICENSE).
 
 ---
 
 ## Contributing
 
-Bug reports, feature requests, and pull requests are welcome via [GitHub Issues](../../issues). Please use the issue templates — they make sure we have all the info needed to reproduce bugs without back-and-forth. For general questions, use [GitHub Discussions](../../discussions).
-
-For code contributions, please open an issue before submitting large changes so we can align on the approach first.
+Bug reports, feature requests, and PRs welcome via [GitHub Issues](../../issues). Use the issue templates. For large changes, open an issue first to align on approach.
 
 ---
 
-*FrameForge is not affiliated with Digital Extremes Ltd. or the Warframe brand. Warframe is a trademark of Digital Extremes Ltd.*
+*FrameForge is not affiliated with Digital Extremes Ltd. Warframe is a trademark of Digital Extremes Ltd.*

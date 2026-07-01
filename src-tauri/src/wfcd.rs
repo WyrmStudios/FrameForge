@@ -535,6 +535,9 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         ("Gear",           "Misc"),
         ("Fish",           "Misc"),
         ("Sigils",         "Sigils"),
+        ("Glyphs",         "Glyphs"),
+        // Skins.json also contains Emotes — both show under "Skins"
+        ("Skins",          "Skins"),
     ];
 
     let mut items: Vec<WfcdItem> = Vec::new();

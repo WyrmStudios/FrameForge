@@ -109,6 +109,46 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  cursor: default;
+  transition: border-color 0.1s, opacity 0.1s;
+}
+
+.ir-card-dragsource {
+  opacity: 0.45;
+}
+
+.ir-card-dragover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ir-grid-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.ir-grid-dragging .ir-card {
+  pointer-events: auto;
+}
+
+.ir-drag-handle {
+  cursor: grab;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  padding-right: 2px;
+}
+
+.ir-drag-handle:hover {
+  opacity: 1;
+}
+
+.ir-grid-dragging .ir-drag-handle {
+  cursor: grabbing;
 }
 
 .ir-card-header {

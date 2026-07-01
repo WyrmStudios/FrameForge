@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./Syndicates.css";
+import type { InventoryItem } from "./App";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,11 +29,11 @@ interface SyndicateStore {
 
 type CompStatus = "complete" | "blueprint" | "none";
 
-function itemStatus(item: SyndicateItem, quantities: Record<string, number>): CompStatus {
-  const qty = quantities[item.unique_name] ?? item.owned;
+function itemStatus(item: SyndicateItem, inventory: Record<string, InventoryItem>): CompStatus {
+  const qty = inventory[item.unique_name]?.quantity ?? item.owned;
   if (item.result_unique) {
-    // This is a blueprint — check if the crafted item is built
-    const resultQty = quantities[item.result_unique] ?? item.result_owned;
+    // This is a blueprint — check if the crafted item is built (path alias lookup)
+    const resultQty = inventory[item.result_unique]?.quantity ?? item.result_owned;
     if (resultQty > 0) return "complete";
     if (qty > 0) return "blueprint";
     return "none";
@@ -123,12 +124,12 @@ export const SYNDICATE_FILTERS_DEFAULT: SyndicateFilters = {
 };
 
 interface Props {
-  quantities: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   filters: SyndicateFilters;
   onFiltersChange: (f: SyndicateFilters) => void;
 }
 
-export default function Syndicates({ quantities, filters, onFiltersChange }: Props) {
+export default function Syndicates({ inventory, filters, onFiltersChange }: Props) {
   const [stores, setStores] = useState<SyndicateStore[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -164,23 +165,23 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
       ...store,
       items: store.items.map(item => ({
         ...item,
-        owned: quantities[item.unique_name] ?? item.owned,
+        owned: inventory[item.unique_name]?.quantity ?? item.owned,
         result_owned: item.result_unique
-          ? (quantities[item.result_unique] ?? item.result_owned)
+          ? (inventory[item.result_unique]?.quantity ?? item.result_owned)
           : item.result_owned,
       })),
     };
-  }, [stores, activeTab, quantities]);
+  }, [stores, activeTab, inventory]);
 
   const meta = SYNDICATE_META[activeTab];
 
   const { ownedCount, totalCount } = useMemo(() => {
     if (!activeStore) return { ownedCount: 0, totalCount: 0 };
     return {
-      ownedCount: activeStore.items.filter(i => itemStatus(i, quantities) === "complete").length,
+      ownedCount: activeStore.items.filter(i => itemStatus(i, inventory) === "complete").length,
       totalCount: activeStore.items.length,
     };
-  }, [activeStore, quantities]);
+  }, [activeStore, inventory]);
 
   // Group items by tier/vendor, preserving defined tier order
   const tierGroups = useMemo(() => {
@@ -190,7 +191,7 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
     const q = search.toLowerCase();
     const groups = new Map<string, SyndicateItem[]>();
     for (const item of activeStore.items) {
-      if (missingOnly && itemStatus(item, quantities) === "complete") continue;
+      if (missingOnly && itemStatus(item, inventory) === "complete") continue;
       if (q && !item.name.toLowerCase().includes(q) && !item.category.toLowerCase().includes(q)) continue;
       const list = groups.get(item.tier) ?? [];
       list.push(item);
@@ -205,7 +206,7 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
       if (!tierOrder.includes(tier)) ordered.push({ tier, items });
     }
     return ordered;
-  }, [activeStore, groupSyndicates, activeTab, missingOnly, meta, quantities, search]);
+  }, [activeStore, groupSyndicates, activeTab, missingOnly, meta, inventory, search]);
 
   return (
     <div className="syn-root">
@@ -228,9 +229,9 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
           const m = SYNDICATE_META[store.name];
           const owned = store.items.filter(i => itemStatus({
             ...i,
-            owned: quantities[i.unique_name] ?? i.owned,
-            result_owned: i.result_unique ? (quantities[i.result_unique] ?? i.result_owned) : i.result_owned,
-          }, quantities) === "complete").length;
+            owned: inventory[i.unique_name]?.quantity ?? i.owned,
+            result_owned: i.result_unique ? (inventory[i.result_unique]?.quantity ?? i.result_owned) : i.result_owned,
+          }, inventory) === "complete").length;
           return (
             <button
               key={store.name}
@@ -288,7 +289,7 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
           </div>
         )}
         {tierGroups.map(({ tier, items }) => {
-          const tierComplete = items.filter(i => itemStatus(i, quantities) === "complete").length;
+          const tierComplete = items.filter(i => itemStatus(i, inventory) === "complete").length;
           return (
             <div key={tier} className="syn-tier-group">
               <div className="syn-tier-header">
@@ -299,7 +300,7 @@ export default function Syndicates({ quantities, filters, onFiltersChange }: Pro
               </div>
               <div className="syn-items-grid">
                 {items.map(item => {
-                  const status = itemStatus(item, quantities);
+                  const status = itemStatus(item, inventory);
                   return (
                     <div
                       key={item.unique_name}

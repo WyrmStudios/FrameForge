@@ -1,8 +1,10 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { HelpTip } from "./HelpTip";
 import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
+import type { InventoryItem } from "./App";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,9 +36,7 @@ export const MARKET_FILTERS_DEFAULT: MarketFilters = {
 };
 
 interface Props {
-  quantities: Record<string, number>;
-  /** API-only quantities — used for ownership checks (more reliable than scanner). */
-  apiQuantities: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   refreshKey: number;
   crafting: CraftingJob[];
   onWfmLoginChange?: (loggedIn: boolean) => void;
@@ -169,19 +169,15 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
 
 // ─── Market Helper ────────────────────────────────────────────────────────────
 
-export default function MarketHelper({ quantities, apiQuantities, refreshKey, crafting, onWfmLoginChange, filters, onFiltersChange }: Props) {
+export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLoginChange, filters, onFiltersChange }: Props) {
   const [allItems, setAllItems]           = useState<CatalogItem[]>([]);
   const [wfmItems, setWfmItems]           = useState<WfmItem[]>([]);
   const [wfmLoading, setWfmLoading]       = useState(false);
   const [wfmError, setWfmError]           = useState(false);
   const [prices, setPrices]               = useState<Map<string, WfmPrice>>(new Map());
-  const [priceAges, setPriceAges]         = useState<Map<string, number>>(new Map());
-  const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
   const [wfmBadge, setWfmBadge]           = useState(0);
   const [wfmUsername, setWfmUsername]     = useState<string | null>(null);
   const [popup, setPopup] = useState<{ urlName: string; displayName: string; imageName?: string } | null>(null);
-
-  const PRICE_CACHE_KEY = "ff-wfm-prices-v1";
   const { search, ownership, conditions, vault, sortMode, activeMarketTab } = filters;
   const set = <K extends keyof MarketFilters>(k: K, v: MarketFilters[K]) => onFiltersChange({ ...filters, [k]: v });
 
@@ -202,34 +198,43 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
     onWfmLoginChange?.(!!wfmUsername);
   }, [wfmUsername]); // eslint-disable-line
 
-  // Load cached prices from localStorage on startup
+  // Start the Rust-side WFM queue drain thread once on mount.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PRICE_CACHE_KEY);
-      if (!raw) return;
-      const data: Record<string, { sell_median?: number; ts: number }> = JSON.parse(raw);
-      const priceMap = new Map<string, WfmPrice>();
-      const ageMap   = new Map<string, number>();
-      for (const [urlName, entry] of Object.entries(data)) {
-        priceMap.set(urlName, { url_name: urlName, sell_median: entry.sell_median });
-        ageMap.set(urlName, entry.ts);
-      }
-      setPrices(priceMap);
-      setPriceAges(ageMap);
-    } catch {}
+    invoke("start_wfm_queue").catch(() => {});
   }, []); // eslint-disable-line
 
-  // Persist prices to localStorage whenever they change
+  // Load prices already cached in inventory_state_cache (survive restarts).
   useEffect(() => {
-    if (prices.size === 0) return;
-    const now = Date.now();
-    const data: Record<string, { sell_median?: number; ts: number }> = {};
-    for (const [urlName, price] of prices) {
-      data[urlName] = { sell_median: price.sell_median, ts: priceAges.get(urlName) ?? now };
-    }
-    try { localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify(data)); } catch {}
-  }, [prices]); // eslint-disable-line
+    invoke<Record<string, number | null>>("wfm_get_cached_prices")
+      .then(cached => {
+        if (!cached) return;
+        setPrices(prev => {
+          const m = new Map(prev);
+          for (const [urlName, price] of Object.entries(cached)) {
+            m.set(urlName, { url_name: urlName, sell_median: price ?? undefined });
+          }
+          return m;
+        });
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line
 
+  // Listen for prices arriving from the Rust queue drain thread.
+  useEffect(() => {
+    const unlisten = listen<{ url_name: string; sell_median: number | null }>(
+      "wfm-price-update",
+      ({ payload }) => {
+        setPrices(prev => {
+          const m = new Map(prev);
+          m.set(payload.url_name, { url_name: payload.url_name, sell_median: payload.sell_median ?? undefined });
+          return m;
+        });
+      }
+    );
+    return () => { unlisten.then(fn => fn()); };
+  }, []); // eslint-disable-line
+
+  // Fetch WFM item list (used to build the name→slug lookup).
   useEffect(() => {
     setWfmLoading(true);
     setWfmError(false);
@@ -285,6 +290,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
     }
     return map;
   }, [allItems]);
+
 
   // item name (lowercase) → image_name — used by the Trading tab edit popup
   const imageMap = useMemo(() => {
@@ -355,120 +361,67 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
   }, [primeItems, allItems, ducatsByName]);
 
   const totalDucats = useMemo(() =>
-    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * (quantities[i.unique_name] ?? 0), 0),
-  [primeItems, quantities]);
+    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * (inventory[i.unique_name]?.quantity ?? 0), 0),
+  [primeItems, inventory]);
 
   const dupeDucats = useMemo(() =>
-    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (quantities[i.unique_name] ?? 0) - 1), 0),
-  [primeItems, quantities]);
+    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (inventory[i.unique_name]?.quantity ?? 0) - 1), 0),
+  [primeItems, inventory]);
 
-  // Fetch price for a single URL
-  const fetchOnePrice = useCallback(async (urlName: string) => {
-    try {
-      const price = await invoke<{ url_name: string; sell_median?: number }>("fetch_wfm_price", { urlName });
-      const now = Date.now();
-      setPrices(prev => new Map(prev).set(urlName, { url_name: urlName, sell_median: price.sell_median }));
-      setPriceAges(prev => new Map(prev).set(urlName, now));
-    } catch {}
-    setLoadingPrices(prev => { const n = new Set(prev); n.delete(urlName); return n; });
-  }, []);
-
-  // Refs so the continuous loop always reads current state without stale closures
-  const pricesRef     = useRef(prices);
-  const priceAgesRef  = useRef(priceAges);
-  const quantitiesRef = useRef(quantities);
-  const setsRef       = useRef(sets);
-  const lookupRef     = useRef(wfmLookup);
-  useEffect(() => { pricesRef.current     = prices;     }, [prices]);
-  useEffect(() => { priceAgesRef.current  = priceAges;  }, [priceAges]);
-  useEffect(() => { quantitiesRef.current = quantities; }, [quantities]);
-  useEffect(() => { setsRef.current       = sets;       }, [sets]);
-  useEffect(() => { lookupRef.current     = wfmLookup;  }, [wfmLookup]);
-
-  // Continuous price refresh loop — runs forever, priority order each cycle:
-  //   P0: owned sets with no price yet
-  //   P1: any set still showing "—" (null price)
-  //   P2: owned sets (oldest fetch first)
-  //   P3: everything else (oldest fetch first)
+  // Enqueue only the slugs the Market tab actually displays, owned sets first.
+  // Runs once when wfmLookup and sets are both ready; Rust deduplicates if called again.
   useEffect(() => {
-    if (wfmLookup.size === 0) return;
-    let cancelled = false;
+    if (wfmLookup.size === 0 || sets.size === 0) return;
 
     const getSetUrls = (setKey: string, parts: CatalogItem[]): string[] => {
-      const lookup = lookupRef.current;
       const urls: string[] = [];
-      const setUrl = lookup.get(normalizeForWfm(setKey + " Set"));
+      const setUrl = wfmLookup.get(normalizeForWfm(setKey + " Set"));
       if (setUrl) urls.push(setUrl);
       for (const p of parts) {
-        const key = normalizeForWfm(p.name);
-        const url = lookup.get(key) ?? key; // fall back to slug derived from name
+        const url = wfmLookup.get(normalizeForWfm(p.name)) ?? normalizeForWfm(p.name);
         if (!urls.includes(url)) urls.push(url);
       }
       return urls;
     };
 
-    const run = async () => {
-      while (!cancelled) {
-        const ages    = priceAgesRef.current;
-        const px      = pricesRef.current;
-        const qty     = quantitiesRef.current;
-        const allSets = Array.from(setsRef.current.entries());
+    const owned: string[] = [];
+    const unowned: string[] = [];
+    const seen = new Set<string>();
 
-        type Job = { url: string; priority: number; age: number };
-        const jobs: Job[] = [];
-        const seen = new Set<string>();
-
-        for (const [key, parts] of allSets) {
-          const owned = parts.some(p => (qty[p.unique_name] ?? 0) > 0);
-          for (const url of getSetUrls(key, parts)) {
-            if (seen.has(url)) continue;
-            seen.add(url);
-            const hasPrice = px.get(url)?.sell_median != null;
-            const age      = ages.get(url) ?? 0;
-            const priority = !hasPrice ? (owned ? 0 : 1) : (owned ? 2 : 3);
-            jobs.push({ url, priority, age });
-          }
-        }
-
-        // Sort by priority, then oldest-fetched first within same priority
-        jobs.sort((a, b) => a.priority - b.priority || a.age - b.age);
-
-        for (const { url } of jobs) {
-          if (cancelled) break;
-          setLoadingPrices(prev => new Set(prev).add(url));
-          await fetchOnePrice(url);
-          await new Promise(r => setTimeout(r, 350));
-        }
-
-        // Pause between cycles before starting the next sweep
-        if (!cancelled) await new Promise(r => setTimeout(r, 5_000));
+    for (const [key, parts] of sets) {
+      const isOwned = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
+      for (const url of getSetUrls(key, parts)) {
+        if (seen.has(url)) continue;
+        seen.add(url);
+        (isOwned ? owned : unowned).push(url);
       }
-    };
+    }
 
-    run();
-    return () => { cancelled = true; };
-  }, [wfmLookup.size, fetchOnePrice]); // eslint-disable-line
+    // Owned sets are queued first so they appear quickly; unowned follow.
+    invoke("wfm_queue_prices", { urlNames: [...owned, ...unowned] }).catch(() => {});
+  }, [wfmLookup.size, sets.size]); // eslint-disable-line
 
   const visibleSets = useMemo(() => {
     const q = search.toLowerCase();
     return Array.from(sets.entries())
       .filter(([key]) => !q || key.toLowerCase().includes(q))
       .filter(([key, parts]) => {
-        const ownedAny   = parts.some(p => (quantities[p.unique_name] ?? 0) > 0);
-        const parent     = parentItems.get(key);
+        const ownedAny    = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
+        const parent      = parentItems.get(key);
+        // "Item owned" = the fully built item appears in inventory under its display name.
+        // inventory[key] uses the name-based index (e.g. "Ash Prime" → InventoryItem).
+        const isItemOwned = (inventory[key]?.quantity ?? 0) > 0;
 
-        // Group 1: Owned / Not Owned
+        // Group 1: Owned / Not Owned — checks whether the built item is in inventory
         if (ownership.length > 0 && ownership.length < 2) {
-          if (ownership.includes("owned")    && !ownedAny) return false;
-          if (ownership.includes("notowned") &&  ownedAny) return false;
+          if (ownership.includes("owned")    && !isItemOwned) return false;
+          if (ownership.includes("notowned") &&  isItemOwned) return false;
         }
 
         // Group 2: specific conditions (OR — set matches if it satisfies ANY selected)
         if (conditions.length > 0) {
-          const hasDupes   = parts.some(p => (quantities[p.unique_name] ?? 0) > 1);
-          const isFullSet  = parts.every(p => (quantities[p.unique_name] ?? 0) > 0);
-          // Use API quantities for Item Owned — scanner can create false positives from menus
-          const isItemOwned = parent ? (apiQuantities[parent.unique_name] ?? 0) > 0 : false;
+          const hasDupes   = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > 1);
+          const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
           const ok = conditions.some(c =>
             (c === "hasparts"  && ownedAny)    ||
             (c === "dupes"     && hasDupes)    ||
@@ -491,8 +444,8 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
       })
       .sort(([aKey, aParts], [bKey, bParts]) => {
         if (sortMode === "ducats") {
-          const ad = aParts.reduce((s, p) => s + (p.ducats ?? 0) * (quantities[p.unique_name] ?? 0), 0);
-          const bd = bParts.reduce((s, p) => s + (p.ducats ?? 0) * (quantities[p.unique_name] ?? 0), 0);
+          const ad = aParts.reduce((s, p) => s + (p.ducats ?? 0) * (inventory[p.unique_name]?.quantity ?? 0), 0);
+          const bd = bParts.reduce((s, p) => s + (p.ducats ?? 0) * (inventory[p.unique_name]?.quantity ?? 0), 0);
           return bd - ad || aKey.localeCompare(bKey);
         }
         if (sortMode === "plat") {
@@ -505,7 +458,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
         if (sortMode === "za") return bKey.localeCompare(aKey);
         return aKey.localeCompare(bKey); // az
       });
-  }, [sets, quantities, apiQuantities, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup]);
+  }, [sets, inventory, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup]);
 
   return (
     <div className="market-helper">
@@ -524,7 +477,7 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
           wfmLookup={wfmLookup}
           wfmItems={wfmItems}
           imageMap={imageMap}
-          quantities={quantities}
+          inventory={inventory}
           onNewWhisper={() => { if (activeMarketTab !== "trading") setWfmBadge(n => n + 1); }}
           onLoginChange={u => setWfmUsername(u)}
         />
@@ -583,25 +536,31 @@ export default function MarketHelper({ quantities, apiQuantities, refreshKey, cr
           const setPriceData = prices.get(setUrl);
           const setParts: SetPart[] = [...parts]
             .sort((a, b) => {
-              const qa = quantities[a.unique_name] ?? 0;
-              const qb = quantities[b.unique_name] ?? 0;
+              const qa = inventory[a.unique_name]?.quantity ?? 0;
+              const qb = inventory[b.unique_name]?.quantity ?? 0;
               return qb - qa || a.name.localeCompare(b.name);
             })
             .map(p => {
               const normalKey = normalizeForWfm(p.name);
               const url = wfmLookup.get(normalKey) ?? normalKey;
               const priceData = prices.get(url);
-              return { item: p, qty: quantities[p.unique_name] ?? 0,
-                sellMedian: priceData?.sell_median, loading: loadingPrices.has(url), urlName: url };
+              return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
+                sellMedian: priceData?.sell_median, loading: false, urlName: url };
             });
           return (
             <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
               setPrice={setPriceData}
-              setPriceLoading={loadingPrices.has(setUrl)}
-              pricesFetched={priceAges.size > 0}
+              setPriceLoading={false}
+              pricesFetched={prices.size > 0}
               crafting={crafting}
-              onCardClick={() => setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined })}
-              onPartClick={(urlName, displayName, imageName) => setPopup({ urlName, displayName, imageName })} />
+              onCardClick={() => {
+                invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
+                setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
+              }}
+              onPartClick={(urlName, displayName, imageName) => {
+                invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
+                setPopup({ urlName, displayName, imageName });
+              }} />
           );
         })}
       </div>

@@ -175,6 +175,17 @@
 }
 .imp-order-row:last-child { border-bottom: none; }
 .imp-order-row:hover { background: rgba(255,255,255,.04); }
+.imp-order-offline { opacity: 0.5; }
+
+.imp-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.imp-dot-ingame  { background: var(--green); }
+.imp-dot-online  { background: #9ecaed; }
+.imp-dot-offline { background: var(--muted); }
 
 .imp-order-price {
   font-weight: 700;

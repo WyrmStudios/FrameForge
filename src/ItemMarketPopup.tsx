@@ -88,11 +88,18 @@ function Sparkline({ data }: { data: StatPoint[] }) {
 
 // ── Order row ─────────────────────────────────────────────────────────────────
 
+function StatusDot({ status }: { status: string }) {
+  const cls = status === "ingame" ? "imp-dot-ingame" : status === "online" ? "imp-dot-online" : "imp-dot-offline";
+  const label = status === "ingame" ? "In Game" : status === "online" ? "Online" : "Offline";
+  return <span className={`imp-status-dot ${cls}`} title={label} />;
+}
+
 function OrderRow({ o, type, onList }: { o: WfmOrder; type: "sell" | "buy"; onList?: (price: number) => void }) {
   return (
-    <div className={`imp-order-row imp-order-${type}`}>
+    <div className={`imp-order-row imp-order-${type}${o.user.status === "offline" ? " imp-order-offline" : ""}`}>
       <span className="imp-order-price">{fmt(o.platinum)}p</span>
       <span className="imp-order-qty">×{o.quantity}</span>
+      <StatusDot status={o.user.status} />
       <span className="imp-order-user">{o.user.ingameName}</span>
       {o.mod_rank !== undefined && <span className="imp-order-rank">r{o.mod_rank}</span>}
       {onList && (

@@ -91,7 +91,22 @@ interface CatalogItem {
   category: string;
   image_name?: string;
   vaulted?: boolean | null;
+  ducats?: number | null;
   mastery_req?: number | null;
+}
+
+export interface InventoryItem {
+  unique_name: string;
+  quantity: number;
+  mastery_rank: number;
+  archon_shards: { type: string; tauforged: boolean; color: string; boost?: string }[];
+  subsumed: boolean;
+  vaulted: boolean | null;
+  category: string;
+  ducat_price: number | null;
+  wfm_price: number | null;
+  image_name: string | null;
+  mastery_req: number | null;
 }
 
 interface QuantityChange {
@@ -116,6 +131,11 @@ interface ModCopy {
   count: number;
 }
 
+interface ArchonShard {
+  upgrade_type: string;
+  color: string; // raw string from game JSON, e.g. "ACC_CRIMSON", "ACC_AZURE_TAUFORGED"
+}
+
 interface InventoryUpdate {
   quantities: Record<string, number>;
   crafting: CraftingJob[];
@@ -125,6 +145,9 @@ interface InventoryUpdate {
   warframe_running: boolean;
   scanned_at: number;
   consumed_suits?: string[];
+  mods?: Record<string, { total: number; by_rank: Record<string, number> }>;
+  socketed_shards?: Record<string, ArchonShard[]>;
+  is_full_pass?: boolean;
 }
 
 type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
@@ -145,7 +168,11 @@ const CATEGORIES = [
   { id: "Archwing",   label: "Archwing" },
   { id: "Parts",      label: "Parts" },
   { id: "Blueprints", label: "Blueprints" },
-  { id: "Misc",       label: "Miscellaneous" },
+  { id: "Miscellaneous", label: "Miscellaneous" },
+  { id: "Sigils",     label: "Sigils" },
+  { id: "Glyphs",     label: "Glyphs" },
+  { id: "Skins",      label: "Skins" },
+  { id: "Railjack",   label: "Railjack" },
 ];
 
 function BlueprintIcon() {
@@ -174,7 +201,7 @@ function ItemImg({ imageName, category, size = 32 }: { imageName?: string; categ
     <img
       className="item-img"
       style={style}
-      src={`https://cdn.warframestat.us/img/${imageName}`}
+      src={imageName.startsWith("http") || imageName.startsWith("/") ? imageName : `https://cdn.warframestat.us/img/${imageName}`}
       alt=""
       loading="lazy"
       onError={() => setFailed(true)}
@@ -199,6 +226,31 @@ function ModularWindowPage() {
   const [fissureWatches, setFissureWatches] = useState<FissureWatch[]>([]);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const inventory = useMemo<Record<string, InventoryItem>>(() => {
+    const pathToCatalog = new Map<string, CatalogItem>();
+    for (const item of catalog) pathToCatalog.set(item.unique_name, item);
+    const inv: Record<string, InventoryItem> = {};
+    for (const [path, qty] of Object.entries(quantities)) {
+      const cat = pathToCatalog.get(path);
+      const name = cat?.name ?? path;
+      const entry: InventoryItem = {
+        unique_name:   path,
+        quantity:      qty,
+        mastery_rank:  0,
+        archon_shards: [],
+        subsumed:      false,
+        vaulted:       cat?.vaulted ?? null,
+        category:      cat?.category ?? "",
+        ducat_price:   cat?.ducats ?? null,
+        wfm_price:     null,
+        image_name:    cat?.image_name ?? null,
+        mastery_req:   cat?.mastery_req ?? null,
+      };
+      inv[name] = entry;
+      if (path !== name) inv[path] = entry;
+    }
+    return inv;
+  }, [catalog, quantities]);
   const [sectionOrder, setSectionOrder] = useState<string[]>(["tracking", "favorites", "timers", "fissures"]);
 
   useEffect(() => {
@@ -311,7 +363,7 @@ function ModularWindowPage() {
         onTimerFavoritesChange={setTimerFavorites}
         onTimerUnfavorite={id => setTimerFavorites(prev => prev.filter(x => x !== id))}
         fissureWatches={fissureWatches}
-        quantities={quantities}
+        inventory={inventory}
         catalog={catalog}
         sectionOrder={sectionOrder}
         onSectionOrderChange={handleSectionOrderChange}
@@ -337,6 +389,7 @@ export default function App() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [apiQuantities, setApiQuantities] = useState<Record<string, number>>({});
   const [apiModCopies, setApiModCopies] = useState<ModCopy[]>([]);
+  const [scannerMods, setScannerMods] = useState<Record<string, { total: number; by_rank: Record<string, number> }>>({});
   const [crafting, setCrafting] = useState<CraftingJob[]>([]);
   const [masteryRank, setMasteryRank] = useState<number | null>(null);
   const [masteryData, setMasteryData] = useState<Record<string, number>>({});
@@ -345,21 +398,17 @@ export default function App() {
   const [rawScanning, setRawScanning] = useState(false);
   const [diagCapturing, setDiagCapturing] = useState(false);
   const [diagPath, setDiagPath] = useState<string | null>(null);
+  const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
   const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
   const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [wfmLoggedIn, setWfmLoggedIn] = useState(false);
   const [overlayStatus, setOverlayStatus] = useState("");
-  const [subsummedWarframes, setSubsummedWarframes] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem("ff-subsumed-warframes");
-      if (saved) return new Set<string>(JSON.parse(saved));
-    } catch {}
-    return new Set<string>();
-  });
+  const [subsummedWarframes, setSubsummedWarframes] = useState<Set<string>>(new Set());
   const [archonShards, setArchonShards] = useState<Record<string, {type: string; tauforged: boolean; color: string; boost?: string}[]>>({});
   const [lastApiRefresh, setLastApiRefresh] = useState<number | null>(null);
   const wfConnectedRef = useRef(false);
+  const inventoryRestoredRef = useRef(false);
   const catalogRef = useRef<CatalogItem[]>([]);
   const prevApiQtyRef = useRef<Record<string, number>>({});
   const manualCredsRef = useRef<{ accountId: string; nonce: string } | null>(null);
@@ -390,9 +439,9 @@ export default function App() {
   const [statsTab, setStatsTab] = useState<"trade" | "item">("trade");
   const [reportsDateRange, setReportsDateRange] = useState<number | "all">(30);
   const [lastChanged, setLastChanged] = useState<Record<string, number>>({});
+  const [logPanelH, setLogPanelH] = useState(180);
   const [monitoring, setMonitoring] = useState(false);
   const [warframeRunning, setWarframeRunning] = useState(false);
-  const [lastScan, setLastScan] = useState<number | null>(null);
   const [itemCount, setItemCount] = useState(0);
   const [recipeCount, setRecipeCount] = useState(0);
   const [fetching, setFetching] = useState(false);
@@ -435,11 +484,11 @@ export default function App() {
   // Refs so we can read the latest state in the save callback without stale closures
   const settingsLoadedRef = useRef(false);
   const settingsRef = useRef({
-    overlayEnabled: true, overlayPriority: "completion", textScale: 1, colorblindMode: false, companionApiEnabled: false, memoryScannerEnabled: false, blobLogEnabled: false,
+    overlayEnabled: true, overlayPriority: "completion", textScale: 1, colorblindMode: false, companionApiEnabled: false, memoryScannerEnabled: false, blobLogEnabled: false, autoDiagEnabled: false,
     tracked: [] as string[], favorites: [] as string[], timerFavorites: [] as string[], fissureWatches: [] as FissureWatch[], modularWidth: 240,
     modularSectionOrder: ["tracking", "favorites", "timers"] as string[], modularPopout: false,
   });
-  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, tracked, favorites, timerFavorites, fissureWatches, modularWidth, modularSectionOrder, modularPopout };
+  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, modularWidth, modularSectionOrder, modularPopout };
 
   const saveAllSettings = useCallback(() => {
     invoke("save_settings", { json: JSON.stringify(settingsRef.current) }).catch((e) => {
@@ -491,13 +540,15 @@ export default function App() {
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    // Restore cached API data so mods/arcanes survive restarts without Warframe running
-    try {
-      const savedQty = localStorage.getItem("ff-api-quantities");
-      if (savedQty) setApiQuantities(JSON.parse(savedQty));
-      const savedMods = localStorage.getItem("ff-api-mod-copies");
-      if (savedMods) setApiModCopies(JSON.parse(savedMods));
-    } catch {}
+    // Restore all inventory data from the single Rust-side cache file
+    invoke<{ apiQuantities: Record<string, number>; apiModCopies: ModCopy[]; consumedSuits: string[] }>("get_saved_inventory")
+      .then(data => {
+        if (Object.keys(data.apiQuantities).length > 0) setApiQuantities(data.apiQuantities);
+        if (data.apiModCopies.length > 0) setApiModCopies(data.apiModCopies);
+        if (data.consumedSuits.length > 0) setSubsummedWarframes(new Set(data.consumedSuits));
+      })
+      .catch(() => {})
+      .finally(() => { inventoryRestoredRef.current = true; });
 
     // Load user settings from file — survives reinstalls unlike localStorage
     invoke<string>("load_settings").then(json => {
@@ -507,6 +558,10 @@ export default function App() {
         if (typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
+        if (typeof s.autoDiagEnabled === "boolean") {
+          setAutoDiagEnabled(s.autoDiagEnabled);
+          localStorage.setItem("ff-auto-diag", String(s.autoDiagEnabled));
+        }
         if (typeof s.overlayEnabled === "boolean") {
           setOverlayEnabled(s.overlayEnabled);
           localStorage.setItem("ff-overlay-enabled", String(s.overlayEnabled));
@@ -605,15 +660,54 @@ export default function App() {
         manualCredsRef.current = null;
       }
       setWarframeRunning(p.warframe_running);
-      setLastScan(p.scanned_at);
       if (p.consumed_suits && p.consumed_suits.length > 0) {
-        console.log("[FrameForge] consumed_suits from scanner:", p.consumed_suits);
         setSubsummedWarframes(prev => {
           const next = new Set(prev);
           for (const s of p.consumed_suits!) next.add(s);
-          localStorage.setItem("ff-subsumed-warframes", JSON.stringify([...next]));
           return next;
         });
+      }
+      if (p.mods && Object.keys(p.mods).length > 0) {
+        setScannerMods(p.mods);
+      }
+      if (p.socketed_shards) {
+        // In-memory color values use ACC_RED/BLUE/YELLOW/GREEN/PURPLE.
+        // Tauforged variants include "TAU" in the string (e.g. ACC_TAU_RED).
+        const SHARD_COLORS: { prefix: string; type: string; colorHex: string; tauHex: string }[] = [
+          { prefix: "ACC_RED",    type: "Crimson",  colorHex: "#e04040", tauHex: "#ff7070" },
+          { prefix: "ACC_BLUE",   type: "Azure",    colorHex: "#4488ff", tauHex: "#77aaff" },
+          { prefix: "ACC_GREEN",  type: "Viridian", colorHex: "#44cc66", tauHex: "#66ff99" },
+          { prefix: "ACC_YELLOW", type: "Amber",    colorHex: "#ffaa00", tauHex: "#ffcc44" },
+          { prefix: "ACC_PURPLE", type: "Violet",   colorHex: "#9944ff", tauHex: "#bb77ff" },
+        ];
+        const INT_TO_ACC = ["ACC_RED","ACC_BLUE","ACC_GREEN","ACC_YELLOW","ACC_PURPLE"];
+        const parsed: Record<string, { type: string; tauforged: boolean; color: string; boost?: string }[]> = {};
+        for (const [wfPath, shards] of Object.entries(p.socketed_shards)) {
+          parsed[wfPath] = shards.map(s => {
+            let raw = s.color.toUpperCase();
+            // If it's a pure integer, normalise to ACC_ string
+            if (/^\d+$/.test(raw)) {
+              const n = parseInt(raw);
+              raw = INT_TO_ACC[n % 5] ?? raw;  // %5 so tau-forged (5-9) maps to base color
+            }
+            // In memory: tauforged shards use the suffix "_MYTHIC" (e.g. "ACC_RED_MYTHIC").
+            const tauforged = raw.includes("MYTHIC") || raw.includes("TAU") || parseInt(s.color) >= 5;
+            const entry = SHARD_COLORS.find(e => raw.startsWith(e.prefix));
+            const colorInfo = entry ?? { type: "Unknown", colorHex: "#b0b0b0", tauHex: "#d0d0d0" };
+            const seg = s.upgrade_type.split("/").pop() ?? "";
+            const boostRaw = seg.replace(/^ArchonCrystalUpgrade(?:Warframe|Companion)?/, "");
+            const boost = boostRaw.replace(/([A-Z])/g, " $1").trim() || undefined;
+            // Tauforged shards use a brighter colour so they stand out from normal shards.
+            const color = tauforged ? colorInfo.tauHex : colorInfo.colorHex;
+            return { type: colorInfo.type, tauforged, color, boost };
+          });
+        }
+        if (p.is_full_pass) {
+          // Full pass = authoritative complete state; replace so removed shards don't linger.
+          setArchonShards(parsed);
+        } else if (Object.keys(parsed).length > 0) {
+          setArchonShards(prev => ({ ...prev, ...parsed }));
+        }
       }
       if (p.changes.length > 0) {
         setChangeLog(prev => [...p.changes, ...prev].slice(0, 200));
@@ -672,18 +766,6 @@ export default function App() {
       unlistenResize.then(fn => fn());
     };
   }, []); // eslint-disable-line
-
-  // ── Monitor toggle ─────────────────────────────────────────────────────────
-
-  const toggleMonitor = useCallback(async () => {
-    if (monitoring) {
-      await invoke("stop_monitor");
-      setMonitoring(false);
-    } else {
-      await invoke("start_monitor");
-      setMonitoring(true);
-    }
-  }, [monitoring]);
 
   const toggleTracked = useCallback((id: string) => {
     setTracked(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -804,14 +886,12 @@ export default function App() {
 
     // Extract Archon Shard data from Suits
     // API format: suit.ArchonCrystalUpgrades = [{Color: "ACC_YELLOW", UpgradeType: "/Lotus/.../ArchonCrystalUpgradeWarframeAbilityStrength"}, ...]
-    const COLOR_MAP: Record<string, { type: string; color: string }> = {
-      ACC_RED:     { type: "Crimson", color: "#ff3030" },
-      ACC_ORANGE:  { type: "Amber",   color: "#ff8800" },
-      ACC_BLUE:    { type: "Azure",   color: "#00aaff" },
-      ACC_GREEN:   { type: "Emerald", color: "#00cc55" },
-      ACC_YELLOW:  { type: "Topaz",   color: "#ffcc00" },
-      ACC_VIOLET:  { type: "Violet",  color: "#9944ff" },
-      ACC_PURPLE:  { type: "Violet",  color: "#9944ff" }, // fallback alias
+    const COLOR_MAP: Record<string, { type: string; color: string; tauColor: string }> = {
+      ACC_RED:     { type: "Crimson",  color: "#e04040", tauColor: "#ff7070" },
+      ACC_BLUE:    { type: "Azure",    color: "#4488ff", tauColor: "#77aaff" },
+      ACC_GREEN:   { type: "Viridian", color: "#44cc66", tauColor: "#66ff99" },
+      ACC_YELLOW:  { type: "Amber",    color: "#ffaa00", tauColor: "#ffcc44" },
+      ACC_PURPLE:  { type: "Violet",   color: "#9944ff", tauColor: "#bb77ff" },
     };
     const newShards: Record<string, { type: string; tauforged: boolean; color: string; boost: string }[]> = {};
     for (const suit of (Array.isArray(data.Suits) ? data.Suits : [])) {
@@ -822,16 +902,16 @@ export default function App() {
       newShards[uniqueName] = upgrades.map((u: any) => {
         const colorRaw: string = (u.Color ?? "").toUpperCase();
         const upgradeType: string = u.UpgradeType ?? "";
-        const tauforged = colorRaw.includes("TAU") || upgradeType.toLowerCase().includes("tau");
+        const tauforged = colorRaw.includes("MYTHIC") || colorRaw.includes("TAU") || upgradeType.toLowerCase().includes("tau");
         // Strip color prefix for map lookup (e.g. "ACC_YELLOW_TAUFORGED" → "ACC_YELLOW")
         const colorKey = Object.keys(COLOR_MAP).find(k => colorRaw.startsWith(k)) ?? "";
-        const info = COLOR_MAP[colorKey] ?? { type: colorRaw || "Unknown", color: "#888" };
+        const info = COLOR_MAP[colorKey] ?? { type: colorRaw || "Unknown", color: "#b0b0b0", tauColor: "#d0d0d0" };
         // Extract boost name from UpgradeType path last segment
         const seg = upgradeType.split("/").pop() ?? "";
         const boost = seg
           .replace(/ArchonCrystalUpgrade(Warframe)?/g, "")
           .replace(/([A-Z])/g, " $1").trim();
-        return { type: info.type, tauforged, color: info.color, boost };
+        return { type: info.type, tauforged, color: tauforged ? info.tauColor : info.color, boost };
       });
     }
     if (Object.keys(newShards).length > 0) setArchonShards(prev => ({ ...prev, ...newShards }));
@@ -842,7 +922,6 @@ export default function App() {
       const s = new Set<string>(
         consumed.map((e: any) => (typeof e === "string" ? e : e?.ItemType ?? "")).filter(Boolean)
       );
-      localStorage.setItem("ff-subsumed-warframes", JSON.stringify([...s]));
       setSubsummedWarframes(s);
     }
 
@@ -856,6 +935,8 @@ export default function App() {
       }
       // Memory-scanner values win (they read actual rank); XP fills the gaps
       setMasteryData(prev => ({ ...xpMastery, ...prev }));
+      // Persist so ranks survive restarts without requiring another API call
+      invoke("save_mastery_data", { data: xpMastery }).catch(() => {});
     }
 
     // PendingRecipes from API → update crafting state (authoritative, covers cases memory scanner misses)
@@ -907,21 +988,21 @@ export default function App() {
     prevApiQtyRef.current = { ...apiQty };
   }, []); // eslint-disable-line
 
-  // ── Persist API data to localStorage so it survives restarts ────────────
+  // ── Persist API inventory data to inventory_state_cache.json via Rust ────
 
   useEffect(() => {
-    if (Object.keys(apiQuantities).length > 0)
-      localStorage.setItem("ff-api-quantities", JSON.stringify(apiQuantities));
-  }, [apiQuantities]);
-
-  useEffect(() => {
-    if (apiModCopies.length > 0)
-      localStorage.setItem("ff-api-mod-copies", JSON.stringify(apiModCopies));
-  }, [apiModCopies]);
+    if (!inventoryRestoredRef.current) return;
+    if (Object.keys(apiQuantities).length === 0 && apiModCopies.length === 0 && subsummedWarframes.size === 0) return;
+    invoke("save_api_inventory", {
+      apiQuantities,
+      apiModCopies,
+      consumedSuits: [...subsummedWarframes],
+    }).catch(() => {});
+  }, [apiQuantities, apiModCopies, subsummedWarframes]);
 
   useEffect(() => {
     if (settingsLoadedRef.current) saveAllSettings();
-  }, [tracked, favorites, timerFavorites, fissureWatches, modularWidth, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, modularSectionOrder, modularPopout]); // eslint-disable-line
+  }, [tracked, favorites, timerFavorites, fissureWatches, modularWidth, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, autoDiagEnabled, modularSectionOrder, modularPopout]); // eslint-disable-line
 
   // ── Modular pop-out window ─────────────────────────────────────────────────
   useEffect(() => {
@@ -1184,6 +1265,9 @@ export default function App() {
           // Window already exists (pre-created by relic-trigger or previous emit)
           const { emit } = await import("@tauri-apps/api/event");
           await emit("relic-rewards", rewards);
+          if (localStorage.getItem("ff-auto-diag") === "true") {
+            setTimeout(() => invoke("save_auto_diag_capture").catch(() => {}), 800);
+          }
         } else {
           // relic-trigger didn't fire or window wasn't ready — create now as fallback
           pendingItems = rewards;
@@ -1211,6 +1295,9 @@ export default function App() {
                 const { emit } = await import("@tauri-apps/api/event");
                 await emit("relic-rewards", pendingItems);
                 pendingItems = null;
+                if (localStorage.getItem("ff-auto-diag") === "true") {
+                  setTimeout(() => invoke("save_auto_diag_capture").catch(() => {}), 800);
+                }
               }
             });
           } catch { /* Warframe not running */ }
@@ -1221,11 +1308,21 @@ export default function App() {
       }
     });
 
+    // "inventory-reward" fires when EE.log confirms the local player's reward
+    // selection ("gets reward /Lotus/StoreItems/..."). We increment just that
+    // one item in the quantities map immediately — no need to wait for the next
+    // memory scan cycle (~10 s) to see the new item appear in inventory.
+    const unsubReward = listen<{ path: string; qty: number }>("inventory-reward", (e) => {
+      const { path, qty } = e.payload;
+      setQuantities(prev => ({ ...prev, [path]: qty }));
+    });
+
     return () => {
       unsub.then(fn => fn());
       unsubRelic.then(fn => fn());
       unsubTrigger.then(fn => fn());
       unsubStatus.then(fn => fn());
+      unsubReward.then(fn => fn());
       if (overlayWin) { overlayWin.close(); overlayWin = null; }
     };
   }, []);
@@ -1255,18 +1352,47 @@ export default function App() {
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const mergedQty = useMemo(() => {
-    // When API is disabled, use memory scanner quantities only — stale localStorage
-    // API data must not override live scanned values.
-    // When API is enabled, API data wins on conflict (authoritative for mods/arcanes).
-    const base = !companionApiEnabled ? quantities : { ...quantities, ...apiQuantities };
-    // Subsumed warframes are consumed by Helminth — force quantity 0 regardless of
-    // stale API or scanner data that may still report them as owned.
-    if (subsummedWarframes.size === 0) return base;
-    const result = { ...base };
-    for (const path of subsummedWarframes) result[path] = 0;
-    return result;
-  }, [quantities, apiQuantities, companionApiEnabled, subsummedWarframes]);
+  // Central inventory: keyed by display name AND unique_name path (alias).
+  // Both inventory["Ash Prime"] and inventory["/Lotus/Powersuits/Ninja/AshPrime"] resolve to the same entry.
+  const inventory = useMemo(() => {
+    const pathToCatalog = new Map<string, CatalogItem>();
+    for (const item of catalog) pathToCatalog.set(item.unique_name, item);
+
+    const allPaths = new Set([
+      ...Object.keys(quantities),
+      ...(companionApiEnabled ? Object.keys(apiQuantities) : []),
+      ...Object.keys(masteryData),
+      ...Object.keys(archonShards),
+      ...Object.keys(scannerMods),
+    ]);
+
+    const inv: Record<string, InventoryItem> = {};
+    for (const path of allPaths) {
+      const cat = pathToCatalog.get(path);
+      const name = cat?.name ?? path;
+      let qty = quantities[path] ?? 0;
+      if (scannerMods[path]) qty = Math.max(qty, scannerMods[path].total);
+      if (companionApiEnabled) qty = Math.max(qty, apiQuantities[path] ?? 0);
+      if (subsummedWarframes.has(path)) qty = 0;
+
+      const entry: InventoryItem = {
+        unique_name:   path,
+        quantity:      qty,
+        mastery_rank:  masteryData[path] ?? 0,
+        archon_shards: archonShards[path] ?? [],
+        subsumed:      subsummedWarframes.has(path),
+        vaulted:       cat?.vaulted ?? null,
+        category:      cat?.category ?? "",
+        ducat_price:   cat?.ducats ?? null,
+        wfm_price:     null,
+        image_name:    cat?.image_name ?? null,
+        mastery_req:   cat?.mastery_req ?? null,
+      };
+      inv[name] = entry;
+      if (path !== name) inv[path] = entry; // path alias so existing unique_name lookups still work
+    }
+    return inv;
+  }, [catalog, quantities, apiQuantities, masteryData, archonShards, subsummedWarframes, companionApiEnabled, scannerMods]);
 
   const modCopiesMap = useMemo(() => {
     const map: Record<string, ModCopy[]> = {};
@@ -1274,14 +1400,22 @@ export default function App() {
       if (!map[c.uniqueName]) map[c.uniqueName] = [];
       map[c.uniqueName].push(c);
     }
+    // Fill in rank breakdown from scanner for mods not covered by API data.
+    for (const [path, mc] of Object.entries(scannerMods)) {
+      if (!map[path]) {
+        map[path] = Object.entries(mc.by_rank)
+          .map(([rankStr, count]) => ({ uniqueName: path, rank: parseInt(rankStr), count }))
+          .sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1));
+      }
+    }
     // Sort each entry: highest rank first, then rank-0, then raw (null)
     for (const copies of Object.values(map)) {
       copies.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1));
     }
     return map;
-  }, [apiModCopies]);
+  }, [apiModCopies, scannerMods]);
 
-  const inventorySynced = Object.keys(mergedQty).length > 0;
+  const inventorySynced = Object.keys(quantities).length > 0;
 
   const availableRanks = useMemo(() => {
     const set = new Set<number>();
@@ -1300,13 +1434,13 @@ export default function App() {
   const categoryOwned = useMemo(() => {
     const owned: Record<string, number> = { all: 0 };
     for (const item of catalog) {
-      if ((mergedQty[item.unique_name] ?? 0) > 0) {
+      if ((inventory[item.unique_name]?.quantity ?? 0) > 0) {
         owned.all++;
         owned[item.category] = (owned[item.category] ?? 0) + 1;
       }
     }
     return owned;
-  }, [catalog, mergedQty]);
+  }, [catalog, inventory]);
 
   const categoryCounts = useMemo(
     () => ({ owned: categoryOwned, total: categoryTotals }),
@@ -1320,7 +1454,7 @@ export default function App() {
       if (i.name === "Blueprint") continue;
       if (category !== "all" && i.category !== category) continue;
       if (q && !i.name.toLowerCase().includes(q)) continue;
-      const qty = mergedQty[i.unique_name] ?? 0;
+      const qty = inventory[i.unique_name]?.quantity ?? 0;
       if (filterOwned    && qty === 0) continue;
       if (filterRecent   && lastChanged[i.unique_name] == null) continue;
       if (filterPrime    && !i.name.includes("Prime") && i.vaulted == null) continue;
@@ -1354,7 +1488,7 @@ export default function App() {
       return b.qty - a.qty || a.name.localeCompare(b.name);
     });
     return out.slice(0, 1000);
-  }, [catalog, mergedQty, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
+  }, [catalog, inventory, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -1460,14 +1594,6 @@ export default function App() {
             );
           })()}
           <button
-            className={`btn-monitor ${monitoring ? "active" : ""}`}
-            onClick={memoryScannerEnabled ? toggleMonitor : undefined}
-            disabled={!memoryScannerEnabled}
-            title={!memoryScannerEnabled ? "Enable Memory Scanner in Settings first" : undefined}
-          >
-            {monitoring ? "⏹ Stop" : "▶ Start monitor"}
-          </button>
-          <button
             className="btn-icon-brand btn-discord"
             title="Join our Discord"
             onClick={() => invoke("plugin:opener|open_url", { url: "https://discord.gg/7NMsN9J8vy" }).catch(() => {})}
@@ -1512,7 +1638,7 @@ export default function App() {
 
             <div className="settings-body">
 
-              {/* ── Relic Overlay ── */}
+              {/* ── Overlay ── */}
               <div className="settings-section">
                 <div className="settings-section-title">Relic Overlay</div>
                 {overlayStatus && (
@@ -1525,7 +1651,7 @@ export default function App() {
                 <div className="settings-row">
                   <div className="settings-row-info">
                     <span className="settings-row-label">Overlay</span>
-                    <span className="settings-row-desc">Show the reward overlay when a Void Fissure reward screen is detected.</span>
+                    <span className="settings-row-desc">Auto-shows reward cards when a Void Fissure screen is detected.</span>
                   </div>
                   <button
                     className="btn-secondary"
@@ -1536,7 +1662,6 @@ export default function App() {
                       localStorage.setItem("ff-overlay-enabled", String(next));
                       settingsRef.current = { ...settingsRef.current, overlayEnabled: next };
                       saveAllSettings();
-                      // If turning Off while overlay is open, close it immediately
                       if (!next) {
                         import("@tauri-apps/api/event").then(({ emit }) =>
                           emit("relic-screen", true).catch(() => {})
@@ -1548,7 +1673,7 @@ export default function App() {
                 <div className="settings-row" style={{ marginTop: 8 }}>
                   <div className="settings-row-info">
                     <span className="settings-row-label">Pick priority</span>
-                    <span className="settings-row-desc">Which card the overlay arrow highlights as the best pick.</span>
+                    <span className="settings-row-desc">Which card the overlay highlights as the best pick.</span>
                   </div>
                   <select
                     className="settings-select"
@@ -1570,13 +1695,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ── Accessibility ── */}
+              {/* ── Appearance ── */}
               <div className="settings-section">
-                <div className="settings-section-title">Accessibility</div>
+                <div className="settings-section-title">Appearance</div>
                 <div className="settings-row">
                   <div className="settings-row-info">
                     <span className="settings-row-label">Colorblind Mode</span>
-                    <span className="settings-row-desc">Adds ✓ / ✓✓ checkmarks to colored reward boxes in Relics so status is clear without relying on color alone.</span>
+                    <span className="settings-row-desc">Adds ✓ / ✓✓ symbols to relic reward boxes so status doesn't rely on color alone.</span>
                   </div>
                   <button
                     className="btn-secondary"
@@ -1608,7 +1733,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ── Memory scanner toggle ── */}
+              {/* ── Memory Scanner ── */}
               <div className="settings-section" style={{ borderColor: memoryScannerEnabled ? "rgba(240,192,64,.3)" : undefined }}>
                 <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   Memory Scanner
@@ -1616,20 +1741,12 @@ export default function App() {
                     EULA GREY AREA
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-                  Uses the Windows <code style={{ fontSize: 10 }}>ReadProcessMemory</code> API to read your live inventory,
-                  crafting jobs, and mod ranks directly from the Warframe process.
-                  DE's EULA broadly prohibits <em>"automation programs that interact with the Services in any way"</em> —
-                  this may technically fall under that clause. DE has historically tolerated read-only tools,
-                  but has not given explicit permission.
-                </div>
-                <div style={{ background: "rgba(240,192,64,.07)", border: "1px solid rgba(240,192,64,.25)", borderRadius: 5, padding: "8px 10px", marginBottom: 10, fontSize: 11, color: "#f0c040", lineHeight: 1.5 }}>
-                  ⚠ Enabling this is at your own risk. We are awaiting official clarification from Digital Extremes.
-                  The app works without it — Foundry, Market Helper, Relic Helper, Timers, and Trading all function fully.
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, lineHeight: 1.5 }}>
+                  Reads live inventory, crafting jobs, and mod ranks from Warframe's process memory via <code style={{ fontSize: 10 }}>ReadProcessMemory</code>. DE has historically tolerated read-only tools, but has not given explicit permission. Enable at your own risk.
                 </div>
                 <div className="settings-row">
                   <div>
-                    <span className="settings-row-label">Enable Memory Scanner</span>
+                    <span className="settings-row-label">Enable</span>
                     <span className="settings-row-desc">Required for live inventory, quantity tracking, and mod ranks</span>
                   </div>
                   <button
@@ -1640,10 +1757,16 @@ export default function App() {
                     {memoryScannerEnabled ? "Enabled" : "Disabled"}
                   </button>
                 </div>
-                <div className="settings-row" style={{ opacity: memoryScannerEnabled ? 1 : 0.4, pointerEvents: memoryScannerEnabled ? "auto" : "none" }}>
+                <div className="settings-row" style={{ marginTop: 8, opacity: memoryScannerEnabled ? 1 : 0.4 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Scanner</span>
+                    <span className="settings-row-desc">{monitoring ? "Running — scans every 10 s" : "Stopped"}</span>
+                  </div>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8, opacity: memoryScannerEnabled ? 1 : 0.4, pointerEvents: memoryScannerEnabled ? "auto" : "none" }}>
                   <div>
-                    <span className="settings-row-label">Inventory Blob Logging</span>
-                    <span className="settings-row-desc">Saves a timestamped inventory blob to blobs/ on each scan pass — for offline analysis</span>
+                    <span className="settings-row-label">Blob Logging</span>
+                    <span className="settings-row-desc">Saves a timestamped inventory snapshot to <code style={{ fontSize: 10 }}>blobs/</code> on each scan pass</span>
                   </div>
                   <button
                     className="btn-secondary"
@@ -1655,25 +1778,20 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ── Companion API toggle ── */}
+              {/* ── Warframe API ── */}
               <div className="settings-section" style={{ borderColor: companionApiEnabled ? "rgba(240,192,64,.3)" : undefined }}>
                 <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  Warframe Companion API
+                  Warframe API
                   <span style={{ fontSize: 10, background: "rgba(240,192,64,.15)", color: "#f0c040", border: "1px solid rgba(240,192,64,.35)", borderRadius: 3, padding: "1px 6px", fontWeight: 700 }}>
                     UNOFFICIAL
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
-                  Connects to <code style={{ fontSize: 10 }}>api.warframe.com/api/inventory.php</code> to add mod ranks and extra inventory detail.
-                  DE has not officially confirmed this is permitted for third-party tools.
-                  The app works fully without it — memory scanning handles all core inventory.
-                </div>
-                <div style={{ background: "rgba(240,192,64,.07)", border: "1px solid rgba(240,192,64,.25)", borderRadius: 5, padding: "8px 10px", marginBottom: 10, fontSize: 11, color: "#f0c040", lineHeight: 1.5 }}>
-                  ⚠ Enabling this is at your own risk. We are awaiting official clarification from Digital Extremes.
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, lineHeight: 1.5 }}>
+                  Connects to <code style={{ fontSize: 10 }}>api.warframe.com/api/inventory.php</code> for mod ranks and detailed inventory data. Not officially permitted for third-party tools. Enable at your own risk.
                 </div>
                 <div className="settings-row">
                   <div>
-                    <span className="settings-row-label">Enable Companion API</span>
+                    <span className="settings-row-label">Enable</span>
                     <span className="settings-row-desc">Adds mod ranks and detailed inventory data</span>
                   </div>
                   <button
@@ -1752,84 +1870,20 @@ export default function App() {
                         setQuantities({});
                         setApiQuantities({});
                         setApiModCopies([]);
+                        setScannerMods({});
+                        setMasteryData({});
+                        setArchonShards({});
                         setChangeLog([]);
                         setLastChanged({});
                         setWfConnected(false);
                         wfConnectedRef.current = false;
-                        localStorage.removeItem("ff-api-quantities");
-                        localStorage.removeItem("ff-api-mod-copies");
+                        invoke("save_api_inventory", { apiQuantities: {}, apiModCopies: [], consumedSuits: [] }).catch(() => {});
                         setClearMsg("Cache cleared.");
                       } catch (e) { setClearMsg(`Error: ${e}`); }
                     }}
                   >Clear Cache</button>
                 </div>
                 {clearMsg && <div className="settings-msg">{clearMsg}</div>}
-              </div>
-
-              {/* ── Monitor ── */}
-              <div className="settings-section">
-                <div className="settings-section-title">Monitor</div>
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Memory Scanner</span>
-                    <span className="settings-row-desc">{monitoring ? "Running — scans every 10 seconds" : "Stopped"}</span>
-                  </div>
-                  <button className={`btn-secondary ${monitoring ? "btn-danger" : ""}`} onClick={toggleMonitor}>
-                    {monitoring ? "Stop" : "Start"}
-                  </button>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-                  {[
-                    { label: "Memory Scanner",    ok: monitoring,      detail: monitoring ? `Running · last scan ${lastScan ? new Date(lastScan*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—"}` : "Stopped" },
-                    { label: "Warframe API",       ok: wfConnected,     detail: wfConnected ? `Connected · ${lastApiRefresh ? new Date(lastApiRefresh*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—"}` : warframeRunning ? "Game detected — scanning credentials…" : "Not connected" },
-                    { label: "Warframe detected", ok: warframeRunning, detail: warframeRunning ? "Game is running" : "Game not detected" },
-                  ].map(s => (
-                    <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.ok ? "var(--green)" : "var(--muted)", flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: "var(--text)", minWidth: 140 }}>{s.label}</span>
-                      <span style={{ fontSize: 11, color: "var(--muted)" }}>{s.detail}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="settings-row" style={{ marginTop: 10 }}>
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Raw Memory Probe</span>
-                    <span className="settings-row-desc">Dumps inventory-related strings from Warframe's memory to memory_probe.txt in the data folder. Run after a mission to see the exact JSON format.</span>
-                  </div>
-                  <button className="btn-secondary" disabled={memoryProbing} onClick={() => {
-                    setMemoryProbing(true);
-                    invoke<string>("dump_memory_probe")
-                      .then(result => {
-                        const lines = result.split("\n").filter(l => l.trim());
-                        alert(`Probe complete — ${lines.length} entries written to:\n%LOCALAPPDATA%\\warframe-companion\\memory_probe.txt`);
-                      })
-                      .catch(e => alert("Probe failed: " + String(e)))
-                      .finally(() => setMemoryProbing(false));
-                  }}>{memoryProbing ? "Running…" : "Probe Memory"}</button>
-                </div>
-
-                <div className="settings-row" style={{ marginTop: 10 }}>
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Raw Memory Scan</span>
-                    <span className="settings-row-desc">
-                      {rawScanning
-                        ? "Recording all readable strings from Warframe's memory every 5 s → raw_scan.txt. Navigate menus in-game, then click Stop."
-                        : "Full raw memory scan — no filtering. Every readable string from every region is written to raw_scan.txt. Click Record, navigate the game, click Stop."}
-                    </span>
-                  </div>
-                  <button
-                    className={rawScanning ? "btn-danger" : "btn-secondary"}
-                    onClick={() => {
-                      invoke<string>("toggle_raw_scan")
-                        .then(status => {
-                          const active = status === "started";
-                          setRawScanning(active);
-                          if (!active) alert("Raw scan stopped.\nFile saved to:\n%LOCALAPPDATA%\\warframe-companion\\raw_scan.txt");
-                        })
-                        .catch(e => alert("Error: " + String(e)));
-                    }}
-                  >{rawScanning ? "⏹ Stop Recording" : "⏺ Record"}</button>
-                </div>
               </div>
 
               {/* ── Modular Window ── */}
@@ -1853,16 +1907,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ── Support ── */}
+              {/* ── Diagnostics ── */}
               <div className="settings-section">
-                <div className="settings-section-title">Support</div>
+                <div className="settings-section-title">Diagnostics</div>
                 <div className="settings-row">
                   <div className="settings-row-info">
-                    <span className="settings-row-label">Session Log</span>
-                    <span className="settings-row-desc">
-                      Step-by-step log of the last overlay attempt. Share this when reporting overlay issues.
-                      Written to <code>%TEMP%\frameforge_overlay_session.txt</code>.
-                    </span>
+                    <span className="settings-row-label">Overlay Session Log</span>
+                    <span className="settings-row-desc">Step-by-step log of the last overlay attempt. Share when reporting overlay issues.</span>
                   </div>
                   <button className="btn-secondary" onClick={async () => {
                     try {
@@ -1871,13 +1922,30 @@ export default function App() {
                     } catch (e) { alert(`Error: ${e}`); }
                   }}>View Log</button>
                 </div>
-                <div className="settings-row" style={{ marginTop: 10 }}>
+                <div className="settings-row" style={{ marginTop: 8 }}>
                   <div className="settings-row-info">
-                    <span className="settings-row-label">Capture Diagnostics</span>
+                    <span className="settings-row-label">Auto-capture</span>
                     <span className="settings-row-desc">
-                      Screenshots the full Warframe window (overlay included) and copies the scan log
-                      into a timestamped folder in <code>%TEMP%\warframe-companion\diagnostics\</code>.
-                      Share the folder when reporting scanner or overlay issues.
+                      When the relic reward overlay appears, automatically saves a screenshot + OCR log to a timestamped folder in <code style={{ fontSize: 10 }}>%TEMP%\warframe-companion\diagnostics\</code>.
+                    </span>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    style={{ minWidth: 64, background: autoDiagEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: autoDiagEnabled ? "var(--accent)" : undefined }}
+                    onClick={() => {
+                      const next = !autoDiagEnabled;
+                      setAutoDiagEnabled(next);
+                      localStorage.setItem("ff-auto-diag", String(next));
+                      settingsRef.current = { ...settingsRef.current, autoDiagEnabled: next };
+                      saveAllSettings();
+                    }}
+                  >{autoDiagEnabled ? "On" : "Off"}</button>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Capture Now</span>
+                    <span className="settings-row-desc">
+                      Manually take a screenshot + scan log snapshot.
                       {diagPath && (
                         <span style={{ display: "block", marginTop: 4, color: "var(--green)", wordBreak: "break-all", fontSize: 11 }}>
                           Saved: {diagPath}
@@ -1901,6 +1969,44 @@ export default function App() {
                       }
                     }}
                   >{diagCapturing ? "Capturing…" : "Capture"}</button>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Memory Probe</span>
+                    <span className="settings-row-desc">Dumps inventory-related strings from Warframe's memory to <code style={{ fontSize: 10 }}>memory_probe.txt</code>. Run after a mission to inspect the raw JSON format.</span>
+                  </div>
+                  <button className="btn-secondary" disabled={memoryProbing} onClick={() => {
+                    setMemoryProbing(true);
+                    invoke<string>("dump_memory_probe")
+                      .then(result => {
+                        const lines = result.split("\n").filter(l => l.trim());
+                        alert(`Probe complete — ${lines.length} entries written to:\n%LOCALAPPDATA%\\warframe-companion\\memory_probe.txt`);
+                      })
+                      .catch(e => alert("Probe failed: " + String(e)))
+                      .finally(() => setMemoryProbing(false));
+                  }}>{memoryProbing ? "Running…" : "Probe Memory"}</button>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8 }}>
+                  <div className="settings-row-info">
+                    <span className="settings-row-label">Raw Memory Scan</span>
+                    <span className="settings-row-desc">
+                      {rawScanning
+                        ? "Recording all readable strings every 5 s → raw_scan.txt. Navigate menus in-game, then click Stop."
+                        : "Records every readable string from memory to raw_scan.txt. Navigate the game while recording, then stop."}
+                    </span>
+                  </div>
+                  <button
+                    className={rawScanning ? "btn-danger" : "btn-secondary"}
+                    onClick={() => {
+                      invoke<string>("toggle_raw_scan")
+                        .then(status => {
+                          const active = status === "started";
+                          setRawScanning(active);
+                          if (!active) alert("Raw scan stopped.\nFile saved to:\n%LOCALAPPDATA%\\warframe-companion\\raw_scan.txt");
+                        })
+                        .catch(e => alert("Error: " + String(e)));
+                    }}
+                  >{rawScanning ? "⏹ Stop" : "⏺ Record"}</button>
                 </div>
               </div>
 
@@ -2076,30 +2182,38 @@ export default function App() {
                   </div>
                 ) : (
                   visibleItems.flatMap(item => {
-                    // Mods & Arcanes: expand into per-rank cards when API data available
+                    // Mods & Arcanes: single card with inline rank breakdown
                     if ((item.category === "Mods" || item.category === "Arcanes") && modCopiesMap[item.unique_name]) {
-                      let copies = modCopiesMap[item.unique_name];
+                      const copies = modCopiesMap[item.unique_name];
+                      // Build rank rows: 0 through highest rank seen, filling gaps with 0
+                      const byRank: Record<number, number> = {};
+                      for (const c of copies) byRank[c.rank ?? 0] = (byRank[c.rank ?? 0] ?? 0) + c.count;
+                      const maxRank = Math.max(...Object.keys(byRank).map(Number));
+                      const ranks = Array.from({ length: maxRank + 1 }, (_, r) => ({ rank: r, count: byRank[r] ?? 0 })).filter(r => r.count > 0);
+                      // Apply filterRank
                       if (filterRank !== null) {
-                        copies = copies.filter(c =>
-                          filterRank === "unranked" ? (c.rank === null || c.rank === 0) : c.rank === filterRank
-                        );
+                        const targetRank = filterRank === "unranked" ? 0 : filterRank as number;
+                        if ((byRank[targetRank] ?? 0) === 0) return [];
                       }
-                      if (copies.length === 0) return [];
-                      return copies.map(copy => {
-                        const rankLabel = (copy.rank === null || copy.rank === 0) ? "Unranked" : `R${copy.rank}`;
-                        return (
-                          <div key={`${item.unique_name}|${copy.rank ?? "raw"}`} className="inv-card">
-                            <div className="inv-mastery-row">
-                              <span className="rank-badge">{rankLabel}</span>
-                            </div>
-                            <div className="inv-card-img-wrap">
-                              <ItemImg imageName={item.image_name} category={item.category} size={48} />
-                            </div>
-                            <div className="inv-card-name">{item.name}</div>
-                            <div className={`inv-card-qty`}>{fmt(copy.count)}</div>
+                      const total = Object.values(byRank).reduce((a, b) => a + b, 0);
+                      return [(
+                        <div key={item.unique_name} className="inv-card inv-card-mod">
+                          <div className="inv-card-img-wrap">
+                            <ItemImg imageName={item.image_name} category={item.category} size={40} />
                           </div>
-                        );
-                      });
+                          <div className="inv-card-name">{item.name}</div>
+                          <div className="inv-card-cat">{item.category}</div>
+                          <div className="mod-rank-table">
+                            {ranks.map(r => (
+                              <div key={r.rank} className={`mod-rank-row${r.count === 0 ? " mod-rank-zero" : ""}`}>
+                                <span className="mod-rank-label">R{r.rank}</span>
+                                <span className="mod-rank-count">{r.count}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="inv-card-qty mod-total">{fmt(total)}</div>
+                        </div>
+                      )];
                     }
 
                     // Normal item card
@@ -2110,7 +2224,7 @@ export default function App() {
                     const recentChange = isRecent ? changeLog.find(c => c.unique_name === item.unique_name) : null;
                     const craftJob = crafting.find(c => c.unique_name === item.unique_name);
                     const isZero = item.qty === 0 && !craftJob;
-                    const itemRank = masteryData[item.unique_name];
+                    const itemRank = inventory[item.unique_name]?.mastery_rank;
                     const isMastered = itemRank != null && itemRank >= 30;
                     const showRank = itemRank != null && itemRank > 0;
                     return [(
@@ -2155,7 +2269,24 @@ export default function App() {
                 )}
               </div>
 
-              <div className="log-panel">
+              <div className="log-panel" style={{ height: logPanelH }}>
+                <div
+                  className="log-resize-handle"
+                  onMouseDown={e => {
+                    const startY = e.clientY;
+                    const startH = logPanelH;
+                    const onMove = (me: MouseEvent) => {
+                      const delta = startY - me.clientY;
+                      setLogPanelH(Math.max(80, Math.min(600, startH + delta)));
+                    };
+                    const onUp = () => {
+                      window.removeEventListener("mousemove", onMove);
+                      window.removeEventListener("mouseup", onUp);
+                    };
+                    window.addEventListener("mousemove", onMove);
+                    window.addEventListener("mouseup", onUp);
+                  }}
+                />
                 <div className="log-header">Change log</div>
                 <div className="log-list">
                   {changeLog.length === 0 ? (
@@ -2185,19 +2316,19 @@ export default function App() {
         {/* ── Foundry module ── */}
         {activeModule === "foundry" && (
           <ErrorBoundary>
-            <Foundry quantities={mergedQty} masteryData={masteryData} refreshKey={itemsRefreshKey} crafting={crafting} colorblindMode={colorblindMode} subsummedWarframes={subsummedWarframes} archonShards={archonShards} tracked={tracked} onTrackToggle={toggleTracked} filters={foundryFilters} onFiltersChange={setFoundryFilters} />
+            <Foundry inventory={inventory} refreshKey={itemsRefreshKey} crafting={crafting} colorblindMode={colorblindMode} subsummedWarframes={subsummedWarframes} tracked={tracked} onTrackToggle={toggleTracked} filters={foundryFilters} onFiltersChange={setFoundryFilters} />
           </ErrorBoundary>
         )}
 
         {/* ── Market Helper module ── */}
         {activeModule === "market" && (
-          <MarketHelper quantities={mergedQty} apiQuantities={apiQuantities} refreshKey={itemsRefreshKey} crafting={crafting} onWfmLoginChange={setWfmLoggedIn} filters={marketFilters} onFiltersChange={setMarketFilters} />
+          <MarketHelper inventory={inventory} refreshKey={itemsRefreshKey} crafting={crafting} onWfmLoginChange={setWfmLoggedIn} filters={marketFilters} onFiltersChange={setMarketFilters} />
         )}
 
         {/* ── Relics module ── */}
         {activeModule === "relics" && (
           <ErrorBoundary>
-            <RelicHelper quantities={mergedQty} apiQuantities={apiQuantities} masteryData={masteryData} refreshKey={itemsRefreshKey} colorblindMode={colorblindMode} filters={relicFilters} onFiltersChange={setRelicFilters} />
+            <RelicHelper inventory={inventory} refreshKey={itemsRefreshKey} colorblindMode={colorblindMode} filters={relicFilters} onFiltersChange={setRelicFilters} />
           </ErrorBoundary>
         )}
 
@@ -2221,7 +2352,7 @@ export default function App() {
               fissureWatches={fissureWatches}
               onAddWatch={w => setFissureWatches(prev => [...prev, w])}
               onRemoveWatch={id => setFissureWatches(prev => prev.filter(w => w.id !== id))}
-              quantities={mergedQty}
+              inventory={inventory}
             />
           </ErrorBoundary>
         )}
@@ -2237,7 +2368,7 @@ export default function App() {
         {activeModule === "completionist" && (
           <ErrorBoundary>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-              <Syndicates quantities={mergedQty} filters={syndicateFilters} onFiltersChange={setSyndicateFilters} />
+              <Syndicates inventory={inventory} filters={syndicateFilters} onFiltersChange={setSyndicateFilters} />
             </div>
           </ErrorBoundary>
         )}
@@ -2255,7 +2386,7 @@ export default function App() {
           onTimerFavoritesChange={setTimerFavorites}
           onTimerUnfavorite={id => setTimerFavorites(prev => prev.filter(x => x !== id))}
           fissureWatches={fissureWatches}
-          quantities={mergedQty}
+          inventory={inventory}
           catalog={catalog}
           width={modularWidth}
           onWidthChange={setModularWidth}

@@ -18,59 +18,27 @@ fn avg_brightness(pixels: &[u8]) -> u32 {
     sum / (pixels.len() / 4 / 64).max(1) as u32
 }
 
-/// Strip this fraction of the full window height from the top before OCR.
-/// Removes HUD overlays (FPS counters, ping displays, Nvidia/AMD overlays).
-const OCR_SKIP_TOP_FRAC: f32 = 0.10;
-
-/// Strip this fraction of the full window height from the bottom before OCR.
-/// Removes objective trackers, chat, ability bars, and other bottom-HUD elements.
-const OCR_SKIP_BOTTOM_FRAC: f32 = 0.10;
-
-/// Crop the top N rows off a pixel buffer. Returns (cropped_pixels, new_cap_h).
-fn crop_top_strip(pixels: Vec<u8>, w: u32, cap_h: u32, full_h: u32, skip_frac: f32) -> (Vec<u8>, u32) {
-    let skip_rows = ((full_h as f32 * skip_frac) as u32).min(cap_h.saturating_sub(1));
-    let skip_bytes = (skip_rows * w * 4) as usize;
-    if skip_bytes == 0 || skip_bytes >= pixels.len() {
-        return (pixels, cap_h);
-    }
-    (pixels[skip_bytes..].to_vec(), cap_h - skip_rows)
-}
-
-/// Crop the bottom N rows off a pixel buffer. Returns (cropped_pixels, new_cap_h).
-fn crop_bottom_strip(pixels: Vec<u8>, w: u32, cap_h: u32, full_h: u32, skip_frac: f32) -> (Vec<u8>, u32) {
-    let drop_rows = ((full_h as f32 * skip_frac) as u32).min(cap_h.saturating_sub(1));
-    let keep_rows = cap_h.saturating_sub(drop_rows);
-    if keep_rows == 0 || keep_rows == cap_h {
-        return (pixels, cap_h);
-    }
-    let keep_bytes = (keep_rows * w * 4) as usize;
-    (pixels[..keep_bytes.min(pixels.len())].to_vec(), keep_rows)
-}
-
 /// Main entry point. Tries PrintWindow first, falls back to DXGI if the frame is dark.
 /// Returns (BGRA pixels, width, captured_height, full_height, capture_info).
-/// captured_height covers y=[10%, 38%] of the full window — top and bottom 10% are
-/// stripped to exclude HUD overlays (FPS/ping counters, ability bars, chat) from OCR.
+/// captured_height covers the top 48% of the full window — reward cards are always in the
+/// upper half of the screen. OCR line filtering (y >= 0.10 of cap_h) removes any HUD text
+/// from the very top of the frame (FPS counters, ping overlays, etc.) without cropping.
 /// capture_info describes which path was used and the pixel brightness, for session logging.
 #[cfg(target_os = "windows")]
 pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)> {
     // ── Path A: PrintWindow (Windowed / Borderless Windowed) ──────────────────
     if let Some((pixels, w, cap_h, full_h)) = capture_printwindow() {
-        let (pixels, cap_h) = crop_top_strip(pixels, w, cap_h, full_h, OCR_SKIP_TOP_FRAC);
-        let (pixels, cap_h) = crop_bottom_strip(pixels, w, cap_h, full_h, OCR_SKIP_BOTTOM_FRAC);
         let avg = avg_brightness(&pixels);
         if avg >= 20 {
-            let info = format!("PrintWindow  {}×{}px (skip 10%/10%, cap {}px)  avg_brightness={}", w, full_h, cap_h, avg);
+            let info = format!("PrintWindow  {}×{}px (top 75%, cap {}px)  avg_brightness={}", w, full_h, cap_h, avg);
             return Some((pixels, w, cap_h, full_h, info));
         }
         // Dark frame — Fullscreen Exclusive likely. Fall through to DXGI.
         let _ = avg;
-        if let Some((px2, w2, cap_h2, full_h2)) = capture_dxgi(0.48) {
-            let (px2, cap_h2) = crop_top_strip(px2, w2, cap_h2, full_h2, OCR_SKIP_TOP_FRAC);
-            let (px2, cap_h2) = crop_bottom_strip(px2, w2, cap_h2, full_h2, OCR_SKIP_BOTTOM_FRAC);
+        if let Some((px2, w2, cap_h2, full_h2)) = capture_dxgi(0.75) {
             let avg2 = avg_brightness(&px2);
             let info = format!(
-                "DXGI  {}×{}px (skip 10%/10%, cap {}px)  avg_brightness={} \
+                "DXGI  {}×{}px (top 75%, cap {}px)  avg_brightness={} \
                  (PrintWindow was dark: avg={})",
                 w2, full_h2, cap_h2, avg2, avg
             );
@@ -79,19 +47,17 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
         // Both paths failed — return the dark PrintWindow result so the caller
         // can classify it as dark-frame and log it properly.
         let info = format!(
-            "PrintWindow  {}×{}px (skip 10%/10%, cap {}px)  avg_brightness={} [DARK — DXGI also failed]",
+            "PrintWindow  {}×{}px (top 75%, cap {}px)  avg_brightness={} [DARK — DXGI also failed]",
             w, full_h, cap_h, avg
         );
         return Some((pixels, w, cap_h, full_h, info));
     }
 
     // PrintWindow found no window (Warframe not running?) — try DXGI anyway
-    if let Some((pixels, w, cap_h, full_h)) = capture_dxgi(0.48) {
-        let (pixels, cap_h) = crop_top_strip(pixels, w, cap_h, full_h, OCR_SKIP_TOP_FRAC);
-        let (pixels, cap_h) = crop_bottom_strip(pixels, w, cap_h, full_h, OCR_SKIP_BOTTOM_FRAC);
+    if let Some((pixels, w, cap_h, full_h)) = capture_dxgi(0.75) {
         let avg = avg_brightness(&pixels);
         let info = format!(
-            "DXGI  {}×{}px (skip 10%/10%, cap {}px)  avg_brightness={} (no Warframe window found)",
+            "DXGI  {}×{}px (top 75%, cap {}px)  avg_brightness={} (no Warframe window found)",
             w, full_h, cap_h, avg
         );
         return Some((pixels, w, cap_h, full_h, info));
@@ -128,7 +94,7 @@ fn capture_printwindow() -> Option<(Vec<u8>, u32, u32, u32)> {
         let full_h = (rect.bottom - rect.top) as u32;
         if full_w < 100 || full_h < 100 { return None; }
 
-        let cap_h = (full_h as f32 * 0.48) as u32;
+        let cap_h = (full_h as f32 * 0.75) as u32;
 
         let hdc_win = GetDC(hwnd);
         let hdc_mem = CreateCompatibleDC(hdc_win);
@@ -619,31 +585,51 @@ pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32, img_h: u32) -> Result<(String, 
         let mut lines_out: Vec<(String, f32, f32)> = Vec::new();
         let lines: IVectorView<OcrLine> = result.Lines()?;
         let count = lines.Size()?;
+        // Inter-card gap: reward cards are separated by ~10–12% of image width.
+        // Word gaps within a single item name are ≤ 3%. Splitting at 7% cleanly
+        // divides "Daikyu Prime Upper Limb Nautilus Prime Systems" (which WinRT
+        // merges into one line when both names share the same baseline Y) into the
+        // two separate card entries the column-assignment logic expects.
+        const WORD_GAP: f32 = 0.07;
         for i in 0..count {
             let line = lines.GetAt(i)?;
-            let text = line.Text()?.to_string();
-            // Compute average word centre X and Y, normalised to [0,1].
-            // Both are needed: X drives column assignment; Y filters out
-            // screen-top HUD overlays (FPS counters, GPU widgets) that would
-            // otherwise create spurious x-clusters and inflate the card count.
-            let (x_frac, y_frac) = (|| -> windows::core::Result<(f32, f32)> {
-                let words = line.Words()?;
-                let wc = words.Size()?;
-                if wc == 0 { return Ok((0.5, 0.5)); }
-                let (mut sx, mut sy) = (0.0f32, 0.0f32);
-                for j in 0..wc {
-                    let w = words.GetAt(j)?;
-                    let r = w.BoundingRect()?;
-                    sx += r.X + r.Width  / 2.0;
-                    sy += r.Y + r.Height / 2.0;
+            let words = line.Words()?;
+            let wc = words.Size()?;
+            if wc == 0 {
+                let text = line.Text()?.to_string();
+                full.push_str(&text); full.push('\n');
+                lines_out.push((text, 0.5, 0.5));
+                continue;
+            }
+            // Walk words left-to-right; flush a sub-line whenever the horizontal
+            // gap to the next word exceeds WORD_GAP.
+            let mut seg_texts: Vec<String> = Vec::new();
+            let mut seg_sx = 0.0f32;
+            let mut seg_sy = 0.0f32;
+            let mut seg_n  = 0u32;
+            let mut prev_right = -1.0f32;
+            for j in 0..wc {
+                let w  = words.GetAt(j)?;
+                let r  = w.BoundingRect()?;
+                let cx = if img_w > 0 { (r.X + r.Width  / 2.0) / img_w as f32 } else { 0.5 };
+                let cy = if img_h > 0 { (r.Y + r.Height / 2.0) / img_h as f32 } else { 0.5 };
+                let xl = if img_w > 0 { r.X / img_w as f32 } else { 0.0 };
+                let xr = if img_w > 0 { (r.X + r.Width) / img_w as f32 } else { 1.0 };
+                if prev_right >= 0.0 && (xl - prev_right) > WORD_GAP && !seg_texts.is_empty() {
+                    let sub = seg_texts.join(" ");
+                    full.push_str(&sub); full.push('\n');
+                    lines_out.push((sub, seg_sx / seg_n as f32, seg_sy / seg_n as f32));
+                    seg_texts.clear(); seg_sx = 0.0; seg_sy = 0.0; seg_n = 0;
                 }
-                let x = if img_w > 0 { (sx / wc as f32) / img_w as f32 } else { 0.5 };
-                let y = if img_h > 0 { (sy / wc as f32) / img_h as f32 } else { 0.5 };
-                Ok((x, y))
-            })().unwrap_or((0.5, 0.5));
-            full.push_str(&text);
-            full.push('\n');
-            lines_out.push((text, x_frac, y_frac));
+                seg_texts.push(w.Text()?.to_string());
+                seg_sx += cx; seg_sy += cy; seg_n += 1;
+                prev_right = xr;
+            }
+            if !seg_texts.is_empty() {
+                let sub = seg_texts.join(" ");
+                full.push_str(&sub); full.push('\n');
+                lines_out.push((sub, seg_sx / seg_n as f32, seg_sy / seg_n as f32));
+            }
         }
         Ok((full, lines_out))
     })().map_err(|e| e.to_string())
@@ -772,10 +758,12 @@ fn normalise(s: &str) -> String {
 fn find_rarity_bars(pixels: &[u8], pix_w: u32, pix_h: u32) -> (Option<(Vec<f32>, f32)>, String) {
     let x_lo = (pix_w as f32 * 0.05) as u32;
     let x_hi = (pix_w as f32 * 0.95) as u32;
-    // Bars are at ~89% of captured height (bottom edge of the card area).
-    // Starting at 70% skips the card artwork (helmets, weapons) which contains
-    // bright orange/gold pixels that create false bar columns.
-    let y_lo = (pix_h as f32 * 0.70) as u32;
+    // In the full 48% capture (no crops), bar position varies with UI scale:
+    //   • Large window / small UI (e.g. 1440p native): bars at ~65–70% of cap_h
+    //   • Smaller window / larger UI: bars at ~88–93% of cap_h
+    // Starting at 55% skips the card artwork (weapon/helmet icons) while
+    // catching both configurations. Upper bound stays at 0.97 to cover all cases.
+    let y_lo = (pix_h as f32 * 0.55) as u32;
     let y_hi = (pix_h as f32 * 0.97) as u32;
 
     let scan_w = (x_hi - x_lo) as usize;
@@ -1203,14 +1191,24 @@ fn score_item(display_name: &str, words: &std::collections::HashSet<String>) -> 
     let norm = normalise(display_name);
     let item_words: Vec<&str> = norm.split_whitespace().collect();
     if item_words.is_empty() { return 0.0; }
-    let n = item_words.len() as f32;
+    let n_catalog = item_words.len() as f32;
+    let n_ocr = words.len() as f32;
     let matched = item_words.iter()
         .filter(|&&w| word_found_in_set(w, words))
         .count();
-    let base = matched as f32 / n;
 
-    // Length-affinity bonus for unmatched words.
-    // OCR almost always preserves word length (it substitutes chars, not inserts them),
+    // Use max of two coverage ratios:
+    //  • matched/n_catalog — what fraction of the catalog item's words appear in OCR
+    //  • matched/n_ocr     — what fraction of the OCR words the catalog item explains
+    // This prevents long item names from being penalised when they explain ALL the OCR
+    // words. E.g. OCR {assis, blueprint}: "Xaku Prime Chassis Blueprint" (4 words)
+    // matches both via suffix and exact → max(2/4, 2/2) = 1.0, beating "Forma Blueprint"
+    // (2 words, matches 1/2) whose pure catalog-coverage score 0.50 previously won.
+    let base = (matched as f32 / n_catalog)
+        .max(if n_ocr > 0.0 { matched as f32 / n_ocr } else { 0.0 });
+
+    // Length-affinity bonus for unmatched catalog words.
+    // OCR almost always preserves word length (substitutes chars, not inserts them),
     // so prefer catalog words whose length is close to the OCR word length.
     // Max bonus per unmatched word is 0.08/n — always less than one matched word (1/n).
     let len_bonus: f32 = item_words.iter()
@@ -1223,7 +1221,7 @@ fn score_item(display_name: &str, words: &std::collections::HashSet<String>) -> 
                 })
                 .fold(0.0_f32, f32::max)
         })
-        .sum::<f32>() / n;
+        .sum::<f32>() / n_catalog;
 
     base + len_bonus
 }
@@ -1243,6 +1241,7 @@ pub fn extract_reward_items_twophase(
     catalog: &[(String, String)],
     capture_info: &str,
     hint_squad_size: Option<usize>,
+    player_names: &[String],
 ) -> (bool, bool, Vec<String>, Vec<f32>, String) {
 
     // ── 1. Raw OCR ────────────────────────────────────────────────────────────
@@ -1281,9 +1280,52 @@ pub fn extract_reward_items_twophase(
     // If detection fails, fall back to X-gap grouping of OCR lines.
     let (bar_result, bar_diag) = find_rarity_bars(pixels, pix_w, pix_h);
 
-    let (card_centers, _bar_y): (Vec<f32>, f32) = match &bar_result {
+    let (card_centers, bar_y_frac): (Vec<f32>, f32) = match &bar_result {
         Some((centers, by)) => (centers.clone(), *by),
         None => (vec![], 0.0),
+    };
+
+    // Player names appear immediately below the rarity bars.  When bar_y is
+    // known, cut OCR text off at bar_y + 0.06 (6 % below the bar line) so
+    // player names never reach the column matcher.  Without bar data fall back
+    // to 0.78 — generous enough for typical layouts while still excluding most
+    // player-name rows.
+    let ocr_y_max: f32 = if bar_y_frac > 0.0 {
+        (bar_y_frac + 0.06).min(0.92)
+    } else {
+        // No bar detected — use a conservative cutoff.  On 1080p player
+        // names start at ~73% of cap_h; 0.72 keeps a small safety margin.
+        0.72
+    };
+
+    // Returns true if `text` resembles a known player name (≥80% char similarity).
+    // Handles typical OCR garbling: "Dragonivan65" → "Dragonivan650", trailing symbols, etc.
+    let is_player_name = |text: &str| -> bool {
+        let t = text.trim().to_lowercase();
+        if t.is_empty() { return false; }
+        for name in player_names {
+            let n = name.to_lowercase();
+            // Fast path: exact substring in either direction
+            if t.contains(&n) || n.contains(&t) { return true; }
+            // Fuzzy path: Levenshtein ≤ 20% of the longer string
+            let max_len = t.len().max(n.len());
+            let threshold = (max_len / 5).max(1);
+            if lev_dist(&t, &n) <= threshold { return true; }
+        }
+        false
+    };
+
+    // Returns true if the line is a card UI badge (ownership/craft status), not an item name.
+    // Matches "Owned", "Crafted", "@ 4 Owned", "8 Crafted", "Unranked", etc.
+    // Strips "@", numbers, and symbols — if only stopwords remain, it's a badge line.
+    let is_ui_badge = |text: &str| -> bool {
+        const BADGE_WORDS: &[&str] = &["owned", "crafted", "unranked", "mastered"];
+        let meaningful: Vec<&str> = text.split_whitespace()
+            .filter(|w| !w.starts_with('@') && w.parse::<u32>().is_err()
+                    && w.chars().any(|c| c.is_alphabetic()))
+            .collect();
+        !meaningful.is_empty()
+            && meaningful.iter().all(|w| BADGE_WORDS.contains(&w.to_lowercase().as_str()))
     };
 
     // ── 2b. Card count — prime+forma word count ──────────────────────────────
@@ -1321,7 +1363,7 @@ pub fn extract_reward_items_twophase(
         // there — only the game title bar and screen-edge HUD overlays (FPS
         // counters, GPU widgets) do. Excluding them prevents spurious x-clusters.
         let mut xs: Vec<f32> = ocr_lines.iter()
-            .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10)
+            .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
             .map(|(_, x, _)| *x)
             .collect();
         xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -1368,11 +1410,37 @@ pub fn extract_reward_items_twophase(
         hardcoded_card_centers(word_card_count)
     };
 
+    // ── Raw OCR lines log (all lines, accepted + skipped with reason) ────────
+    let raw_ocr_log: String = {
+        let mut lines_log = Vec::new();
+        for (i, (text, x, y)) in ocr_lines.iter().enumerate() {
+            let skip = if *y < 0.10 {
+                Some(format!("y={:.2} < 0.10 top-HUD cutoff", y))
+            } else if *y >= ocr_y_max {
+                Some(format!("y={:.2} >= {:.2} below-bar cutoff", y, ocr_y_max))
+            } else if is_player_name(text) {
+                Some("player name".into())
+            } else if is_ui_badge(text) {
+                Some("UI badge".into())
+            } else {
+                None
+            };
+            let entry = match skip {
+                Some(r) => format!("  [{:>2}] {:>4} x={:.2} y={:.2}  ✗ {} — \"{}\"",
+                    i, "", x, y, r, text.trim()),
+                None    => format!("  [{:>2}] {:>4} x={:.2} y={:.2}  ✓ \"{}\"",
+                    i, "", x, y, text.trim()),
+            };
+            lines_log.push(entry);
+        }
+        lines_log.join("\n")
+    };
+
     let columns: Vec<(Vec<String>, f32)> = {
         let mut cols: Vec<(Vec<String>, f32)> =
             active_centers.iter().map(|&cx| (Vec::new(), cx)).collect();
         for (text, x, y) in &ocr_lines {
-            if *y < 0.10 { continue; } // exclude top-of-screen HUD overlays and the game's own title bar
+            if *y < 0.10 || *y >= ocr_y_max || is_player_name(text) || is_ui_badge(text) { continue; }
             let idx = active_centers.iter().enumerate()
                 .min_by(|(_, a), (_, b)| {
                     (x - *a).abs().partial_cmp(&(x - *b).abs())
@@ -1414,8 +1482,9 @@ pub fn extract_reward_items_twophase(
 
         // ── Text-based scoring ───────────────────────────────────────────────
         let mut best_score = 0.0f32;
-        let mut best_word_count = 0usize; // tiebreaker: more catalog words = more specific match
+        let mut best_word_count = 0usize;
         let mut best_unique: Option<String> = None;
+        let mut top3: Vec<(f32, String)> = Vec::new(); // for logging
         for (unique_name, display_name) in catalog {
             if display_name.len() < 5 { continue; }
             let s = score_item(display_name, &words);
@@ -1425,38 +1494,42 @@ pub fn extract_reward_items_twophase(
                 best_word_count = wc;
                 best_unique = Some(unique_name.clone());
             }
+            // Collect top-3 for logging (keep sorted, max 3)
+            if s > 0.0 {
+                top3.push((s, display_name.clone()));
+                top3.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                top3.truncate(3);
+            }
         }
+        let top3_str = top3.iter()
+            .map(|(s, n)| format!("{:.2} \"{}\"", s, n))
+            .collect::<Vec<_>>().join(" · ");
 
         // ── Icon-based fallback when text match is weak ──────────────────────
-        // If text gives < 67 % confidence AND we have rarity-bar positions,
-        // classify the icon and use the item name words to narrow the catalog.
+        let mut icon_log = String::new();
         if best_score < 0.67 && have_bars {
             let bar_y = _bar_y_frac;
-            // Use card center from column; left/right estimated from spacing
             let half_w = if columns.len() > 1 { 0.56 / columns.len() as f32 / 2.0 } else { 0.10 };
             let icon_type = classify_card_icon(
                 pixels, pix_w, pix_h,
                 (cx - half_w).max(0.0), (cx + half_w).min(1.0), bar_y
             );
-
             let name_words = extract_item_name_words(&words);
-
-            // Determine which component suffix the icon implies
             let component_filter: Option<&str> = match &icon_type {
                 IconType::Component(c) => Some(c),
                 IconType::Forma        => Some("forma"),
-                // Full 3D model → always "[Name] Prime Blueprint"
                 IconType::FullModel    => Some("blueprint"),
                 IconType::Unknown      => None,
             };
+            icon_log = format!("\n    Icon: text={:.2} < 0.67 → classifier={:?}{}",
+                best_score, icon_type,
+                component_filter.map(|c| format!(" suffix=\"{}\"", c)).unwrap_or_default());
 
             if let Some(comp) = component_filter {
-                // Find catalog items that contain the component keyword
-                // AND any of the partial name words
                 let comp_norm = normalise(comp);
                 let mut icon_best_score = 0.0f32;
                 let mut icon_best_unique: Option<String> = None;
-
+                let mut icon_top3: Vec<(f32, String)> = Vec::new();
                 for (unique_name, display_name) in catalog {
                     if display_name.len() < 5 { continue; }
                     let dn = normalise(display_name);
@@ -1470,24 +1543,42 @@ pub fn extract_reward_items_twophase(
                         icon_best_score = s;
                         icon_best_unique = Some(unique_name.clone());
                     }
+                    if s > 0.0 {
+                        icon_top3.push((s, display_name.clone()));
+                        icon_top3.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                        icon_top3.truncate(3);
+                    }
                 }
-                // Accept icon-based match if it found something reasonable
+                let icon_top3_str = icon_top3.iter()
+                    .map(|(s, n)| format!("{:.2} \"{}\"", s, n))
+                    .collect::<Vec<_>>().join(" · ");
+                icon_log += &format!("\n    Icon top3: {}", icon_top3_str);
                 if icon_best_score >= 0.4 {
+                    icon_log += &format!("\n    Icon accepted: {:.2} → \"{}\"",
+                        icon_best_score,
+                        icon_best_unique.as_ref().and_then(|u| catalog.iter().find(|(k,_)| k==u)).map(|(_,n)| n.as_str()).unwrap_or("?"));
                     best_score = icon_best_score;
                     best_unique = icon_best_unique;
+                } else {
+                    icon_log += "\n    Icon rejected (score < 0.40)";
                 }
             }
         }
 
-        // Log the match result for this column
+        // ── Log this column ──────────────────────────────────────────────────
         let best_display = best_unique.as_ref()
             .and_then(|u| catalog.iter().find(|(k, _)| k == u))
             .map(|(_, n)| n.as_str())
             .unwrap_or("—");
-        let col_preview: Vec<&str> = col_texts.iter().take(4).map(|s| s.trim()).collect();
+        let col_preview: Vec<&str> = col_texts.iter().map(|s| s.trim()).collect();
+        let words_str: String = {
+            let mut ws: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+            ws.sort();
+            ws.join(", ")
+        };
         col_match_log.push(format!(
-            "  Col[{}] x={:.2}: score={:.2} → \"{}\"\n    OCR: {:?}",
-            col_idx, cx, best_score, best_display, col_preview
+            "  Col[{}] x={:.2}: score={:.2} → \"{}\"\n    OCR: {:?}\n    Words: {{{}}}\n    Top3: {}{}",
+            col_idx, cx, best_score, best_display, col_preview, words_str, top3_str, icon_log
         ));
 
         // Require 0.67 for per-column. Items where only "prime"+"blueprint" match
@@ -1535,8 +1626,13 @@ pub fn extract_reward_items_twophase(
         .max(1);
 
     if items.len() < estimated_cards {
+        // Apply the same y-range filter used in column matching: exclude top-HUD
+        // lines (y < 0.10) AND lines below the rarity bars (y >= ocr_y_max).
+        // Without the bar cutoff, player names just below the bars (e.g. "HAR180::")
+        // leak into the word set and produce false item matches like "Harrow Prime Blueprint".
         let all_words = build_word_set(
             &ocr_lines.iter()
+                .filter(|(_, _, y)| *y >= 0.10 && *y < ocr_y_max)
                 .map(|(t, _, _)| t.clone())
                 .collect::<Vec<_>>()
         );
@@ -1668,6 +1764,7 @@ pub fn extract_reward_items_twophase(
          ├─ Prime/Forma: {}p + {}f + {}x = {} cards\n\
          ├─ EE hint  : {}\n\
          ├─ Expected : {} cards (from {}){}\n\
+         ├─ Raw lines:\n{}\n\
          ├─ Match    : {} — {} formed\n\
          {}\n\
          └─ Items    : {:?}",
@@ -1678,6 +1775,7 @@ pub fn extract_reward_items_twophase(
         ee_hint_str,
         estimated_cards, expected_src,
         if is_complete { " ✅ complete" } else { " ⚡ partial" },
+        raw_ocr_log,
         col_mode, columns.len(),
         col_match_log.join("\n"),
         ff_items,
@@ -1699,7 +1797,8 @@ pub fn run_windows_ocr(_bmp: Vec<u8>, _w: u32, _h: u32) -> Result<(String, Vec<(
 #[cfg(not(target_os = "windows"))]
 pub fn extract_reward_items_twophase(
     _pixels: &[u8], _w: u32, _cap_h: u32, _full_h: u32,
-    _catalog: &[(String, String)], _capture_info: &str, _hint_squad_size: Option<usize>,
+    _catalog: &[(String, String)], _capture_info: &str,
+    _hint_squad_size: Option<usize>, _player_names: &[String],
 ) -> (bool, bool, Vec<String>, Vec<f32>, String) {
     (false, false, vec![], vec![], String::new())
 }

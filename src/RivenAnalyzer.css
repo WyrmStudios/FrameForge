@@ -38,6 +38,19 @@
   margin-left: auto;
 }
 
+.riven-credit {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity .1s, color .1s;
+  white-space: nowrap;
+}
+.riven-credit:hover { opacity: 1; color: var(--accent); }
+
 .riven-check-btn {
   background: rgba(56,139,253,.15);
   border: 1px solid rgba(56,139,253,.4);

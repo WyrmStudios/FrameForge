@@ -303,6 +303,11 @@ export default function RivenAnalyzer() {
           🔍 Check Riven
         </button>
         <span className="riven-db-status">{dbStatus}</span>
+        <button
+          className="riven-credit"
+          title="Open Riven price database on Google Sheets"
+          onClick={() => invoke("plugin:opener|open_url", { url: "https://docs.google.com/spreadsheets/d/1zbaeJBuBn44cbVKzJins_E3hTDpnmvOk8heYN-G8yy8" }).catch(() => {})}
+        >data by 44bananas ↗</button>
         <button className="riven-refresh-btn" onClick={reloadDb} title="Reload database from Google Sheet">↻</button>
         <button className="riven-refresh-btn" title="View session log" onClick={async () => {
           const log = await invoke<string>("get_riven_session_log").catch(() => "Log unavailable");

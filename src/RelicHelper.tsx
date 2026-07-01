@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./HelpTip";
+import type { InventoryItem } from "./App";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,9 +40,7 @@ export const RELIC_FILTERS_DEFAULT: RelicFilters = {
 };
 
 interface Props {
-  quantities: Record<string, number>;
-  apiQuantities: Record<string, number>;
-  masteryData: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   refreshKey: number;
   colorblindMode?: boolean;
   filters: RelicFilters;
@@ -76,12 +75,14 @@ function findCatalogItemGlobal(itemName: string, nameMap: Map<string, CatalogIte
 }
 
 /** True if the blueprint is in inventory OR the built version of it is. */
-function isCatalogItemOwned(cat: CatalogItem | undefined, quantities: Record<string, number>, nameMap: Map<string, CatalogItem>): boolean {
+function isCatalogItemOwned(cat: CatalogItem | undefined, inventory: Record<string, InventoryItem>, nameMap: Map<string, CatalogItem>): boolean {
   if (!cat) return false;
-  if ((quantities[cat.unique_name] ?? 0) > 0) return true;
+  if ((inventory[cat.unique_name]?.quantity ?? 0) > 0) return true;
   if (cat.name.endsWith(" Blueprint")) {
-    const builtItem = nameMap.get(cat.name.slice(0, -" Blueprint".length).toLowerCase());
-    if (builtItem && (quantities[builtItem.unique_name] ?? 0) > 0) return true;
+    const builtName = cat.name.slice(0, -" Blueprint".length);
+    if ((inventory[builtName]?.quantity ?? 0) > 0) return true;
+    const builtItem = nameMap.get(builtName.toLowerCase());
+    if (builtItem && (inventory[builtItem.unique_name]?.quantity ?? 0) > 0) return true;
   }
   return false;
 }
@@ -193,10 +194,10 @@ function RewardBox({ reward, imageSrcs, isOwned, isComplete, isHighlighted, colo
 const REFINEMENT_SUFFIXES_CARD = ["intact", "exceptional", "flawless", "radiant"];
 const REFINEMENT_LABELS_CARD   = ["Intact", "Except.", "Flawless", "Radiant"];
 
-function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, searchQ, nameMap, colorblindMode }: {
+function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchQ, nameMap, colorblindMode }: {
   drop: RelicDrop;
   catalogRelicByName: Map<string, CatalogItem>;
-  quantities: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   ownedPrimeNames: Set<string>;
   searchQ: string;
   nameMap: Map<string, CatalogItem>;
@@ -207,7 +208,7 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
   // Per-refinement counts using catalog
   const refCounts = REFINEMENT_SUFFIXES_CARD.map((ref, i) => {
     const cat = catalogRelicByName.get(`${baseLower} ${ref}`);
-    return { label: REFINEMENT_LABELS_CARD[i], count: cat ? (quantities[cat.unique_name] ?? 0) : 0 };
+    return { label: REFINEMENT_LABELS_CARD[i], count: cat ? (inventory[cat.unique_name]?.quantity ?? 0) : 0 };
   });
   const total = refCounts.reduce((s, r) => s + r.count, 0);
 
@@ -252,11 +253,11 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
   const safeRewards = drop.rewards.filter(r => r?.itemName);
   const allComplete = safeRewards.length > 0 && safeRewards.every(r => {
     const cat = findCatalogItem(r.itemName);
-    const isOwned = isCatalogItemOwned(cat, quantities, nameMap);
+    const isOwned = isCatalogItemOwned(cat, inventory, nameMap);
     const p = extractPrimeName(r.itemName);
     const pItem = p ? nameMap.get(p.toLowerCase()) : undefined;
     const isComplete = pItem
-      ? (quantities[pItem.unique_name] ?? 0) > 0
+      ? (inventory[pItem.unique_name]?.quantity ?? 0) > 0
       : (p ? ownedPrimeNames.has(p.toLowerCase()) : false);
     return isOwned || isComplete;
   });
@@ -296,9 +297,8 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
               <span className="relic-rbox-name">—</span>
             </div>
           );
-          // Ownership: unique_name lookup is exact and reliable (same as inventory)
           const catalogItem = findCatalogItem(r.itemName);
-          const isOwned = isCatalogItemOwned(catalogItem, quantities, nameMap);
+          const isOwned = isCatalogItemOwned(catalogItem, inventory, nameMap);
           // Build list of image URLs to try in order (PartImg tries each, moves to next on 404)
           const imageItem = catalogItem?.image_name ? catalogItem : findCatalogItem(r.itemName);
           const primeName = extractPrimeName(r.itemName); // e.g. "Yareli Prime"
@@ -323,13 +323,14 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
             `https://cdn.warframestat.us/img/${r.itemName.replace(/^\d+[xX]\s*/, "").replace(" Blueprint", "").replace(/\s+/g, "")}.png`,
           ];
           // Gold: the complete parent prime item is built and in inventory
-          // Gold: look up the parent prime item by name in the catalog, then check quantities
-          // e.g. "Burston Prime Barrel" → find "Burston Prime" in nameMap → check quantities
+          // "Burston Prime Barrel" → find "Burston Prime" → check inventory by name
           const parentName = extractPrimeName(r.itemName);
           const parentItem = parentName ? nameMap.get(parentName.toLowerCase()) : undefined;
-          const isComplete = parentItem
-            ? (quantities[parentItem.unique_name] ?? 0) > 0
-            : (parentName ? ownedPrimeNames.has(parentName.toLowerCase()) : false);
+          const isComplete = parentName
+            ? (inventory[parentName]?.quantity ?? 0) > 0 ||
+              (parentItem ? (inventory[parentItem.unique_name]?.quantity ?? 0) > 0 : false) ||
+              ownedPrimeNames.has(parentName.toLowerCase())
+            : false;
           return (
             <RewardBox
               key={i}
@@ -349,7 +350,7 @@ function RelicCard({ drop, catalogRelicByName, quantities, ownedPrimeNames, sear
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function RelicHelper({ quantities, apiQuantities, refreshKey, colorblindMode = false, filters, onFiltersChange }: Props) {
+export default function RelicHelper({ inventory, refreshKey, colorblindMode = false, filters, onFiltersChange }: Props) {
   const [allItems,    setAllItems]    = useState<CatalogItem[]>([]);
   const [drops,       setDrops]       = useState<RelicDrop[]>([]);
   const [dropLoading, setDropLoading] = useState(false);
@@ -404,33 +405,16 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
     return m;
   }, [allItems]);
 
-  const catalogByUnique = useMemo(() =>
-    new Map(allItems.map(i => [i.unique_name, i])),
-  [allItems]);
 
   const ownedPrimeNames = useMemo(() => {
     const s = new Set<string>();
-    for (const [u, qty] of Object.entries(apiQuantities)) {
-      if (qty <= 0) continue;
-
-      // Method 1: catalog lookup (most accurate when paths match)
-      const item = catalogByUnique.get(u);
-      if (item?.name?.includes("Prime")) {
-        s.add(item.name.toLowerCase());
-        continue;
-      }
-
-      // Method 2: derive from unique_name path segment using PascalCase splitting
-      // e.g. "/Lotus/Weapons/.../BurstonPrime" → "burston prime"
-      const seg = u.split("/").pop() ?? "";
-      if (seg.includes("Prime")) {
-        const spaced = seg.replace(/([A-Z])/g, " $1").trim().toLowerCase();
-        const idx = spaced.indexOf("prime");
-        if (idx >= 0) s.add(spaced.slice(0, idx + "prime".length).trim());
-      }
+    for (const [key, entry] of Object.entries(inventory)) {
+      if (entry.quantity <= 0) continue;
+      // Only process name-keyed entries (path aliases start with "/")
+      if (!key.startsWith("/") && key.includes("Prime")) s.add(key.toLowerCase());
     }
     return s;
-  }, [apiQuantities, catalogByUnique]);
+  }, [inventory]);
 
   // Catalog stores per-refinement: "Meso V13 Intact", "Meso V13 Exceptional", "Meso V13 Flawless", "Meso V13 Radiant"
   const REFINEMENT_SUFFIXES = ["intact", "exceptional", "flawless", "radiant"];
@@ -440,9 +424,9 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
     const base = drop.fullName.toLowerCase();
     return REFINEMENT_SUFFIXES.reduce((sum, ref) => {
       const cat = catalogRelicByName.get(`${base} ${ref}`);
-      return sum + (cat ? (quantities[cat.unique_name] ?? 0) : 0);
+      return sum + (cat ? (inventory[cat.unique_name]?.quantity ?? 0) : 0);
     }, 0);
-  }, [catalogRelicByName, quantities]);
+  }, [catalogRelicByName, inventory]);
 
   const searchQ = search.toLowerCase();
 
@@ -472,8 +456,9 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
       const allDone = d.rewards.length > 0 && d.rewards.every(r => {
         const cat = findCatalogItemGlobal(r.itemName, nameMap);
         const p = extractPrimeName(r.itemName);
-        return isCatalogItemOwned(cat, quantities, nameMap)
-          || (p ? ownedPrimeNames.has(p.toLowerCase()) : false);
+        return isCatalogItemOwned(cat, inventory, nameMap)
+          || (p ? ownedPrimeNames.has(p.toLowerCase()) : false)
+          || (p ? (inventory[p]?.quantity ?? 0) > 0 : false);
       });
       return completion.includes("complete") ? allDone : !allDone;
     })
@@ -491,7 +476,7 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
       if (sortMode === "za") return (b.fullName ?? "").localeCompare(a.fullName ?? "");
       return (a.fullName ?? "").localeCompare(b.fullName ?? ""); // az + plat fallback
     }),
-  [drops, searchQ, tiers, ownership, vault, completion, sortMode, getTotal, catalogRelicByName, nameMap, quantities, ownedPrimeNames]);
+  [drops, searchQ, tiers, ownership, vault, completion, sortMode, getTotal, catalogRelicByName, nameMap, inventory, ownedPrimeNames]);
 
   const ownedCount = useMemo(() =>
     drops.filter(d => getTotal(d) > 0).length,
@@ -574,7 +559,7 @@ export default function RelicHelper({ quantities, apiQuantities, refreshKey, col
             key={drop.fullName}
             drop={drop}
             catalogRelicByName={catalogRelicByName}
-            quantities={quantities}
+            inventory={inventory}
             ownedPrimeNames={ownedPrimeNames}
             searchQ={searchQ}
             nameMap={nameMap}

@@ -34,6 +34,16 @@ pub struct PendingRecipe {
     pub completion_ms: i64,
 }
 
+/// One Archon Shard socketed into a Warframe.
+/// One Archon Shard socketed into a Warframe.
+/// `upgrade_type` is the effect path (e.g. `.../ArchonCrystalUpgradeWarframeEnergyMax`).
+/// `color` is the raw string value from the JSON (e.g. `"ACC_CRIMSON"`, `"ACC_AZURE_TAUFORGED"`).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ArchonShard {
+    pub upgrade_type: String,
+    pub color: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct ScanResult {
     pub warframe_running: bool,
@@ -43,6 +53,9 @@ pub struct ScanResult {
     /// unique_name → rank (0–30). Only populated for owned unique items.
     pub mastery_data: HashMap<String, u32>,
     pub regions_scanned: usize,
+    /// True when any chunk in this scan window contained `"Created":{"$date":` —
+    /// the actual account inventory root, not a mission-delta or NPC blob.
+    pub found_actual_inventory: bool,
     pub error: Option<String>,
     pub log_lines: Vec<String>,
     /// 4 item paths when the relic reward screen is active, None otherwise.
@@ -53,11 +66,25 @@ pub struct ScanResult {
     /// Chunk base addresses where the inventory root ("MiscItems":[{) was found.
     /// Pass these back as hint_addrs on the next call for near-instant re-scan.
     pub hot_addrs: Vec<usize>,
+    /// Chunk base addresses where gameplay mods (/Lotus/Upgrades/Mods/) were found outside
+    /// the MiscItems chunk. Pass these back as mod_hint_addrs for fast re-scan.
+    pub mod_hot_addrs: Vec<usize>,
     /// Warframe unique-name paths found in InfestedFoundry.ConsumedSuits (Helminth subsumed).
     pub consumed_suits: Vec<String>,
     /// Mod/arcane counts from RawUpgrades: unique_name → {total, by_rank}.
-    /// Only populated for chunks that contain the inventory root (MiscItems anchor).
     pub mods_found: HashMap<String, ModCount>,
+    /// Mods found specifically in the hint (inventory-root) and mod-hint regions this pass.
+    /// Committed directly to known_mods — hint regions are live inventory memory.
+    pub hint_mods: HashMap<String, ModCount>,
+    /// Resource counts found specifically in the inventory-root hint region (from MiscItems).
+    /// Used for fast-commit of count changes; absent-means-sold only for hint_confirmed paths.
+    pub hint_resources: HashMap<String, i64>,
+    /// Paths found in FlavourItems (glyphs, titles, emotes, colour palettes) this hint scan.
+    /// Binary-owned items with no stale copies — absence means truly sold/removed.
+    pub hint_flavour_items: Vec<String>,
+    /// Warframe unique-name → socketed Archon Shards.
+    /// Only populated for warframes where ArchonCrystalUpgrades was found in memory.
+    pub socketed_shards: HashMap<String, Vec<ArchonShard>>,
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -102,6 +129,20 @@ fn digits_end(data: &[u8], start: usize) -> usize {
     i
 }
 
+/// Convert raw affinity XP to item rank (0–30).
+/// Formula from Warframe wiki: cumulative XP to reach rank N is 1000×N² for
+/// Warframes/Sentinels/companions, 500×N² for all weapon types.
+/// Invert: rank = floor(sqrt(xp / base)).
+fn xp_to_rank(xp: i64, path: &str) -> u32 {
+    let base = if path.contains("/Powersuits/")
+        || path.contains("/SentinelPowersuits/")
+        || path.contains("/Types/Friendly/")
+        || path.contains("/Types/Game/KubrowPet/")
+        || path.contains("/Types/Game/CatbrowPet/")
+    { 1000.0f64 } else { 500.0f64 };
+    ((xp as f64 / base).sqrt().floor() as u32).min(30)
+}
+
 // ─── Scanner 1: Resources ─────────────────────────────────────────────────────
 //
 // Real MiscItems inventory entries are always {"ItemCount":N,"ItemType":"/Lotus/..."}
@@ -111,6 +152,97 @@ fn digits_end(data: &[u8], start: usize) -> usize {
 // wrapped in brackets. Requiring strict adjacency eliminates cross-matches where
 // an ItemCount from one JSON object accidentally pairs with an ItemType from a
 // different nearby object (which caused Fieldron to flip between 1 and 3).
+
+/// Scans for top-level currency fields that share the MiscItems JSON object.
+/// Returns (virtual_path, amount) pairs for any found.
+fn scan_currency_fields(data: &[u8]) -> Vec<(&'static str, i64)> {
+    const FIELDS: &[(&[u8], &str)] = &[
+        (b"\"FusionPoints\":",       "/_currency/Endo"),
+        (b"\"RegularCredits\":",     "/_currency/Credits"),
+        (b"\"PremiumCredits\":",     "/_currency/Platinum"),
+        (b"\"PremiumCreditsFree\":", "/_currency/PlatinumGift"),
+    ];
+    let mut out = Vec::new();
+    for &(marker, path) in FIELDS {
+        // Scan all occurrences and take the maximum value. The 1.5 MB hint read spans
+        // multiple VirtualAlloc regions; a small delta blob earlier in the buffer can
+        // have a stale lower value (e.g. FusionPoints:160) while the authoritative
+        // account inventory later in the buffer has the real value (e.g. 123955).
+        let mut max_val: i64 = 0;
+        let mut pos = 0usize;
+        while pos + marker.len() <= data.len() {
+            match data[pos..].windows(marker.len()).position(|w| w == marker) {
+                None => break,
+                Some(rel) => {
+                    let abs = pos + rel;
+                    let after = &data[abs + marker.len()..];
+                    let end = after.iter().position(|&b| !b.is_ascii_digit()).unwrap_or(after.len());
+                    if end > 0 {
+                        if let Ok(s) = std::str::from_utf8(&after[..end]) {
+                            if let Ok(n) = s.parse::<i64>() {
+                                if n > max_val { max_val = n; }
+                            }
+                        }
+                    }
+                    pos = abs + marker.len() + 1;
+                }
+            }
+        }
+        if max_val > 0 { out.push((path, max_val)); }
+    }
+    out
+}
+
+/// Extracts all ItemType paths from `"FlavourItems":[...]`.
+/// FlavourItems are binary-owned cosmetics (glyphs, titles, emotes, color palettes) —
+/// no ItemCount, presence means owned (qty = 1).
+fn scan_flavour_items(data: &[u8]) -> Vec<String> {
+    const MARKER: &[u8] = b"\"FlavourItems\":[";
+    const ITEM_TYPE_KEY: &[u8] = b"\"ItemType\":\"";
+
+    let Some(start) = data.windows(MARKER.len()).position(|w| w == MARKER) else {
+        return Vec::new();
+    };
+    let array_start = start + MARKER.len() - 1; // position of the opening '['
+
+    // Find the matching ']' using bracket depth (FlavourItems has no nested arrays).
+    let mut depth = 0i32;
+    let mut array_end = data.len();
+    for (i, &b) in data[array_start..].iter().enumerate() {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    array_end = array_start + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let slice = &data[array_start..array_end];
+    let mut result = Vec::new();
+    let mut pos = 0;
+    while pos + ITEM_TYPE_KEY.len() < slice.len() {
+        let Some(rel) = slice[pos..].windows(ITEM_TYPE_KEY.len()).position(|w| w == ITEM_TYPE_KEY) else {
+            break;
+        };
+        let val_start = pos + rel + ITEM_TYPE_KEY.len();
+        if val_start >= slice.len() { break; }
+        let Some(end) = slice[val_start..].iter().position(|&b| b == b'"') else {
+            break;
+        };
+        if let Ok(path) = std::str::from_utf8(&slice[val_start..val_start + end]) {
+            if path.starts_with("/Lotus/") {
+                result.push(path.to_string());
+            }
+        }
+        pos = val_start + end + 1;
+    }
+    result
+}
 
 fn scan_inventory_resources(data: &[u8], unique_paths: &std::collections::HashSet<String>) -> Vec<(String, i64, String)> {
     let count_key = b"\"ItemCount\":";
@@ -205,11 +337,15 @@ fn scan_inventory_resources(data: &[u8], unique_paths: &std::collections::HashSe
                 });
                 entry.0 += qty;
             } else {
-                // Keep the FIRST occurrence (lowest address). The real inventory JSON is always
-                // at lower addresses than any injected companion-tool data, so first-wins is correct.
-                results.entry(path).or_insert_with(|| {
+                // Keep the MAX quantity across all occurrences. The 1.5 MB hint read spans
+                // multiple VirtualAlloc regions and may contain several MiscItems blocks
+                // (e.g. a small loadout-delta block before the full account inventory block).
+                // The authoritative account block always has the highest counts, so max-wins
+                // is more reliable than first-wins for cross-region reads.
+                let entry = results.entry(path).or_insert_with(|| {
                     (qty, extract_context(data, count_pos, 300, 200))
                 });
+                if qty > entry.0 { entry.0 = qty; }
             }
         }
 
@@ -221,151 +357,316 @@ fn scan_inventory_resources(data: &[u8], unique_paths: &std::collections::HashSe
 
 // ─── Scanner 1b: Mods / Arcanes ──────────────────────────────────────────────
 //
-// RawUpgrades entries in memory have the format:
-//   {"ItemCount":N,"LastAdded":{"$oid":"..."},"ItemType":"/Lotus/Upgrades/..."}
-// ItemCount comes BEFORE ItemType with a nested LastAdded object in between —
-// strict-adjacency matching fails here. Instead, find ItemType then walk
-// backwards with brace-depth tracking to locate ItemCount in the same object.
-// Entries with a single copy omit ItemCount entirely (implicit qty = 1).
+// Searches the entire region for "ItemType":"/Lotus/Upgrades/" entries without
+// requiring a specific enclosing array name. DE previously used "RawUpgrades"
+// as the array header but that field no longer appears in memory.
+//
+// Each mod/arcane entry looks like:
+//   {"ItemCount":N,"ItemType":"/Lotus/Upgrades/...","ItemLevel":R}
+// ItemCount is found by walking backwards from ItemType (brace-depth tracking).
+// ItemLevel (rank) is found by scanning forward from ItemType to the closing '}'.
+// Entries without ItemCount default to qty=1. Entries without ItemLevel are rank 0.
+//
+// Delta blobs (InventoryChanges) are filtered by a 200-byte lookback for
+// "InventoryChanges". Stale heap data is rejected by has_clean_prefix.
 
 fn scan_inventory_mods(data: &[u8]) -> Vec<(String, ModCount, String)> {
-    const RAW_KEY:   &[u8] = b"\"RawUpgrades\":[";
     const TYPE_KEY:  &[u8] = b"\"ItemType\":\"";
     const COUNT_KEY: &[u8] = b"\"ItemCount\":";
     const LEVEL_KEY: &[u8] = b"\"ItemLevel\":";
     const MOD_PFX:   &[u8] = b"/Lotus/Upgrades/";
-
-    let mut results: HashMap<String, (ModCount, String)> = HashMap::new();
-    let mut outer = 0usize;
-
     const INV_CHANGES_KEY: &[u8] = b"\"InventoryChanges\"";
 
-    'outer: loop {
-        let rel = match data[outer..].windows(RAW_KEY.len()).position(|w| w == RAW_KEY) {
+    let mut results: HashMap<String, (ModCount, String)> = HashMap::new();
+    let mut pos = 0usize;
+
+    loop {
+        // Find the next "ItemType":"/Lotus/Upgrades/" hit anywhere in the region.
+        let type_rel = match data[pos..].windows(TYPE_KEY.len()).position(|w| w == TYPE_KEY) {
             Some(p) => p,
             None => break,
         };
-        let raw_match_pos = outer + rel;
-        let section_start = raw_match_pos + RAW_KEY.len();
-        outer = section_start;
+        let type_abs = pos + type_rel;
+        let path_start = type_abs + TYPE_KEY.len();
 
-        // Skip RawUpgrades arrays that belong to an InventoryChanges delta record.
-        // Those blobs hold the per-mission delta (qty=1 for "you picked this up"),
-        // not the authoritative total. They always appear as:
-        //   "InventoryChanges":{"RawUpgrades":[...]}
-        // so "InventoryChanges" will be within ~200 bytes before this match.
-        let look_back = raw_match_pos.saturating_sub(200);
-        if data[look_back..raw_match_pos].windows(INV_CHANGES_KEY.len()).any(|w| w == INV_CHANGES_KEY) {
+        if data.len() < path_start + MOD_PFX.len()
+            || &data[path_start..path_start + MOD_PFX.len()] != MOD_PFX
+        {
+            pos = type_abs + 1;
             continue;
         }
 
-        // 2 MB cap — accounts with thousands of mods need more room than 256 KB
-        let section_end = (section_start + 2 * 1024 * 1024).min(data.len());
-        let section = &data[section_start..section_end];
+        let path_end = match data[path_start..].iter().take(512).position(|&b| b == b'"') {
+            Some(e) => path_start + e,
+            None => { pos = type_abs + 1; continue; }
+        };
 
-        let mut pos = 0usize;
-        loop {
-            let type_rel = match section[pos..].windows(TYPE_KEY.len()).position(|w| w == TYPE_KEY) {
-                Some(p) => p,
-                None => continue 'outer,
-            };
-            let path_start = pos + type_rel + TYPE_KEY.len();
+        let path = match valid_lotus_path(&data[path_start..path_end]) {
+            Some(p) => p,
+            None => { pos = type_abs + 1; continue; }
+        };
 
-            if section.len() < path_start + MOD_PFX.len()
-                || &section[path_start..path_start + MOD_PFX.len()] != MOD_PFX
-            {
-                pos = pos + type_rel + 1;
-                continue;
+        // Filter InventoryChanges delta entries — these carry per-mission deltas,
+        // not authoritative totals. They appear with "InventoryChanges" within 200 bytes.
+        let look_back = type_abs.saturating_sub(200);
+        if data[look_back..type_abs].windows(INV_CHANGES_KEY.len()).any(|w| w == INV_CHANGES_KEY) {
+            pos = path_end + 1;
+            continue;
+        }
+
+        // Reject stale heap data — live JSON is clean ASCII.
+        if !has_clean_prefix(data, type_abs, 300) {
+            pos = path_end + 1;
+            continue;
+        }
+
+        // Walk backwards from "ItemType" to find "ItemCount" in this object.
+        // Track whether ItemCount was explicitly present: cosmetics in MiscItems have an
+        // explicit ItemCount (single canonical value — use MAX to deduplicate stale blobs).
+        // RawUpgrades mod entries have no ItemCount — each occurrence is a distinct copy,
+        // so we use SUM to get the true per-rank count.
+        let (qty, has_explicit_count) = {
+            let search_start = type_abs.saturating_sub(512);
+            let before = &data[search_start..type_abs];
+            let mut qty_val = 1i64;
+            let mut found = false;
+            let mut depth: i32 = 0;
+            let mut idx = before.len();
+            while idx > 0 {
+                idx -= 1;
+                match before[idx] {
+                    b'}' => depth += 1,
+                    b'{' => {
+                        if depth == 0 { break; }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+                if depth == 0
+                    && idx + COUNT_KEY.len() <= before.len()
+                    && &before[idx..idx + COUNT_KEY.len()] == COUNT_KEY
+                {
+                    let num_start = search_start + idx + COUNT_KEY.len();
+                    if num_start < data.len() && data[num_start].is_ascii_digit() {
+                        qty_val = parse_int(data, num_start).unwrap_or(1).max(1);
+                        found = true;
+                    }
+                    break;
+                }
+            }
+            (qty_val, found)
+        };
+
+        // Find rank: check BEFORE and AFTER ItemType for UpgradeFingerprint.
+        //
+        // New format: {"UpgradeFingerprint":"{\"lvl\":N}","ItemType":"...","ItemId":{...}}
+        //   → FP comes BEFORE ItemType; forward scan from path_end misses it entirely.
+        //
+        // Old/MiscItems format: {"ItemType":"...","UpgradeFingerprint":"{\"lvl\":N}",...}
+        //   → FP comes AFTER ItemType.
+        //
+        // Legacy fallback: "ItemLevel":N
+        let rank: u8 = {
+            const FP_STR_KEY:    &[u8] = b"\"UpgradeFingerprint\":\"";
+            const FP_OBJ_KEY:    &[u8] = b"\"UpgradeFingerprint\":{";
+            // \"lvl\": as raw bytes in escaped fingerprint string value.
+            const LVL_ESCAPED:   &[u8] = b"\\\"lvl\\\":";
+            // "lvl": as raw bytes in inline object or unescaped context.
+            const LVL_UNESCAPED: &[u8] = b"\"lvl\":";
+
+            // Helper: extract rank from a fingerprint string starting at fp_start in buf,
+            // where inner quotes are backslash-escaped.
+            fn rank_from_fp_str(buf: &[u8], fp_start: usize, base_abs: usize, data: &[u8]) -> u8 {
+                // Walk forward, skipping \X pairs, to find the real closing '"'.
+                let mut i = fp_start;
+                let mut fp_end = fp_start;
+                while i < buf.len() {
+                    if buf[i] == b'\\' { i += 2; continue; }
+                    if buf[i] == b'"' { fp_end = i; break; }
+                    i += 1;
+                }
+                let fp_bytes = &buf[fp_start..fp_end];
+                if let Some(lvl_rel) = fp_bytes.windows(LVL_ESCAPED.len()).position(|w| w == LVL_ESCAPED) {
+                    let num_abs = base_abs + fp_start + lvl_rel + LVL_ESCAPED.len();
+                    parse_int(data, num_abs).unwrap_or(0).min(255) as u8
+                } else { 0 }
             }
 
-            let path_end = match section[path_start..].iter().take(512).position(|&b| b == b'"') {
-                Some(e) => path_start + e,
-                None => continue 'outer,
-            };
-
-            let path = match valid_lotus_path(&section[path_start..path_end]) {
-                Some(p) => p,
-                None => { pos = pos + type_rel + 1; continue; }
-            };
-
-            // Walk backwards from "ItemType" to find "ItemCount": in this object.
-            // Track brace depth so we stop at the '{' that opens the current entry.
-            let qty = {
-                let search_end = pos + type_rel;
-                let search_start_pos = search_end.saturating_sub(512);
-                let before = &section[search_start_pos..search_end];
-                let mut qty_val = 1i64;
-                let mut depth: i32 = 0;
-                let mut idx = before.len();
-                while idx > 0 {
-                    idx -= 1;
-                    match before[idx] {
-                        b'}' => depth += 1,
-                        b'{' => {
-                            if depth == 0 {
-                                // Reached opening '{' of this entry — no explicit ItemCount
-                                break;
-                            }
-                            depth -= 1;
-                        }
-                        _ => {}
-                    }
-                    if depth == 0
-                        && idx + COUNT_KEY.len() <= before.len()
-                        && &before[idx..idx + COUNT_KEY.len()] == COUNT_KEY
-                    {
-                        let num_start = search_start_pos + idx + COUNT_KEY.len();
-                        if num_start < section.len() && section[num_start].is_ascii_digit() {
-                            qty_val = parse_int(section, num_start).unwrap_or(1).max(1);
-                        }
-                        break;
-                    }
+            // ── Backward search: FP before ItemType (new RawUpgrades format) ──
+            // Search within 96 bytes before type_abs; take the RIGHTMOST match
+            // (closest to ItemType = belonging to this entry, not the previous one).
+            let rank_before = {
+                let bstart = type_abs.saturating_sub(96);
+                let before = &data[bstart..type_abs];
+                let fp_rel_opt = before.windows(FP_STR_KEY.len())
+                    .enumerate().rev()
+                    .find_map(|(i, w)| if w == FP_STR_KEY { Some(i) } else { None });
+                if let Some(fp_rel) = fp_rel_opt {
+                    let fp_start_in_before = fp_rel + FP_STR_KEY.len();
+                    rank_from_fp_str(before, fp_start_in_before, bstart, data)
+                } else {
+                    // Also try inline-object form before ItemType.
+                    let fp_obj_rel = before.windows(FP_OBJ_KEY.len())
+                        .enumerate().rev()
+                        .find_map(|(i, w)| if w == FP_OBJ_KEY { Some(i) } else { None });
+                    if let Some(rel) = fp_obj_rel {
+                        let content_start = bstart + rel + FP_OBJ_KEY.len() - 1;
+                        let end = content_start.min(type_abs);
+                        if let Some(lvl_rel) = data[content_start..end].windows(LVL_UNESCAPED.len()).position(|w| w == LVL_UNESCAPED) {
+                            let num_abs = content_start + lvl_rel + LVL_UNESCAPED.len();
+                            parse_int(data, num_abs).unwrap_or(0).min(255) as u8
+                        } else { 0 }
+                    } else { 0 }
                 }
-                qty_val
             };
 
-            // Extract ItemLevel (rank) — appears after ItemType in the JSON entry.
-            // Search forward from path_end up to the entry's closing }.
-            let rank: u8 = {
+            // ── Forward search: FP after ItemType (old/MiscItems format) ──
+            let rank_after = if rank_before == 0 {
                 let forward_start = path_end + 1;
-                let forward_end = (forward_start + 256).min(section.len());
-                let after = &section[forward_start..forward_end];
-                // Find the closing } of this entry at brace depth 0
+                let forward_end = (forward_start + 256).min(data.len());
+                let after = &data[forward_start..forward_end];
                 let entry_close = {
                     let mut depth = 0i32;
                     let mut close = after.len();
                     for (i, &b) in after.iter().enumerate() {
-                        match b {
-                            b'{' => depth += 1,
-                            b'}' => {
-                                if depth == 0 { close = i; break; }
-                                depth -= 1;
-                            }
-                            _ => {}
-                        }
+                        match b { b'{' => depth += 1, b'}' => { if depth == 0 { close = i; break; } depth -= 1; } _ => {} }
                     }
                     close
                 };
                 let entry_slice = &after[..entry_close];
-                if let Some(rel) = entry_slice.windows(LEVEL_KEY.len()).position(|w| w == LEVEL_KEY) {
+                if let Some(fp_rel) = entry_slice.windows(FP_STR_KEY.len()).position(|w| w == FP_STR_KEY) {
+                    rank_from_fp_str(entry_slice, fp_rel + FP_STR_KEY.len(), forward_start, data)
+                } else if let Some(fp_rel) = entry_slice.windows(FP_OBJ_KEY.len()).position(|w| w == FP_OBJ_KEY) {
+                    let cs = fp_rel + FP_OBJ_KEY.len() - 1;
+                    if let Some(lvl_rel) = entry_slice[cs..].windows(LVL_UNESCAPED.len()).position(|w| w == LVL_UNESCAPED) {
+                        let num_abs = forward_start + cs + lvl_rel + LVL_UNESCAPED.len();
+                        parse_int(data, num_abs).unwrap_or(0).min(255) as u8
+                    } else { 0 }
+                } else if let Some(rel) = entry_slice.windows(LEVEL_KEY.len()).position(|w| w == LEVEL_KEY) {
                     let num_start = forward_start + rel + LEVEL_KEY.len();
-                    parse_int(section, num_start).unwrap_or(0).min(255) as u8
-                } else {
-                    0
-                }
-            };
+                    parse_int(data, num_start).unwrap_or(0).min(255) as u8
+                } else { 0 }
+            } else { 0 };
 
-            // Accumulate — same path can appear multiple times (different rank copies)
-            let entry = results.entry(path.clone()).or_insert_with(|| {
-                (ModCount::default(), extract_context(data, section_start + pos + type_rel, 300, 200))
-            });
-            entry.0.total += qty;
-            *entry.0.by_rank.entry(rank).or_insert(0) += qty;
-            pos = path_end + 1;
+            rank_before.max(rank_after)
+        };
+
+        // Accumulate per rank.
+        // MiscItems entries (explicit ItemCount): use MAX to deduplicate stale heap blobs.
+        // RawUpgrades entries (no ItemCount, qty=1): use SUM — each occurrence is one copy.
+        let entry = results.entry(path.clone()).or_insert_with(|| {
+            (ModCount::default(), extract_context(data, type_abs, 300, 200))
+        });
+        let rank_cnt = entry.0.by_rank.entry(rank).or_insert(0);
+        if has_explicit_count {
+            *rank_cnt = (*rank_cnt).max(qty);
+        } else {
+            *rank_cnt += qty;
         }
+        pos = path_end + 1;
+    }
+
+    // Recompute totals from by_rank (max-per-rank values set above).
+    for (_, (mc, _)) in &mut results {
+        mc.total = mc.by_rank.values().sum();
     }
 
     results.into_iter().map(|(k, (mc, c))| (k, mc, c)).collect()
+}
+
+// ─── Archon Shard extractor ───────────────────────────────────────────────────
+//
+// Reads ArchonCrystalUpgrades from a warframe's JSON entry in memory.
+// Called from scan_inventory_unique for every validated warframe hit.
+// Returns an empty Vec when no shards are socketed or the field is absent.
+
+/// Returns `(shards, diag)`.  `diag` is non-empty on the first successful find
+/// and contains the raw printable ASCII of the first 300 bytes of the array —
+/// used to diagnose the actual Color field format when colors come back empty.
+fn extract_archon_shards(data: &[u8], search_start: usize, search_end: usize) -> (Vec<ArchonShard>, String) {
+    const SHARD_KEY:   &[u8] = b"\"ArchonCrystalUpgrades\":[";
+    const UPGRADE_KEY: &[u8] = b"\"UpgradeType\":\"";
+
+    let end = search_end.min(data.len());
+    if search_start >= end { return (vec![], String::new()); }
+
+    // Locate the ArchonCrystalUpgrades array.
+    let rel = match data[search_start..end].windows(SHARD_KEY.len()).position(|w| w == SHARD_KEY) {
+        Some(r) => r,
+        None => return (vec![], String::new()),
+    };
+    let array_start = search_start + rel + SHARD_KEY.len();
+
+    // Capture the first 300 printable bytes of the array for diagnostics.
+    let diag: String = {
+        let diag_end = (array_start + 300).min(end);
+        data[array_start..diag_end].iter()
+            .map(|&b| if b >= 0x20 && b < 0x7f { b as char } else { '·' })
+            .collect()
+    };
+
+    // Find the matching closing ] (depth-tracked to skip nested arrays).
+    let array_end = {
+        let mut depth = 1i32;
+        let mut found = end; // fallback: scan to limit
+        for (i, &b) in data[array_start..end].iter().enumerate() {
+            match b {
+                b'[' => depth += 1,
+                b']' => { depth -= 1; if depth == 0 { found = array_start + i; break; } }
+                _ => {}
+            }
+        }
+        found
+    };
+
+    // Color field keys — try quoted string first, fall back to integer.
+    // Scope: only within the current entry ({...}).  Find the entry's } boundary,
+    // then search Color within [entry_open, entry_close].
+    const COLOR_STR: &[u8] = b"\"Color\":\"";   // "Color":"ACC_CRIMSON"
+    const COLOR_INT: &[u8] = b"\"Color\":";      // "Color":0
+
+    // Parse each {"UpgradeType":"...", "Color":...} entry within the array.
+    let mut shards = Vec::new();
+    let mut pos = array_start;
+    loop {
+        if pos >= array_end { break; }
+        let Some(ur) = data[pos..array_end].windows(UPGRADE_KEY.len()).position(|w| w == UPGRADE_KEY) else { break };
+        let path_start = pos + ur + UPGRADE_KEY.len();
+        let Some(pend_rel) = data[path_start..array_end].iter().position(|&b| b == b'"') else { break };
+        let path_end = path_start + pend_rel;
+
+        if let Some(upgrade_type) = valid_lotus_path(&data[path_start..path_end]) {
+            // Find the object boundaries of the current entry so Color search stays scoped.
+            // entry_open: last { before the UpgradeType key start.
+            let entry_open = data[pos..(pos + ur)].iter().rposition(|&b| b == b'{')
+                .map(|r| pos + r + 1)
+                .unwrap_or(pos);
+            // entry_close: first } at depth 0 after entry_open.
+            let entry_close = {
+                let mut d = 1i32;
+                let mut found = array_end;
+                for (i, &b) in data[entry_open..array_end].iter().enumerate() {
+                    match b { b'{' => d += 1, b'}' => { d -= 1; if d == 0 { found = entry_open + i; break; } } _ => {} }
+                }
+                found
+            };
+
+            let color = if let Some(cr) = data[entry_open..entry_close].windows(COLOR_STR.len()).position(|w| w == COLOR_STR) {
+                let vs = entry_open + cr + COLOR_STR.len();
+                let ve = data[vs..entry_close].iter().position(|&b| b == b'"').map(|e| vs + e).unwrap_or(vs);
+                std::str::from_utf8(&data[vs..ve]).unwrap_or("").to_string()
+            } else if let Some(cr) = data[entry_open..entry_close].windows(COLOR_INT.len()).position(|w| w == COLOR_INT) {
+                parse_int(data, entry_open + cr + COLOR_INT.len())
+                    .map(|n| n.to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            shards.push(ArchonShard { upgrade_type, color });
+        }
+        pos = path_end + 1;
+    }
+    (shards, diag)
 }
 
 // ─── Scanner 2: Unique items (warframes / weapons / companions) ───────────────
@@ -379,10 +680,9 @@ fn scan_inventory_mods(data: &[u8]) -> Vec<(String, ModCount, String)> {
 //
 // `ac` must be built once before the per-region loop.
 
-/// Returns (pattern_idx, rank) — rank is Some(N) if "Rank":N found near the item.
-fn scan_inventory_unique(data: &[u8], ac: &aho_corasick::AhoCorasick) -> Vec<(usize, Option<u32>)> {
-    let _rank_key = b"\"Rank\":";
-    let mut hits: Vec<(usize, Option<u32>)> = Vec::new();
+/// Returns (pattern_idx, rank, shards).
+fn scan_inventory_unique(data: &[u8], ac: &aho_corasick::AhoCorasick, unique_item_paths: &[String]) -> Vec<(usize, Option<u32>, Vec<ArchonShard>, String)> {
+    let mut hits: Vec<(usize, Option<u32>, Vec<ArchonShard>, String)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
     for mat in ac.find_iter(data) {
@@ -398,17 +698,46 @@ fn scan_inventory_unique(data: &[u8], ac: &aho_corasick::AhoCorasick) -> Vec<(us
         };
         if has_count_before { continue; }
 
-        // "ItemId": can sit thousands of bytes after "ItemType": once a large "Configs":
-        // block (many installed mods) is in between.  Search the same wide window used
-        // for the "Configs": check so heavily-modded warframes are not missed.
-        let pre  = start.saturating_sub(5000);
-        let post = (end + 10000).min(data.len());
-        if !data[pre..post].windows(9).any(|w| w == b"\"ItemId\":") { continue; }
+        // Player-owned items in the inventory JSON always have "ItemId":{"$oid":"..."}
+        // adjacent to "ItemType". NPC/enemy/mission blob items use "_id" (not "ItemId")
+        // or no instance ID at all. By requiring "ItemId" in a tight 600-byte window
+        // we reject paths from mission blobs, NPC loadouts, and other non-inventory
+        // regions that happen to have a generic "_id" field somewhere in 15 KB.
+        // (The old 5000/10000-byte window was too wide: it matched "_id" from completely
+        // different JSON objects in the same memory region.)
+        let id_pre  = start.saturating_sub(600);
+        let id_post = (end + 600).min(data.len());
+        if !data[id_pre..id_post].windows(9).any(|w| w == b"\"ItemId\":") { continue; }
 
-        let configs_end = (end + 5000).min(data.len());
-        if !data[end..configs_end].windows(10).any(|w| w == b"\"Configs\":") { continue; }
+        // Find the next item entry boundary so we don't bleed into adjacent items.
+        // Used for both XP and Archon Shard searches.
+        const NEXT_ITEM_KEY: &[u8] = b"\"ItemType\":\"/Lotus/";
+        let item_entry_end = {
+            let look_end = (end + 30_000).min(data.len());
+            data[end..look_end]
+                .windows(NEXT_ITEM_KEY.len())
+                .position(|w| w == NEXT_ITEM_KEY)
+                .map(|r| end + r)
+                .unwrap_or(look_end)
+        };
 
-        hits.push((idx, None)); // rank filled in separately per-region
+        // Extract "XP":N — cumulative affinity for this item.
+        // The field appears AFTER the full "Configs" array (mod loadout), so it can be
+        // several KB past "ItemType":. Blob confirmed Banshee's XP is ~2500 bytes after
+        // the path.  Search up to the next item boundary to safely find it.
+        // Rank derived from cumulative affinity XP using the wiki formula (see xp_to_rank).
+        const XP_KEY: &[u8] = b"\"XP\":";
+        let xp_rank: Option<u32> = {
+            let path = unique_item_paths.get(idx).map(|s| s.as_str()).unwrap_or("");
+            data[end..item_entry_end].windows(XP_KEY.len()).position(|w| w == XP_KEY)
+                .and_then(|r| parse_int(data, end + r + XP_KEY.len()))
+                .map(|xp| xp_to_rank(xp, path))
+        };
+
+        // Extract ArchonCrystalUpgrades — also after the Configs array.
+        let (shards, diag) = extract_archon_shards(data, end, item_entry_end);
+
+        hits.push((idx, xp_rank, shards, diag));
     }
     hits
 }
@@ -539,6 +868,61 @@ fn scan_consumed_suits(data: &[u8]) -> Vec<String> {
         pos = path_start + close + 1;
     }
     results
+}
+
+// ─── XPInfo scanner ──────────────────────────────────────────────────────────
+//
+// "XPInfo":[{"ItemType":"/Lotus/...","XP":N}, ...]  lives at the inventory root
+// alongside MiscItems.  Unlike per-item XP (read during the unique-item scan),
+// this array covers EVERY item the account has ever levelled — including sold,
+// deleted, and Helminth-subsumed items.  It is the authoritative mastery history.
+
+fn scan_xpinfo(data: &[u8]) -> HashMap<String, u32> {
+    const KEY: &[u8] = b"\"XPInfo\":[";
+    let Some(key_pos) = data.windows(KEY.len()).position(|w| w == KEY) else { return HashMap::new() };
+    let start = key_pos + KEY.len();
+
+    // Array can hold 1 000+ entries (~70 bytes each) — allow up to 256 KB.
+    let window_end = data.len().min(start + 256 * 1024);
+    let array_end = {
+        let mut depth = 1i32;
+        let mut found = window_end;
+        for (i, &b) in data[start..window_end].iter().enumerate() {
+            match b {
+                b'[' => depth += 1,
+                b']' => { depth -= 1; if depth == 0 { found = start + i; break; } }
+                _ => {}
+            }
+        }
+        found
+    };
+
+    const ITEM_TYPE_KEY: &[u8] = b"\"ItemType\":\"";
+    const XP_KEY: &[u8] = b"\"XP\":";
+
+    let mut result: HashMap<String, u32> = HashMap::new();
+    let mut pos = start;
+    loop {
+        if pos >= array_end { break; }
+        let Some(tr) = data[pos..array_end].windows(ITEM_TYPE_KEY.len()).position(|w| w == ITEM_TYPE_KEY) else { break };
+        let path_start = pos + tr + ITEM_TYPE_KEY.len();
+        let Some(pend) = data[path_start..array_end].iter().position(|&b| b == b'"') else { break };
+        let path_end = path_start + pend;
+
+        if let Some(path) = valid_lotus_path(&data[path_start..path_end]) {
+            // XP field is always within the same small JSON object — look within 200 bytes.
+            let xp_search_end = (path_end + 200).min(array_end);
+            if let Some(xr) = data[path_end..xp_search_end].windows(XP_KEY.len()).position(|w| w == XP_KEY) {
+                if let Some(xp) = parse_int(data, path_end + xr + XP_KEY.len()) {
+                    let rank = xp_to_rank(xp, &path);
+                    let e = result.entry(path).or_insert(0u32);
+                    if rank > *e { *e = rank; }
+                }
+            }
+        }
+        pos = path_end + 1;
+    }
+    result
 }
 
 // ─── Auth credentials scan ───────────────────────────────────────────────────
@@ -686,7 +1070,8 @@ pub fn scan_warframe_memory(
     assembled_names: &[String],
     start_addr: usize,   // 0 = start from beginning; non-zero = resume from this address
     max_secs: u64,       // stop scanning after this many seconds and return resume_addr
-    hint_addrs: &[usize], // previously discovered hot chunk addresses — scanned first
+    hint_addrs: &[usize], // MiscItems chunk addresses — scanned first for resources+mods
+    mod_hint_addrs: &[usize], // RawUpgrades chunk addresses — scanned for mods only
 ) -> ScanResult {
     use std::ffi::c_void;
     use std::mem;
@@ -703,7 +1088,7 @@ pub fn scan_warframe_memory(
         return ScanResult {
             warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
             error: Some("No item paths loaded. Click 'Refresh item list' first.".to_string()),
-            log_lines: vec![], relic_rewards: None, resume_addr: 0, hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(),
+            log_lines: vec![], relic_rewards: None, found_actual_inventory: false, resume_addr: 0, hot_addrs: vec![], mod_hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(), hint_mods: HashMap::new(), hint_resources: HashMap::new(), hint_flavour_items: vec![], socketed_shards: HashMap::new(),
         };
     }
 
@@ -751,7 +1136,7 @@ pub fn scan_warframe_memory(
             Err(e) => return ScanResult {
                 warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
                 error: Some(format!("AC build error: {}", e)),
-                log_lines: vec![], relic_rewards: None, resume_addr: 0, hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(),
+                log_lines: vec![], relic_rewards: None, found_actual_inventory: false, resume_addr: 0, hot_addrs: vec![], mod_hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(), hint_mods: HashMap::new(), hint_resources: HashMap::new(), hint_flavour_items: vec![], socketed_shards: HashMap::new(),
             },
         }
     };
@@ -762,15 +1147,19 @@ pub fn scan_warframe_memory(
             warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
             error: Some("Warframe is not running. Launch the game first.".to_string()),
             log_lines: vec!["[pid] find_warframe_pid returned None — process not found via ToolHelp snapshot".to_string()],
-            relic_rewards: None, resume_addr: 0, hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(),
+            relic_rewards: None, found_actual_inventory: false, resume_addr: 0, hot_addrs: vec![], mod_hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(), hint_mods: HashMap::new(), hint_resources: HashMap::new(), hint_flavour_items: vec![], socketed_shards: HashMap::new(),
         },
     };
 
     let mut resources:    HashMap<String, (i64, String)> = HashMap::new();
+    let mut hint_resources_out: HashMap<String, i64> = HashMap::new(); // hint-only MiscItems counts
+    let mut hint_flavour_out: Vec<String> = Vec::new();               // hint-only FlavourItems paths
     let mut mods:         HashMap<String, (ModCount, String)> = HashMap::new(); // path → (count+ranks, ctx)
-    let mut unique:       HashMap<String, usize> = HashMap::new(); // path → best region hit-count
-    let mut mastery_data: HashMap<String, u32>   = HashMap::new(); // path → max rank seen
-    let mut pending_recipes: Vec<PendingRecipe>            = Vec::new();
+    let mut hint_mods_out: HashMap<String, ModCount> = HashMap::new(); // hint-only mods for stability
+    let mut unique:          HashMap<String, usize>          = HashMap::new(); // path → best region hit-count
+    let mut mastery_data:    HashMap<String, u32>            = HashMap::new(); // path → max rank seen
+    let mut socketed_shards: HashMap<String, Vec<ArchonShard>> = HashMap::new(); // warframe path → shards
+    let mut pending_recipes: Vec<PendingRecipe>              = Vec::new();
     let mut mastery_rank:    Option<u32>                   = None;
     let mut regions_scanned = 0usize;
     let mut log_lines: Vec<String> = vec![
@@ -782,7 +1171,9 @@ pub fn scan_warframe_memory(
     // Chunk addresses where the inventory root was found — returned so the caller
     // can pass them back as hint_addrs next call for a near-instant re-scan.
     let mut hot_addrs_out: Vec<usize> = Vec::new();
+    let mut mod_hot_addrs_out: Vec<usize> = Vec::new();
     let mut consumed_suits_out: Vec<String> = Vec::new();
+    let mut found_actual_inventory_out = false;
     // Declared outside unsafe so it's readable in the ScanResult at the end.
     let mut resume_addr_out: usize = 0;
 
@@ -794,7 +1185,7 @@ pub fn scan_warframe_memory(
                 warframe_running: true, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
                 error: Some(format!("Cannot open Warframe process (error {}). Run as Administrator.", err_code)),
                 log_lines: vec![format!("[pid] OpenProcess failed for pid={} error={}", pid, err_code)],
-                relic_rewards: None, resume_addr: 0, hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(),
+                relic_rewards: None, found_actual_inventory: false, resume_addr: 0, hot_addrs: vec![], mod_hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(), hint_mods: HashMap::new(), hint_resources: HashMap::new(), hint_flavour_items: vec![], socketed_shards: HashMap::new(),
             };
         }
 
@@ -806,6 +1197,11 @@ pub fn scan_warframe_memory(
         // Skips the rolling VirtualQueryEx walk for the most common case (steady-
         // state: inventory JSON sits at the same heap address between game sessions).
         const CHUNK_SIZE_HINT: usize = 8 * 1024 * 1024;
+        // Inventory root blobs span ~7 VirtualAlloc regions (~570 KB total).
+        // ReadProcessMemory can cross region boundaries; using 1.5 MB ensures the
+        // MiscItems region (which can be at offset ~283 KB from the Created region)
+        // is always covered without being artificially cut off at region_end.
+        const HINT_MAX_READ: usize = 1_500_000;
         const MISC_KEY: &[u8] = b"\"MiscItems\":[{";
         for &hint_base in hint_addrs {
             // Skip hints in the EXE/DLL image range — these are false positives.
@@ -815,31 +1211,66 @@ pub fn scan_warframe_memory(
             if mbi.State != MEM_COMMIT { continue; }
             let p = mbi.Protect;
             if p & PAGE_NOACCESS != 0 || p & PAGE_GUARD != 0 { continue; }
-            let region_end = mbi.BaseAddress as usize + mbi.RegionSize;
-            if hint_base >= region_end { continue; }
-            let read_size = CHUNK_SIZE_HINT.min(region_end - hint_base);
+            if (mbi.BaseAddress as usize).saturating_add(mbi.RegionSize) <= hint_base { continue; }
+            // Read up to HINT_MAX_READ bytes regardless of single-region boundary.
+            // ReadProcessMemory succeeds across boundaries while all regions are committed.
+            let read_size = HINT_MAX_READ.min(CHUNK_SIZE_HINT);
             let mut buf = vec![0u8; read_size];
             let mut bytes_read = 0usize;
             let ok = ReadProcessMemory(process, hint_base as *const c_void,
                 buf.as_mut_ptr() as *mut c_void, read_size, &mut bytes_read);
             if ok == 0 || bytes_read < 16 { continue; }
             let data = &buf[..bytes_read];
-            if !data.windows(MISC_KEY.len()).any(|w| w == MISC_KEY) { continue; }
+            log_lines.push(format!("  [hint-read] addr=0x{:x} region_size={} bytes_read={}", hint_base, mbi.RegionSize, bytes_read));
+            if !data.windows(MISC_KEY.len()).any(|w| w == MISC_KEY) {
+                log_lines.push(format!("  [hint-skip] addr=0x{:x} no MISC_KEY", hint_base));
+                continue;
+            }
+            let misc_key_off = data.windows(MISC_KEY.len()).position(|w| w == MISC_KEY).unwrap_or(0);
             // Still valid — run resource and mod scanners on it
             hot_addrs_out.push(hint_base);
             regions_scanned += 1;
             let res_pairs = scan_inventory_resources(data, &unique_path_set);
             if !res_pairs.is_empty() {
-                log_lines.push(format!("  [hint-resources] count={} addr=0x{:x}", res_pairs.len(), hint_base));
-                for (path, qty, ctx) in res_pairs { resources.entry(path).or_insert((qty, ctx)); }
+                log_lines.push(format!("  [hint-resources] count={} addr=0x{:x} misc_key_at={}", res_pairs.len(), hint_base, misc_key_off));
+                for (path, qty, ctx) in res_pairs {
+                    hint_resources_out.insert(path.clone(), qty);
+                    resources.entry(path).or_insert((qty, ctx));
+                }
+            }
+            for (path, qty) in scan_currency_fields(data) {
+                // Max-wins: multiple hint addresses may each report a currency value;
+                // always keep the highest (the account inventory total is always greatest).
+                let he = hint_resources_out.entry(path.to_string()).or_insert(0);
+                if qty > *he { *he = qty; }
+                let re = resources.entry(path.to_string()).or_insert((qty, String::new()));
+                if qty > re.0 { re.0 = qty; }
+            }
+            let flavour_paths = scan_flavour_items(data);
+            if !flavour_paths.is_empty() {
+                log_lines.push(format!("  [hint-flavour] count={}", flavour_paths.len()));
+                for path in flavour_paths {
+                    hint_flavour_out.push(path);
+                }
             }
             let mod_pairs = scan_inventory_mods(data);
             if !mod_pairs.is_empty() {
                 log_lines.push(format!("  [hint-mods] count={}", mod_pairs.len()));
+                for (i, (path, mc, _ctx)) in mod_pairs.iter().enumerate().take(3) {
+                    log_lines.push(format!("  [hint-mod-probe#{}] {} ranks={:?}", i+1, path.split('/').last().unwrap_or("?"), mc.by_rank));
+                }
                 for (path, mc, ctx) in mod_pairs {
-                    // Use max-total: the section with more entries is more authoritative
-                    let entry = mods.entry(path).or_insert_with(|| (ModCount::default(), ctx.clone()));
-                    if mc.total > entry.0.total { entry.0 = mc; entry.1 = ctx; }
+                    let entry = mods.entry(path.clone()).or_insert_with(|| (ModCount::default(), ctx.clone()));
+                    if mc.total > entry.0.total { entry.0 = mc.clone(); entry.1 = ctx; }
+                    let hint_entry = hint_mods_out.entry(path).or_insert_with(ModCount::default);
+                    // Per-rank MAX merge: MiscItems gives count of unranked copies;
+                    // RawUpgrades gives ranked copies (1 per entry). MAX per rank correctly
+                    // combines both without double-counting or discarding non-zero ranks.
+                    for (&r, &cnt) in &mc.by_rank {
+                        let e = hint_entry.by_rank.entry(r).or_insert(0);
+                        *e = (*e).max(cnt);
+                    }
+                    hint_entry.total = hint_entry.by_rank.values().sum();
                 }
             }
             if mastery_rank.is_none() { mastery_rank = scan_mastery_rank(data); }
@@ -850,6 +1281,58 @@ pub fn scan_warframe_memory(
             if !suits.is_empty() {
                 log_lines.push(format!("  [hint-consumed-suits] count={}", suits.len()));
                 for s in suits { if !consumed_suits_out.contains(&s) { consumed_suits_out.push(s); } }
+            }
+            let xp_map = scan_xpinfo(data);
+            if !xp_map.is_empty() {
+                log_lines.push(format!("  [hint-xpinfo] {} entries", xp_map.len()));
+                for (path, rank) in xp_map {
+                    let e = mastery_data.entry(path).or_insert(0);
+                    if rank > *e { *e = rank; }
+                }
+            }
+        }
+
+        // ── Mod-hint fast path: scan known RawUpgrades chunk addresses for mods only ──
+        // These are chunks discovered by the full scan that contain gameplay mods but NOT
+        // MiscItems (so they were skipped by the regular hint path above). Scanning them
+        // gives us live mod counts from the inventory blob's RawUpgrades section.
+        const MOD_HINT_CHECK: &[u8] = b"/Lotus/Upgrades/Mods/";
+        for &mod_hint_base in mod_hint_addrs {
+            if hot_addrs_out.contains(&mod_hint_base) { continue; } // already scanned above
+            if mod_hint_base >= 0x0004_0000_0000_0000 { continue; }
+            let mut mbi: MEMORY_BASIC_INFORMATION = mem::zeroed();
+            if VirtualQueryEx(process, mod_hint_base as *const c_void, &mut mbi, mbi_size) == 0 { continue; }
+            if mbi.State != MEM_COMMIT { continue; }
+            let p = mbi.Protect;
+            if p & PAGE_NOACCESS != 0 || p & PAGE_GUARD != 0 { continue; }
+            let region_end = mbi.BaseAddress as usize + mbi.RegionSize;
+            if mod_hint_base >= region_end { continue; }
+            let read_size = CHUNK_SIZE_HINT.min(region_end - mod_hint_base);
+            let mut buf = vec![0u8; read_size];
+            let mut bytes_read = 0usize;
+            let ok = ReadProcessMemory(process, mod_hint_base as *const c_void,
+                buf.as_mut_ptr() as *mut c_void, read_size, &mut bytes_read);
+            if ok == 0 || bytes_read < 16 { continue; }
+            let data = &buf[..bytes_read];
+            if !data.windows(MOD_HINT_CHECK.len()).any(|w| w == MOD_HINT_CHECK) { continue; }
+            regions_scanned += 1;
+            let mod_pairs = scan_inventory_mods(data);
+            if !mod_pairs.is_empty() {
+                log_lines.push(format!("  [mod-hint] addr=0x{:x} count={}", mod_hint_base, mod_pairs.len()));
+                // Log first 3 mod contexts so we can verify ItemLevel is present in memory.
+                for (i, (path, mc, ctx)) in mod_pairs.iter().enumerate().take(3) {
+                    log_lines.push(format!("  [mod-probe#{}] {} ranks={:?} ctx={}", i+1, path.split('/').last().unwrap_or("?"), mc.by_rank, ctx));
+                }
+                for (path, mc, ctx) in mod_pairs {
+                    let entry = mods.entry(path.clone()).or_insert_with(|| (ModCount::default(), ctx.clone()));
+                    if mc.total > entry.0.total { entry.0 = mc.clone(); entry.1 = ctx; }
+                    let hint_entry = hint_mods_out.entry(path).or_insert_with(ModCount::default);
+                    for (&r, &cnt) in &mc.by_rank {
+                        let e = hint_entry.by_rank.entry(r).or_insert(0);
+                        *e = (*e).max(cnt);
+                    }
+                    hint_entry.total = hint_entry.by_rank.values().sum();
+                }
             }
         }
 
@@ -906,24 +1389,42 @@ pub fn scan_warframe_memory(
             const LOTUS_KEY:    &[u8] = b"\"ItemType\":\"/Lotus/";
             const LONG_KEY:     &[u8] = b"$numberLong\"";
             const CONSUMED_KEY: &[u8] = b"\"ConsumedSuits\":[";
+            const XPINFO_KEY:   &[u8] = b"\"XPInfo\":[";
+            const FUSION_KEY:   &[u8] = b"\"FusionPoints\":";
+            const CREDITS_KEY:  &[u8] = b"\"RegularCredits\":";
+            const CREATED_KEY:  &[u8] = b"\"Created\":{\"$date\":";
             let has_item_count    = data.windows(COUNT_KEY.len()).any(|w| w == COUNT_KEY);
             let has_lotus_type    = data.windows(LOTUS_KEY.len()).any(|w| w == LOTUS_KEY);
             let has_number_long   = data.windows(LONG_KEY.len()).any(|w| w == LONG_KEY);
             let has_misc_root     = data.windows(MISC_KEY.len()).any(|w| w == MISC_KEY);
             let has_consumed_key  = data.windows(CONSUMED_KEY.len()).any(|w| w == CONSUMED_KEY);
-            if !has_item_count && !has_lotus_type && !has_number_long && !has_consumed_key { continue; }
+            let has_xpinfo_key    = data.windows(XPINFO_KEY.len()).any(|w| w == XPINFO_KEY);
+            let has_currency      = data.windows(FUSION_KEY.len()).any(|w| w == FUSION_KEY)
+                                 || data.windows(CREDITS_KEY.len()).any(|w| w == CREDITS_KEY);
+            let has_created       = data.windows(CREATED_KEY.len()).any(|w| w == CREATED_KEY);
+            // Detect mission-reward delta blobs early — these have a different structure from
+            // the full account inventory and must not become hot_addrs (hint targets).
+            const INV_CHANGES_KEY: &[u8] = b"\"InventoryChanges\":";
+            let is_mission_delta  = data.windows(INV_CHANGES_KEY.len()).any(|w| w == INV_CHANGES_KEY);
+            // A chunk is from the actual account inventory when it has Created (inventory root)
+            // and is not a mission delta. Set the per-scan flag here; lib.rs accumulates it.
+            if has_created && !is_mission_delta { found_actual_inventory_out = true; }
+            if !has_item_count && !has_lotus_type && !has_number_long && !has_consumed_key && !has_xpinfo_key && !has_currency { continue; }
 
             if has_misc_root {
                 // Only record heap addresses as hot_addrs — skip EXE/DLL image range
                 // (Windows maps executables above ~0x7FF0_0000_0000; game heap is below ~4 TB).
                 // This prevents a false-positive match inside the game's read-only data section
                 // from displacing the real inventory heap address.
+                // Also skip mission delta blobs — their InventoryChanges.MiscItems section
+                // matches "MiscItems":[{ but is not the player's live inventory.
                 const MAX_HEAP_ADDR: usize = 0x0004_0000_0000_0000;
-                if chunk_base < MAX_HEAP_ADDR && !hot_addrs_out.contains(&chunk_base) {
+                if chunk_base < MAX_HEAP_ADDR && !hot_addrs_out.contains(&chunk_base) && !is_mission_delta {
                     hot_addrs_out.push(chunk_base);
                 }
-                log_lines.push(format!("  [inv-root] found MiscItems array at 0x{:x}{}", chunk_base,
-                    if chunk_base >= MAX_HEAP_ADDR { " [EXE/DLL range — skipped as hint]" } else { "" }));
+                log_lines.push(format!("  [inv-root] found MiscItems array at 0x{:x}{}{}", chunk_base,
+                    if chunk_base >= MAX_HEAP_ADDR { " [EXE/DLL range — skipped]" } else { "" },
+                    if is_mission_delta { " [mission delta — skipped as hint]" } else { "" }));
             }
             // Scan for ConsumedSuits in any chunk that contains the key — it may live
             // in a different 8 MB chunk than MiscItems in large inventory blobs.
@@ -934,11 +1435,60 @@ pub fn scan_warframe_memory(
                     for s in suits { if !consumed_suits_out.contains(&s) { consumed_suits_out.push(s); } }
                 }
             }
+            // XPInfo covers every item ever levelled, including deleted/subsumed ones.
+            if has_xpinfo_key {
+                let xp_map = scan_xpinfo(data);
+                if !xp_map.is_empty() {
+                    log_lines.push(format!("  [xpinfo] {} entries", xp_map.len()));
+                    for (path, rank) in xp_map {
+                        let e = mastery_data.entry(path).or_insert(0);
+                        if rank > *e { *e = rank; }
+                    }
+                }
+            }
+
+            // ── Currency fields (Endo/Credits/Platinum) ───────────────────────
+            // FusionPoints/RegularCredits are top-level fields of the account inventory JSON.
+            // Only read them from chunks that look like the account root:
+            //   has_created  → "Created":{"$date":...} root marker (same JSON object as FusionPoints)
+            //   has_misc_root → "MiscItems":[{  present (large inventories split across chunks)
+            // Excluding other chunks prevents stale heap fragments / reward-notification buffers
+            // (which have "FusionPoints":N for endo earned, not total) from corrupting the value.
+            // Still skip explicit mission-delta blobs and use max-wins as belt-and-suspenders.
+            if !is_mission_delta && has_currency && (has_created || has_misc_root) {
+                for (path, qty) in scan_currency_fields(data) {
+                    log_lines.push(format!(
+                        "  [currency] {}={} addr=0x{:x}{}{}",
+                        path.split('/').last().unwrap_or(path), qty, chunk_base,
+                        if has_misc_root { " has-MiscItems" } else { "" },
+                        if has_created  { " has-Created"   } else { "" },
+                    ));
+                    let e = resources.entry(path.to_string()).or_insert((qty, String::new()));
+                    if qty > e.0 { e.0 = qty; }
+                }
+            } else if !is_mission_delta && has_currency {
+                // Log skipped fragments so we can audit what we're ignoring.
+                log_lines.push(format!(
+                    "  [currency-skip] addr=0x{:x} no-inv-root (has_created={} has_misc_root={})",
+                    chunk_base, has_created, has_misc_root,
+                ));
+            }
 
             // ── Scanner 1: Resources ──────────────────────────────────────────
             if has_item_count || has_lotus_type {
                 let res_pairs = scan_inventory_resources(data, &unique_path_set);
                 if !res_pairs.is_empty() {
+                    // Require at least 10 items from any non-root chunk. Stale heap copies,
+                    // marketplace listings, and reward-screen data produce only a handful of
+                    // /Lotus/ paths — the real MiscItems blob always has hundreds. Chunks that
+                    // contain the MiscItems root are always accepted regardless of item count.
+                    const MIN_BLOB_ITEMS: usize = 10;
+                    if !has_misc_root && res_pairs.len() < MIN_BLOB_ITEMS {
+                        log_lines.push(format!(
+                            "  [resources-skip] count={} < {} and no MiscItems root — stale blob",
+                            res_pairs.len(), MIN_BLOB_ITEMS
+                        ));
+                    } else {
                     let preview: String = res_pairs.iter().take(5)
                         .map(|(p, q, _)| format!("{}={}", p.split('/').last().unwrap_or("?"), q))
                         .collect::<Vec<_>>().join(", ");
@@ -949,6 +1499,7 @@ pub fn scan_warframe_memory(
                     ));
                     for (path, qty, ctx) in res_pairs {
                         resources.entry(path).or_insert((qty, ctx));
+                    }
                     }
                 } else if res_probe_count < 5 {
                     res_probe_count += 1;
@@ -967,15 +1518,26 @@ pub fn scan_warframe_memory(
                 }
 
                 // ── Scanner 1b: Mods / Arcanes ────────────────────────────────
-                // Only scan for mods on chunks that contain the inventory root.
-                // RawUpgrades stale/delta blobs in other chunks cause count flipping.
-                if has_misc_root {
+                // Scan for mods on:
+                // (a) chunks containing MiscItems (inventory root) — finds cosmetics and any mods in same blob
+                // (b) chunks containing /Lotus/Upgrades/Mods/ but NOT MiscItems — these are the
+                //     RawUpgrades sections in large inventories where the blob spans multiple 8 MB chunks.
+                let has_gameplay_mods = data.windows(MOD_HINT_CHECK.len()).any(|w| w == MOD_HINT_CHECK);
+                if has_misc_root || has_gameplay_mods {
                     let mod_pairs = scan_inventory_mods(data);
                     if !mod_pairs.is_empty() {
                         log_lines.push(format!("  [mods] count={}", mod_pairs.len()));
                         for (path, mc, ctx) in mod_pairs {
                             let entry = mods.entry(path).or_insert_with(|| (ModCount::default(), ctx.clone()));
                             if mc.total > entry.0.total { entry.0 = mc; entry.1 = ctx; }
+                        }
+                    }
+                    // Record non-MiscItems mod chunks so the hint scan can cover them next pass.
+                    if has_gameplay_mods && !has_misc_root {
+                        const MAX_HEAP_ADDR: usize = 0x0004_0000_0000_0000;
+                        if chunk_base < MAX_HEAP_ADDR && !mod_hot_addrs_out.contains(&chunk_base) {
+                            mod_hot_addrs_out.push(chunk_base);
+                            log_lines.push(format!("  [mod-root] new RawUpgrades chunk at 0x{:x}", chunk_base));
                         }
                     }
                 }
@@ -991,12 +1553,15 @@ pub fn scan_warframe_memory(
             }
 
             // ── Scanner 2: Unique items ───────────────────────────────────────
-            let unique_hits = if has_lotus_type { scan_inventory_unique(data, &unique_ac) } else { vec![] };
+            // Skip regions that are mission-reward delta blobs (is_mission_delta computed above).
+            // These contain item paths from rewarded items but are NOT the player's full
+            // inventory — matching against them produces false positives like unowned warframes.
+            let unique_hits = if has_lotus_type && !is_mission_delta { scan_inventory_unique(data, &unique_ac, &unique_item_paths) } else { vec![] };
             if !unique_hits.is_empty() {
                 // Log every hit with the last two path segments so we can distinguish
                 // e.g. "Weapons/BurstonPrime" from "Weapons/BurstonPrimeMk1".
                 let all_names: String = unique_hits.iter()
-                    .map(|(li, _)| {
+                    .map(|(li, _, _, _)| {
                         let p = &unique_item_paths[*li];
                         let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
                         let tail = if parts.len() >= 2 {
@@ -1009,13 +1574,40 @@ pub fn scan_warframe_memory(
                     .collect::<Vec<_>>().join(", ");
                 log_lines.push(format!("  [unique] count={}  {}", unique_hits.len(), all_names));
                 let n = unique_hits.len();
-                for &(local_idx, rank) in &unique_hits {
-                    let path = unique_item_paths[local_idx].clone();
+                // Summarise XP extraction for this region (helps diagnose mastery data flow)
+                let xp_found: Vec<String> = unique_hits.iter().filter_map(|(li, rank, _, _)| {
+                    rank.map(|r| {
+                        let p = &unique_item_paths[*li];
+                        let tail = p.split('/').next_back().unwrap_or("?");
+                        format!("{}=R{}", tail, r)
+                    })
+                }).collect();
+                if !xp_found.is_empty() {
+                    log_lines.push(format!("  [xp] {}", xp_found.join(", ")));
+                }
+                for (local_idx, rank, shards, shard_diag) in &unique_hits {
+                    let path = unique_item_paths[*local_idx].clone();
                     let entry = unique.entry(path.clone()).or_insert(n);
                     if n > *entry { *entry = n; }
                     if let Some(r) = rank {
-                        let mr = mastery_data.entry(path).or_insert(0);
-                        if r > *mr { *mr = r; }
+                        let mr = mastery_data.entry(path.clone()).or_insert(0);
+                        if r > mr { *mr = *r; }
+                    }
+                    let full_path = &unique_item_paths[*local_idx];
+                    if !shards.is_empty() {
+                        let any_unknown = shards.iter().any(|s| s.color.is_empty());
+                        socketed_shards.insert(path.clone(), shards.clone());
+                        log_lines.push(format!("  [shards] {} shard(s) in {} colors=[{}]{}",
+                            shards.len(), full_path,
+                            shards.iter().map(|s| s.color.as_str()).collect::<Vec<_>>().join(","),
+                            if any_unknown && !shard_diag.is_empty() {
+                                format!("\n  [shard-raw] {}", &shard_diag[..shard_diag.len().min(280)])
+                            } else { String::new() }
+                        ));
+                    } else if full_path.contains("/Powersuits/") {
+                        // Warframe was fully validated (Configs found) but has no shards.
+                        // Insert an empty marker so lib.rs can prune any stale cached entry.
+                        socketed_shards.entry(path).or_insert_with(Vec::new);
                     }
                 }
             }
@@ -1081,7 +1673,7 @@ pub fn scan_warframe_memory(
         else { false }
     });
 
-    ScanResult { warframe_running: true, items_found, pending_recipes, mastery_rank, mastery_data: mastery_data_out, regions_scanned, error: None, log_lines, relic_rewards: None, resume_addr: resume_addr_out, hot_addrs: hot_addrs_out, consumed_suits: consumed_suits_out, mods_found }
+    ScanResult { warframe_running: true, items_found, pending_recipes, mastery_rank, mastery_data: mastery_data_out, regions_scanned, found_actual_inventory: found_actual_inventory_out, error: None, log_lines, relic_rewards: None, resume_addr: resume_addr_out, hot_addrs: hot_addrs_out, mod_hot_addrs: mod_hot_addrs_out, consumed_suits: consumed_suits_out, mods_found, hint_mods: hint_mods_out, hint_resources: hint_resources_out, hint_flavour_items: hint_flavour_out, socketed_shards }
 }
 
 #[cfg(target_os = "windows")]
@@ -1308,6 +1900,168 @@ pub fn capture_inventory_blob(output_path: &std::path::Path) -> Result<String, S
 pub fn capture_inventory_blob(_output_path: &std::path::Path) -> Result<String, String> {
     Err("Only supported on Windows".into())
 }
+
+/// Scan all Warframe process memory and save every relevant blob found into `blob_dir`.
+/// "Relevant" = region ≥ 100 KB that contains at least one of: MiscItems, Suits,
+/// LongGuns, Melee, Pistols, InventoryChanges (covers real inventory and mission blobs).
+///
+/// Naming convention:
+///   Actual_inventory_<ts>.txt — blob contains "HasResetAccount" (the full account root)
+///   blob_N_<ts>.txt            — all other relevant blobs (mission deltas, equipment chunks)
+///
+/// Returns the number of blobs saved.
+#[cfg(target_os = "windows")]
+pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str) -> usize {
+    use std::ffi::c_void;
+    use std::mem;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, FALSE},
+        System::{
+            Diagnostics::Debug::ReadProcessMemory,
+            Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS},
+            Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+        },
+    };
+
+    let pid = match find_warframe_pid_pub() { Some(p) => p, None => return 0 };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
+    if process == 0 { return 0; }
+
+    const MIN_BLOB_BYTES: usize = 100_000;
+    const MAX_REGION_READ: usize = 64 * 1024 * 1024;
+    const ANCHORS: &[&[u8]] = &[
+        b"\"MiscItems\":[",
+        b"\"Suits\":[",
+        b"\"LongGuns\":[",
+        b"\"Melee\":[",
+        b"\"Pistols\":[",
+        b"\"InventoryChanges\":",
+    ];
+    // Two independent markers that identify the actual account inventory:
+    // - "HasResetAccount" lives at the very END of the blob (region 6 in the layout)
+    // - "Created":{"$date": lives at the very START of the blob (region 0)
+    // They are always in DIFFERENT Windows memory regions, so we accept either one.
+    // In practice region 0 (has Created + "Suits":[) triggers with REAL_MARKER_2,
+    // and region 6 would trigger with REAL_MARKER_1 if it had an anchor (it doesn't).
+    const REAL_MARKER_1:  &[u8] = b"\"HasResetAccount\"";
+    const REAL_MARKER_2:  &[u8] = b"\"Created\":{\"$date\":";
+    const LOTUS_KEY:      &[u8] = b"/Lotus/";
+    const MAX_BLOBS: usize = 25;
+
+    let mut addr: usize = 0;
+    let mut saved = 0usize;
+
+    loop {
+        if saved >= MAX_BLOBS { break; }
+        let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
+        if unsafe { VirtualQueryEx(process, addr as *const c_void, &mut mbi, mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 { break; }
+        let region_addr = mbi.BaseAddress as usize;
+        let region_size = mbi.RegionSize;
+        let next_addr   = region_addr.saturating_add(region_size);
+        if next_addr <= addr { break; }
+        addr = next_addr;
+
+        if mbi.State != MEM_COMMIT
+            || mbi.Protect & PAGE_GUARD    != 0
+            || mbi.Protect & PAGE_NOACCESS != 0
+            || region_size < MIN_BLOB_BYTES
+            || region_size > MAX_REGION_READ
+        { continue; }
+
+        let mut data = vec![0u8; region_size];
+        let mut n = 0usize;
+        if unsafe { ReadProcessMemory(process, region_addr as *const c_void, data.as_mut_ptr() as *mut c_void, region_size, &mut n) } == 0 || n < MIN_BLOB_BYTES { continue; }
+        let data = &data[..n];
+
+        // Find the FIRST anchor hit — save a focused window around it, not the full region.
+        // This keeps files at a readable size (≤4 MB) and centred on the interesting data.
+        let anchor_pos = ANCHORS.iter()
+            .filter_map(|a| data.windows(a.len()).position(|w| w == *a))
+            .min();
+        let anchor_pos = match anchor_pos { Some(p) => p, None => continue };
+        if !data.windows(LOTUS_KEY.len()).any(|w| w == LOTUS_KEY) { continue; }
+
+        // Identify what kind of blob this is for the filename.
+        // The full inventory spans multiple regions: region 0 has Created (start),
+        // region 5 has MiscItems (middle), region 6 has HasResetAccount (end).
+        // They are never in the same region data, so we accept either marker.
+        let has_created      = data.windows(REAL_MARKER_2.len()).any(|w| w == REAL_MARKER_2);
+        let has_reset_acct   = data.windows(REAL_MARKER_1.len()).any(|w| w == REAL_MARKER_1);
+        let is_real          = has_created || has_reset_acct;
+        let is_mission       = data.windows(b"\"InventoryChanges\":".len()).any(|w| w == b"\"InventoryChanges\":");
+        let has_misc         = data.windows(b"\"MiscItems\":[".len()).any(|w| w == b"\"MiscItems\":[");
+        let has_suits        = data.windows(b"\"Suits\":[".len()).any(|w| w == b"\"Suits\":[");
+
+        // Non-real blobs: save ±2 MB around the anchor, capped to the region.
+        // Real inventory root: only save when triggered by Created (region 0, the START).
+        // HasResetAccount (region 6, the END) is skipped — the Created-triggered read
+        // already captured the full 570 KB blob with a 1.5 MB ReadProcessMemory.
+        // ReadProcessMemory crosses VirtualAlloc boundaries, so one call spans all regions.
+        // Trim to "DeathSquadable":false} — the last field of the root JSON object.
+        const FULL_INV_READ: usize = 1_500_000;
+        const END_MARKER:    &[u8] = b"\"DeathSquadable\":false}";
+
+        let save_data: Vec<u8>;
+        let kind: &str;
+
+        if has_created && !is_mission {
+            // Triggered by Created (region 0, start of inventory).
+            // One large read forward captures all 7 inventory regions (~570 KB).
+            let mut buf = vec![0u8; FULL_INV_READ];
+            let mut full_n = 0usize;
+            let ok = unsafe { ReadProcessMemory(
+                process, region_addr as *const c_void,
+                buf.as_mut_ptr() as *mut c_void, FULL_INV_READ, &mut full_n,
+            ) };
+            let raw = if ok != 0 && full_n > 0 { &buf[..full_n] } else { data };
+            // Trim at the closing field — first occurrence is the root object close.
+            let end = raw.windows(END_MARKER.len())
+                .position(|w| w == END_MARKER)
+                .map(|p| p + END_MARKER.len())
+                .unwrap_or(raw.len());
+            save_data = raw[..end].to_vec();
+            kind = "FULL_ACCOUNT";
+        } else if has_reset_acct && !has_created && !is_mission {
+            // HasResetAccount is the end of the same blob already captured from Created.
+            // Skip to avoid a duplicate truncated file (addr is already at next_addr).
+            continue;
+        } else {
+            // Non-inventory blob: save ±2 MB window around the anchor.
+            const HALF_SAVE: usize = 2 * 1024 * 1024;
+            let slice_start = anchor_pos.saturating_sub(HALF_SAVE);
+            let slice_end   = (anchor_pos + HALF_SAVE).min(data.len());
+            save_data = data[slice_start..slice_end].to_vec();
+            kind = if is_mission { "MISSION_DELTA" } else if has_misc { "MISC_ITEMS" }
+                   else if has_suits { "SUITS" } else { "OTHER" };
+        }
+
+        let prefix = if is_real && !is_mission { "Actual_inventory" } else { "blob" };
+        let name = format!("{}_{}_{}.txt", prefix, kind, ts);
+        // If a file with this name already exists (two regions of same type), append index.
+        let path = {
+            let candidate = blob_dir.join(&name);
+            if candidate.exists() {
+                blob_dir.join(format!("{}_{}_{:02}.txt", prefix, kind, saved + 1))
+            } else {
+                candidate
+            }
+        };
+
+        // Printable-ASCII filter — keeps the file human-readable in any text editor.
+        let text: Vec<u8> = save_data.iter()
+            .map(|&b| if b >= 0x20 && b <= 0x7e || b == b'\n' || b == b'\t' { b } else { b'.' })
+            .collect();
+        if std::fs::write(&path, &text).is_ok() {
+            saved += 1;
+        }
+    }
+
+    unsafe { CloseHandle(process); }
+    saved
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_all_blobs(_blob_dir: &std::path::Path, _ts: &str) -> usize { 0 }
 
 // ─── Continuous raw memory string dump ───────────────────────────────────────
 //
@@ -1545,10 +2299,11 @@ fn find_warframe_pid() -> Option<u32> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn scan_warframe_memory(_unique_names: &[String], _display_names: &[String]) -> ScanResult {
+pub fn scan_warframe_memory(_unique_names: &[String], _display_names: &[String], _assembled_names: &[String], _start_addr: usize, _max_secs: u64, _hint_addrs: &[usize], _mod_hint_addrs: &[usize]) -> ScanResult {
     ScanResult {
         warframe_running: false, items_found: vec![], pending_recipes: vec![], mastery_rank: None, mastery_data: HashMap::new(), regions_scanned: 0,
         error: Some("Memory scanning is only supported on Windows.".to_string()),
-        log_lines: vec![], relic_rewards: None,
+        log_lines: vec![], relic_rewards: None, found_actual_inventory: false,
+        resume_addr: 0, hot_addrs: vec![], mod_hot_addrs: vec![], consumed_suits: vec![], mods_found: HashMap::new(), hint_mods: HashMap::new(), hint_resources: HashMap::new(), hint_flavour_items: vec![], socketed_shards: HashMap::new(),
     }
 }

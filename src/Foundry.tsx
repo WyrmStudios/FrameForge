@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./HelpTip";
+import type { InventoryItem } from "./App";
 import sentientIcon from "./assets/SentientFactionIcon.webp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,13 +45,11 @@ export const FOUNDRY_FILTERS_DEFAULT: FoundryFilters = {
 };
 
 interface Props {
-  quantities: Record<string, number>;
-  masteryData: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
   refreshKey: number;
   crafting: CraftingJob[];
   colorblindMode?: boolean;
   subsummedWarframes?: Set<string>;
-  archonShards?: Record<string, ArchonShard[]>;
   tracked: string[];
   onTrackToggle: (id: string) => void;
   filters: FoundryFilters;
@@ -82,11 +81,10 @@ function collectNeeds(
 
 type CompStatus = "none" | "blueprint" | "part";
 
-function compStatus(comp: RecipeComponent, quantities: Record<string, number>): CompStatus {
-  // Check against the required count, not just > 0 (e.g. 2x Bolto: need qty >= 2)
-  if ((quantities[comp.unique_name] ?? 0) >= (comp.count || 1)) return "part";
+function compStatus(comp: RecipeComponent, inventory: Record<string, InventoryItem>): CompStatus {
+  if ((inventory[comp.unique_name]?.quantity ?? 0) >= (comp.count || 1)) return "part";
   const bpUnique = comp.components[0]?.unique_name;
-  if (bpUnique && (quantities[bpUnique] ?? 0) > 0) return "blueprint";
+  if (bpUnique && (inventory[bpUnique]?.quantity ?? 0) > 0) return "blueprint";
   return "none";
 }
 
@@ -111,29 +109,62 @@ function isLichWeapon(item: CatalogItem): boolean {
 
 // ─── Relic helpers ────────────────────────────────────────────────────────────
 
+// Pentagon where each of the 5 sides represents one shard slot.
+// Filled slot → side drawn in shard color; empty slot → dim grey.
 function ArchonCrystalIcon({ shards }: { shards: ArchonShard[] }) {
-  if (!shards || shards.length === 0) return null;
   try {
-    const lines = shards.map(s =>
-      `${s.tauforged ? "✦ " : ""}${s.type}${s.boost ? ` — ${s.boost}` : ""}`
-    ).join("\n");
-    const dominant = shards[0]?.color ?? "#88ccff";
+    const hasAny = shards && shards.length > 0;
+    const lines = hasAny
+      ? shards.map(s => `${s.tauforged ? "✦ " : ""}${s.type}${s.boost ? ` · ${s.boost}` : ""}`).join("\n")
+      : "No Archon Shards";
+
+    const R = 6.5;
+    const cx = 8, cy = 8.2; // slight down-shift so top vertex sits at ~y=1.7
+    // 5 vertices starting from the top (270°), going clockwise
+    const verts = Array.from({ length: 5 }, (_, i) => {
+      const a = (Math.PI / 180) * (270 + i * 72);
+      return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
+    });
+
+    const pts = verts.map(v => `${v.x.toFixed(2)},${v.y.toFixed(2)}`).join(" ");
     return (
       <span
         className="craft-icon-tag craft-icon-archon"
         title={`Archon Shards:\n${lines}`}
-        style={{ borderColor: dominant, background: dominant + "22" }}
+        style={{ padding: 0 }}
       >
-        {/* Hexagon gem matching the 18×18 tag size */}
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ display: "block" }}>
-          <polygon points="8,1 14,4.5 14,11.5 8,15 2,11.5 2,4.5"
-            fill={dominant + "44"} stroke={dominant} strokeWidth="1.2"/>
-          <polygon points="8,4.5 11,6.5 11,10.5 8,12.5 5,10.5 5,6.5"
-            fill={dominant + "66"}/>
-          {shards.length > 1 && (
-            <text x="8" y="9" textAnchor="middle" dominantBaseline="middle"
-              fill="#fff" fontSize="5" fontWeight="bold">{shards.length}</text>
-          )}
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="none" style={{ display: "block" }}>
+          {/* 1. Tauforged wedge fills — drawn first so outline goes on top */}
+          {Array.from({ length: 5 }, (_, i) => {
+            const s = shards?.[i];
+            if (!s?.tauforged) return null;
+            const a = verts[i], b = verts[(i + 1) % 5];
+            const wpts = `${a.x.toFixed(2)},${a.y.toFixed(2)} ${b.x.toFixed(2)},${b.y.toFixed(2)} ${cx.toFixed(2)},${cy.toFixed(2)}`;
+            return <polygon key={i} points={wpts} fill={s.color} fillOpacity={0.8} />;
+          })}
+          {/* 2. Dividing lines from each vertex to center */}
+          {verts.map((v, i) => (
+            <line key={`div-${i}`}
+              x1={v.x.toFixed(2)} y1={v.y.toFixed(2)}
+              x2={cx.toFixed(2)} y2={cy.toFixed(2)}
+              stroke="rgba(0,0,0,0.45)" strokeWidth={0.6}
+            />
+          ))}
+          {/* 3. Normal shard edge lines */}
+          {Array.from({ length: 5 }, (_, i) => {
+            const s = shards?.[i];
+            if (!s || s.tauforged) return null;
+            const a = verts[i], b = verts[(i + 1) % 5];
+            return (
+              <line key={`edge-${i}`}
+                x1={a.x.toFixed(2)} y1={a.y.toFixed(2)}
+                x2={b.x.toFixed(2)} y2={b.y.toFixed(2)}
+                stroke={s.color} strokeWidth={2.4} strokeLinecap="butt"
+              />
+            );
+          })}
+          {/* 4. Outer pentagon outline drawn last — always on top, always one clean connected shape */}
+          <polygon points={pts} fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth={0.8} />
         </svg>
       </span>
     );
@@ -154,9 +185,9 @@ function RelicIcon() {
 }
 
 const RELIC_SUFFIXES = ["Bronze", "Silver", "Gold", "Platinum"];
-function ownsRelicVariant(relicUnique: string, quantities: Record<string, number>): boolean {
+function ownsRelicVariant(relicUnique: string, inventory: Record<string, InventoryItem>): boolean {
   const base = relicUnique.replace(/(Bronze|Silver|Gold|Platinum)$/, "");
-  return RELIC_SUFFIXES.some(s => (quantities[`${base}${s}`] ?? 0) > 0);
+  return RELIC_SUFFIXES.some(s => (inventory[`${base}${s}`]?.quantity ?? 0) > 0);
 }
 
 // ─── Item image ───────────────────────────────────────────────────────────────
@@ -174,17 +205,17 @@ function ItemImg({ imageName, category, size = 40 }: { imageName?: string; categ
 
 // ─── Comp row (used inside modal tree) ───────────────────────────────────────
 
-function CompRow({ comp, quantities, relicDrops, relicNames }: {
-  comp: RecipeComponent; quantities: Record<string, number>;
+function CompRow({ comp, inventory, relicDrops, relicNames }: {
+  comp: RecipeComponent; inventory: Record<string, InventoryItem>;
   relicDrops: Record<string, string[]>; relicNames: Record<string, string>;
 }) {
-  const status = compStatus(comp, quantities);
+  const status = compStatus(comp, inventory);
   const ownedRelics = [...new Set(
     (relicDrops[comp.unique_name] ?? [])
-      .filter(r => ownsRelicVariant(r, quantities))
+      .filter(r => ownsRelicVariant(r, inventory))
       .map(r => {
         const base = r.replace(/(Bronze|Silver|Gold|Platinum)$/, "");
-        const owned = RELIC_SUFFIXES.find(s => (quantities[`${base}${s}`] ?? 0) > 0);
+        const owned = RELIC_SUFFIXES.find(s => (inventory[`${base}${s}`]?.quantity ?? 0) > 0);
         const key = owned ? `${base}${owned}` : r;
         return relicNames[key] ?? relicNames[r] ?? r.split("/").pop() ?? r;
       })
@@ -203,10 +234,10 @@ function CompRow({ comp, quantities, relicDrops, relicNames }: {
 
 // ─── Tree node (modal recipe tree) ───────────────────────────────────────────
 
-function TreeNode({ node, quantities, depth }: {
-  node: RecipeComponent; quantities: Record<string, number>; depth: number;
+function TreeNode({ node, inventory, depth }: {
+  node: RecipeComponent; inventory: Record<string, InventoryItem>; depth: number;
 }) {
-  const owned = quantities[node.unique_name] ?? 0;
+  const owned = inventory[node.unique_name]?.quantity ?? 0;
   const enough = owned >= node.count;
   const hasChildren = node.components.length > 0;
   // Don't auto-expand satisfied nodes — hides unnecessary sub-trees (e.g. Control Module Blueprint when you have 443)
@@ -230,7 +261,7 @@ function TreeNode({ node, quantities, depth }: {
         {!enough && <span className="recipe-shortage">−{fmt(node.count - owned)}</span>}
       </div>
       {hasChildren && open && mergeComponents(node.components).map((child, i) => (
-        <TreeNode key={i} node={child} quantities={quantities} depth={depth + 1} />
+        <TreeNode key={i} node={child} inventory={inventory} depth={depth + 1} />
       ))}
     </div>
   );
@@ -238,9 +269,9 @@ function TreeNode({ node, quantities, depth }: {
 
 // ─── Recipe modal ─────────────────────────────────────────────────────────────
 
-function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, crafting }: {
+function RecipeModal({ item, recipe, inventory, isTracked, onTrack, onClose, crafting }: {
   item: CatalogItem; recipe: RecipeComponent[] | null;
-  quantities: Record<string, number>; isTracked: boolean;
+  inventory: Record<string, InventoryItem>; isTracked: boolean;
   onTrack: () => void; onClose: () => void; crafting: CraftingJob[];
 }) {
   const [mode, setMode] = useState<"tree" | "needs">("tree");
@@ -256,11 +287,11 @@ function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, cr
     collectNeeds(recipe, 1, acc);
     return Array.from(acc.entries())
       .map(([unique_name, { name, needed }]) => ({
-        unique_name, name, needed, owned: quantities[unique_name] ?? 0,
+        unique_name, name, needed, owned: inventory[unique_name]?.quantity ?? 0,
       }))
       .filter(r => r.owned < r.needed)
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [recipe, quantities]);
+  }, [recipe, inventory]);
 
   return (
     <div className="craft-modal-overlay" onClick={onClose}>
@@ -300,7 +331,7 @@ function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, cr
               ) : recipe.length === 0 ? (
                 <div className="empty-msg">No recipe data.</div>
               ) : mode === "tree" ? (
-                mergeComponents(recipe).map((node, i) => <TreeNode key={i} node={node} quantities={quantities} depth={0} />)
+                mergeComponents(recipe).map((node, i) => <TreeNode key={i} node={node} inventory={inventory} depth={0} />)
               ) : needs.length === 0 ? (
                 <div className="empty-msg">✓ You have everything needed.</div>
               ) : (
@@ -328,18 +359,21 @@ function RecipeModal({ item, recipe, quantities, isTracked, onTrack, onClose, cr
 
 // ─── Craft card ───────────────────────────────────────────────────────────────
 
-function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryData, crafting, isTracked, onTrack, onOpen, subsummedWarframes, archonShards }: {
+const CraftCard = memo(function CraftCard({ item, recipe, inventory, relicDrops, relicNames, crafting, isTracked, onTrack, onOpen, subsummedWarframes }: {
   item: CatalogItem; recipe: RecipeComponent[] | null;
-  quantities: Record<string, number>; relicDrops: Record<string, string[]>;
-  relicNames: Record<string, string>; masteryData: Record<string, number>;
-  crafting: CraftingJob[]; isTracked: boolean; onTrack: () => void; onOpen: () => void;
-  subsummedWarframes: Set<string>; archonShards: Record<string, ArchonShard[]>;
+  inventory: Record<string, InventoryItem>; relicDrops: Record<string, string[]>;
+  relicNames: Record<string, string>;
+  crafting: CraftingJob[]; isTracked: boolean;
+  onTrack: (item: CatalogItem) => void;
+  onOpen: (item: CatalogItem) => void;
+  subsummedWarframes: Set<string>;
 }) {
-  const isOwned    = (quantities[item.unique_name] ?? 0) > 0;
-  const rank       = masteryData[item.unique_name];
-  const isMastered = rank != null && rank >= 30;
+  const invEntry   = inventory[item.unique_name];
+  const isOwned    = (invEntry?.quantity ?? 0) > 0;
+  const rank       = invEntry?.mastery_rank;
+  const isMastered = rank != null && rank > 0 && rank >= 30;
   const isSubsumed  = item.category === "Warframes" && subsummedWarframes.has(item.unique_name);
-  const shards      = item.category === "Warframes" ? (archonShards[item.unique_name] ?? []) : [];
+  const shards      = item.category === "Warframes" ? (invEntry?.archon_shards ?? []) : [];
   // Memory scanner stores the recipe/blueprint path; catalog uses the result-item path.
   // Check both so items like Forma (recipe path ≠ item path) still get the badge.
   const isCrafting = crafting.some(c =>
@@ -350,19 +384,19 @@ function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryDa
   const mergedRecipe = recipe ? mergeComponents(recipe) : recipe;
   // ⚡ Ready = you have every ingredient itself (not just its blueprint).
   const allParts = mergedRecipe && mergedRecipe.length > 0 && mergedRecipe.every(c =>
-    (quantities[c.unique_name] ?? 0) >= (c.count || 1)
+    (inventory[c.unique_name]?.quantity ?? 0) >= (c.count || 1)
   );
 
   return (
     <div
       className={`craft-card${isOwned ? " craft-card-owned" : ""}${allParts && !isOwned ? " craft-card-ready" : ""}`}
-      onClick={onOpen}
+      onClick={() => onOpen(item)}
     >
       {/* Col 1, rows 1-4: image block with star/wiki/name overlaid */}
       <div className="cc-image">
         <ItemImg imageName={item.image_name} category={item.category} size={78} />
         <button className={`cc-star ${isTracked ? "tracked" : ""}`}
-          onClick={e => { e.stopPropagation(); onTrack(); }}>{isTracked ? "★" : "☆"}</button>
+          onClick={e => { e.stopPropagation(); onTrack(item); }}>{isTracked ? "★" : "☆"}</button>
         <button className="cc-wiki"
           onClick={e => { e.stopPropagation(); invoke("plugin:opener|open_url", { url:`https://wiki.warframe.com/w/${item.name.replace(" Blueprint","").replace(/\s+/g,"_")}` }).catch(()=>{}); }}>wiki</button>
         <span className="cc-name">{item.name}</span>
@@ -400,13 +434,13 @@ function CraftCard({ item, recipe, quantities, relicDrops, relicNames, masteryDa
           <div className="comp-row-loading">No recipe</div>
         ) : (
           mergedRecipe!.map((comp, i) => (
-            <CompRow key={i} comp={comp} quantities={quantities} relicDrops={relicDrops} relicNames={relicNames} />
+            <CompRow key={i} comp={comp} inventory={inventory} relicDrops={relicDrops} relicNames={relicNames} />
           ))
         )}
       </div>
     </div>
   );
-}
+});
 
 // ─── Foundry ─────────────────────────────────────────────────────────────────
 
@@ -415,7 +449,7 @@ const CRAFT_CATEGORIES = [
   "Companions", "Archwing", "Blueprints", "Misc",
 ];
 
-export default function Foundry({ quantities, masteryData, refreshKey, crafting, subsummedWarframes = new Set(), archonShards = {}, tracked, onTrackToggle, filters, onFiltersChange }: Props) {
+export default function Foundry({ inventory, refreshKey, crafting, subsummedWarframes = new Set(), tracked, onTrackToggle, filters, onFiltersChange }: Props) {
   const [craftable, setCraftable] = useState<CatalogItem[]>([]);
   const [recipes, setRecipes]     = useState<Map<string, RecipeComponent[]>>(new Map());
   const [relicDrops, setRelicDrops] = useState<Record<string, string[]>>({});
@@ -447,44 +481,46 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting,
       .filter(i => !filterUnvaulted || i.vaulted === false)
       .filter(i => {
         if (!filterMastered && !filterUnmastered) return true;
-        const isMastered = (masteryData[i.unique_name] ?? 0) >= 30;
+        const isMastered = (inventory[i.unique_name]?.mastery_rank ?? 0) >= 30;
         return filterMastered ? isMastered : !isMastered;
       })
       .filter(i => {
         if (!filterOwned && !filterUnowned) return true;
-        const owned = (quantities[i.unique_name] ?? 0) > 0;
+        const owned = (inventory[i.unique_name]?.quantity ?? 0) > 0;
         return filterOwned ? owned : !owned;
       })
       .filter(i => {
         if (!filterReady) return true;
         const r = recipes.get(i.unique_name);
         if (!r || r.length === 0) return false;
-        if ((quantities[i.unique_name] ?? 0) > 0) return false;
-        return mergeComponents(r).every(c => (quantities[c.unique_name] ?? 0) >= (c.count || 1));
+        if ((inventory[i.unique_name]?.quantity ?? 0) > 0) return false;
+        return mergeComponents(r).every(c => (inventory[c.unique_name]?.quantity ?? 0) >= (c.count || 1));
       });
   }, [craftable, activeCat, search, filterPrime, filterVaulted, filterUnvaulted,
       filterMastered, filterUnmastered, filterOwned, filterUnowned, filterReady,
-      recipes, quantities, masteryData]);
+      // Only pull in inventory/recipes when a filter that actually reads them is active.
+      // Without this guard, every 10-second scanner update re-renders all 100+ cards.
+      (filterMastered || filterUnmastered || filterOwned || filterUnowned || filterReady) ? inventory : null,
+      filterReady ? recipes : null,
+  ]);
 
-  // Load recipes for visible items
+  // Load recipes for visible items — one bulk IPC call instead of N concurrent calls
   useEffect(() => {
     const toLoad = visible.filter(i => !recipes.has(i.unique_name));
     if (toLoad.length === 0) return;
     let cancelled = false;
-    Promise.all(
-      toLoad.map(item =>
-        invoke<RecipeComponent[]>("get_recipe", { uniqueName: item.unique_name })
-          .then(r => [item.unique_name, r ?? []] as [string, RecipeComponent[]])
-          .catch(() => [item.unique_name, []] as [string, RecipeComponent[]])
-      )
-    ).then(results => {
+    invoke<Record<string, RecipeComponent[]>>("get_recipes_bulk", {
+      uniqueNames: toLoad.map(i => i.unique_name),
+    }).then(result => {
       if (cancelled) return;
       setRecipes(prev => {
         const next = new Map(prev);
-        for (const [id, r] of results) next.set(id, r);
+        for (const item of toLoad) {
+          next.set(item.unique_name, result[item.unique_name] ?? []);
+        }
         return next;
       });
-    });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [visible]);
 
@@ -496,9 +532,13 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting,
       .catch(() => {});
   }, [modalItem]);
 
-  const toggleTrack = useCallback((item: CatalogItem) => {
+  const handleTrack = useCallback((item: CatalogItem) => {
     onTrackToggle(item.unique_name);
   }, [onTrackToggle]);
+
+  const handleOpen = useCallback((item: CatalogItem) => {
+    setModalItem(item);
+  }, []);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -524,9 +564,9 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting,
         <RecipeModal
           item={modalItem}
           recipe={modalRecipe}
-          quantities={quantities}
+          inventory={inventory}
           isTracked={tracked.includes(modalItem.unique_name)}
-          onTrack={() => toggleTrack(modalItem)}
+          onTrack={() => handleTrack(modalItem)}
           onClose={() => setModalItem(null)}
           crafting={crafting}
         />
@@ -589,17 +629,14 @@ export default function Foundry({ quantities, masteryData, refreshKey, crafting,
               key={item.unique_name}
               item={item}
               recipe={recipes.has(item.unique_name) ? recipes.get(item.unique_name)! : null}
-              quantities={quantities}
+              inventory={inventory}
               relicDrops={relicDrops}
               relicNames={relicNames}
-              masteryData={masteryData}
               crafting={crafting}
               isTracked={tracked.includes(item.unique_name)}
-              onTrack={() => toggleTrack(item)}
-              onOpen={() => setModalItem(item)}
-
+              onTrack={handleTrack}
+              onOpen={handleOpen}
               subsummedWarframes={subsummedWarframes}
-              archonShards={archonShards}
             />
           ))}
         </div>

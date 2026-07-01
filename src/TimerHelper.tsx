@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./TimerHelper.css";
+import type { InventoryItem } from "./App";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -192,12 +193,12 @@ interface Props {
   fissureWatches: FissureWatch[];
   onAddWatch: (w: FissureWatch) => void;
   onRemoveWatch: (id: string) => void;
-  quantities: Record<string, number>;
+  inventory: Record<string, InventoryItem>;
 }
 
 type FissureTab = "normal" | "hard" | "storm";
 
-export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatches, onAddWatch, onRemoveWatch, quantities }: Props) {
+export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatches, onAddWatch, onRemoveWatch, inventory }: Props) {
   const [ws, setWs] = useState<WorldState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
@@ -400,7 +401,7 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
               {active && !open && <div className="exp-tile-location">{ws.voidTrader.location}</div>}
               {active && open && <div className="exp-tile-body exp-tile-inventory" onClick={e => e.stopPropagation()}>
                 {ws.voidTrader.manifest.map((item, i) => {
-                  const owned = item.uniqueName ? (quantities[item.uniqueName] ?? 0) > 0 : false;
+                  const owned = item.uniqueName ? (inventory[item.uniqueName]?.quantity ?? 0) > 0 : false;
                   return (
                     <div key={i} className={`timer-inv-row${owned ? " inv-owned" : ""}`}>
                       <span className="timer-inv-name">{item.name}</span>
@@ -422,7 +423,7 @@ export default function TimerHelper({ favorites, onFavoriteToggle, fissureWatche
               <ExpHeader id="prime-resurgence" name="Prime Resurgence" state="Active" sc="st-active" countdown={cd(ws.primeResurgence!.expiry)} open={open} />
               {open && <div className="exp-tile-body exp-tile-inventory" onClick={e => e.stopPropagation()}>
                 {ws.primeResurgence!.manifest.map((item, i) => {
-                  const owned = item.uniqueName ? (quantities[item.uniqueName] ?? 0) > 0 : false;
+                  const owned = item.uniqueName ? (inventory[item.uniqueName]?.quantity ?? 0) > 0 : false;
                   return (
                     <div key={i} className={`timer-inv-row${owned ? " inv-owned" : ""}`}>
                       <span className="timer-inv-name">{item.name}</span>
