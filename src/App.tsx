@@ -604,7 +604,6 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [colorblindMode, setColorblindMode] = useState(() =>
     localStorage.getItem("ff-colorblind") === "true"
   );
-  const [manualMsg, setManualMsg] = useState("");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
   const [imgCacheDir, setImgCacheDir] = useState("");
 
