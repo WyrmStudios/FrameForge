@@ -561,8 +561,14 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
       filterReady ? recipes : null,
   ]);
 
-  // Reset to first page whenever the visible list changes
-  useEffect(() => { setPage(0); }, [visible]);
+  // Reset to page 1 when the user changes a filter, search, or category —
+  // but NOT when inventory or recipes update in the background.
+  // Without this guard, every 10-second scan resets the page mid-browse.
+  useEffect(() => { setPage(0); }, [ // eslint-disable-line
+    activeCat, search, filterPrime, filterVaulted, filterUnvaulted,
+    filterMastered, filterUnmastered, filterOwned, filterUnowned, filterReady,
+    craftable,
+  ]);
   const PAGE_SIZE = 30;
   const pageCount = Math.ceil(visible.length / PAGE_SIZE);
   const pagedItems = useMemo(() => visible.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [visible, page]);

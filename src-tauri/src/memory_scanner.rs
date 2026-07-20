@@ -597,6 +597,14 @@ pub fn compute_riven_mod_name(buffs: &[BlobRivenStat]) -> String {
 pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     let end_pos = find_blob_end(raw)?;
 
+    // Real FULL_ACCOUNT blobs are several hundred KB — anything smaller is a
+    // small false-positive fragment that matched the end marker by coincidence.
+    const MIN_PARSE_BYTES: usize = 50_000;
+    if end_pos < MIN_PARSE_BYTES {
+        eprintln!("[blob-parse] too small ({} B < {} B) — skipping", end_pos, MIN_PARSE_BYTES);
+        return None;
+    }
+
     // capture_all_blobs seeds from the JSON opening { so raw already forms a complete
     // JSON object — use it directly. Fall back to the old SubscribedToEmails approach
     // for any caller that still passes data starting inside the object.
@@ -881,7 +889,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         Foundation::{CloseHandle, FALSE},
         System::{
             Diagnostics::Debug::ReadProcessMemory,
-            Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS},
+            Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_IMAGE, PAGE_GUARD, PAGE_NOACCESS},
             Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
         },
     };
@@ -912,6 +920,14 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         b"\"LongGuns\":[",
         b"\"Melee\":[",
         b"\"Pistols\":[",
+    ];
+    // Secondary start triggers: unambiguous inventory fields that are present in every
+    // account's FULL_ACCOUNT blob even when SubscribedToEmails is absent or in a
+    // skipped memory region. Combined with !is_mission these are safe to use alone.
+    const ALT_STARTS: &[&[u8]] = &[
+        b"\"MiscItems\":[{\"ItemType\":\"/Lotus/",  // resources array with real items
+        b"\"Suits\":[{\"ItemType\":\"/Lotus/",       // warframes array with real items
+        b"\"RegularCredits\":",                       // credit balance — in every blob
     ];
 
     // ── Fast path: try the cached region from last successful scan ─────────────
@@ -1029,11 +1045,15 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         // Skip pages that can never hold heap JSON:
         // • must be committed and readable
         // • skip execute-only pages (code sections, JIT stubs)
+        // • skip PE image sections — those hold string constants in the exe/DLLs,
+        //   not live heap data; they false-trigger the Lotus anchor check and
+        //   cost ~40 s scanning 20 MB+ without ever finding the blob end
         // • skip anything smaller than MIN_REGION
         if mbi.State   != MEM_COMMIT
             || mbi.Protect &  PAGE_GUARD    != 0
             || mbi.Protect &  PAGE_NOACCESS != 0
             || mbi.Protect &  EXEC_MASK     != 0
+            || mbi.Type    == MEM_IMAGE
             || region_size  < MIN_REGION
         { regions_skipped += 1; continue; }
 
@@ -1105,11 +1125,12 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         if found_result { continue; }
 
         let t2 = std::time::Instant::now();
-        let has_start  = chunk.windows(START_MARKER.len()).any(|w| w == START_MARKER);
-        let is_mission = chunk.windows(MISSION_DELTA.len()).any(|w| w == MISSION_DELTA);
-        let has_anchor = ANCHORS.iter().any(|a| chunk.windows(a.len()).any(|w| w == *a));
-        let has_lotus  = chunk.windows(LOTUS_KEY.len()).any(|w| w == LOTUS_KEY);
-        let qualifies  = has_start && !is_mission && (has_anchor || has_lotus);
+        let has_start     = chunk.windows(START_MARKER.len()).any(|w| w == START_MARKER);
+        let has_alt_start = ALT_STARTS.iter().any(|a| chunk.windows(a.len()).any(|w| w == *a));
+        let is_mission    = chunk.windows(MISSION_DELTA.len()).any(|w| w == MISSION_DELTA);
+        let has_anchor    = ANCHORS.iter().any(|a| chunk.windows(a.len()).any(|w| w == *a));
+        let has_lotus     = chunk.windows(LOTUS_KEY.len()).any(|w| w == LOTUS_KEY);
+        let qualifies     = (has_start || has_alt_start) && !is_mission && (has_anchor || has_lotus);
         t_search += t2.elapsed();
 
         // Accumulate regions with Lotus paths (no SubscribedToEmails, no mission delta) into
@@ -1152,10 +1173,12 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             }
             combined.extend_from_slice(chunk);
 
-            // Find the START_MARKER position within combined, then search backward for
+            // Find any known start marker within combined, then search backward for
             // the first {"  — that is the outermost JSON object open.
             let start_off = combined.windows(START_MARKER.len())
                 .position(|w| w == START_MARKER)
+                .or_else(|| ALT_STARTS.iter().find_map(|a|
+                    combined.windows(a.len()).position(|w| w == *a)))
                 .unwrap_or(combined.len().saturating_sub(1));
             let json_open = combined[..start_off + 1]
                 .windows(2)

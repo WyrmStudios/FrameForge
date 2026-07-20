@@ -30,8 +30,10 @@ interface StatPoint { datetime: string; median: number; volume: number; }
 interface EditMode {
   pt: number;
   qty: number;
+  visible: boolean;
   onPtChange: (v: number) => void;
   onQtyChange: (v: number) => void;
+  onVisibleChange: (v: boolean) => void;
   onSave: () => void;
 }
 
@@ -43,6 +45,8 @@ interface Props {
   isLoggedIn: boolean;
   myUsername?: string;
   editMode?: EditMode;
+  /** Pre-selected mod rank when opening from a rank-specific inventory chip. */
+  prefillModRank?: number;
 }
 
 function fmt(n: number) { return Math.round(n).toLocaleString(); }
@@ -135,28 +139,42 @@ function OrderRow({ o, type, displayName, onList }: {
 
 // ── Create order form ─────────────────────────────────────────────────────────
 
-function CreateOrderForm({ urlName, prefillPrice, prefillType, onDone }: {
-  urlName: string; prefillPrice: number; prefillType: "sell" | "buy"; onDone: () => void;
+function CreateOrderForm({ urlName, prefillPrice, prefillType, prefillModRank, onDone }: {
+  urlName: string; prefillPrice: number; prefillType: "sell" | "buy"; prefillModRank?: number; onDone: () => void;
 }) {
   const [orderType, setOrderType] = useState<"sell" | "buy">(prefillType);
-  const [price, setPrice]         = useState(prefillPrice);
+  const [price, setPrice]         = useState(Math.round(prefillPrice));
   const [qty, setQty]             = useState(1);
+  const [visible, setVisible]     = useState(true);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [success, setSuccess]     = useState(false);
 
+  // Cache item info on mount: needed for itemId and to detect mods (modMaxRank present).
+  const [itemId, setItemId]       = useState<string | null>(null);
+  const [modMaxRank, setModMaxRank] = useState<number | null>(null);
+  const [modRank, setModRank]       = useState(prefillModRank ?? 0);
+
+  useEffect(() => {
+    invoke<{ id?: string; modMaxRank?: number } | null>("wfm_get_item_info", { urlName })
+      .then(info => {
+        if (info?.id) setItemId(info.id);
+        if (info?.modMaxRank !== undefined && info.modMaxRank > 0) {
+          setModMaxRank(info.modMaxRank);
+        }
+      })
+      .catch(() => {});
+  }, [urlName]); // eslint-disable-line
+
   const submit = async () => {
     setLoading(true); setError("");
     try {
-      // Try to get the item ID from WFM's item page
-      // v2 item info returns { id, slug, ... } directly
-      const info = await invokeWfm<{ id: string; slug: string } | null>("wfm_get_item_info", { urlName })
-        .catch(() => null);
-      const itemId = info?.id;
-      if (!itemId) {
-        throw new Error("This item isn't individually listed on warframe.market. Try listing the full set instead.");
-      }
-      await invokeWfm("wfm_create_order", { itemId, orderType, platinum: price, quantity: qty });
+      const id = itemId ?? (await invokeWfm<{ id: string } | null>("wfm_get_item_info", { urlName }).catch(() => null))?.id;
+      if (!id) throw new Error("This item isn't individually listed on warframe.market. Try listing the full set instead.");
+      await invokeWfm("wfm_create_order", {
+        itemId: id, orderType, platinum: price, quantity: qty, visible,
+        modRank: modMaxRank !== null ? modRank : null,
+      });
       setSuccess(true);
       setTimeout(onDone, 1500);
     } catch (e) { setError(String(e)); }
@@ -171,15 +189,27 @@ function CreateOrderForm({ urlName, prefillPrice, prefillType, onDone }: {
           <button className={orderType === "buy"  ? "active" : ""} onClick={() => setOrderType("buy")}>Buy</button>
         </div>
         <label>Price</label>
-        <input type="number" value={price} min={1} onChange={e => setPrice(+e.target.value)} className="imp-num-input" />
+        <input type="number" value={price} min={1} step={1} onChange={e => setPrice(Math.round(+e.target.value))} className="imp-num-input" />
         <span className="imp-plat-label">p</span>
         <label>Qty</label>
         <input type="number" value={qty} min={1} max={99} onChange={e => setQty(+e.target.value)} className="imp-num-input imp-qty-input" />
+        {modMaxRank !== null && (
+          <>
+            <label>Rank</label>
+            <input type="number" value={modRank} min={0} max={modMaxRank}
+              onChange={e => setModRank(Math.max(0, Math.min(modMaxRank, +e.target.value)))}
+              className="imp-num-input imp-qty-input" title={`Mod rank (0–${modMaxRank})`} />
+          </>
+        )}
+        <div className="imp-type-btns" style={{ marginLeft: "auto" }}>
+          <button className={visible ? "active" : ""} onClick={() => setVisible(true)} title="Order appears on warframe.market">Visible</button>
+          <button className={!visible ? "active" : ""} onClick={() => setVisible(false)} title="Order is saved but hidden from other players">Hidden</button>
+        </div>
         <button className="imp-post-btn" onClick={submit} disabled={loading || !price}>
           {loading ? "…" : "Post"}
         </button>
       </div>
-      {success && <div className="imp-create-success">✓ Order posted successfully!</div>}
+      {success && <div className="imp-create-success">✓ Order posted {visible ? "visibly" : "as hidden"}!</div>}
       {!success && error && <div className="imp-create-error">{error}</div>}
     </div>
   );
@@ -187,7 +217,7 @@ function CreateOrderForm({ urlName, prefillPrice, prefillType, onDone }: {
 
 // ── Main popup ────────────────────────────────────────────────────────────────
 
-export default function ItemMarketPopup({ urlName, displayName, imageName, onClose, isLoggedIn, editMode }: Props) {
+export default function ItemMarketPopup({ urlName, displayName, imageName, onClose, isLoggedIn, editMode, prefillModRank }: Props) {
   const [orders, setOrders]     = useState<{ sell: WfmOrder[]; buy: WfmOrder[] } | null>(null);
   const [stats, setStats]       = useState<StatPoint[]>([]);
   const [loadingO, setLoadingO] = useState(true);
@@ -213,7 +243,8 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
 
   const openForm = (type: "sell" | "buy", price?: number) => {
     const fallback = type === "sell" ? (lowestSell ?? median48h ?? 0) : (highestBuy ?? median48h ?? 0);
-    setPrefillPrice(price ?? fallback);
+    // Always whole platinum — market shows decimals but you can't trade fractions.
+    setPrefillPrice(Math.round(price ?? fallback));
     setPrefillType(type);
     setShowForm(true);
   };
@@ -286,11 +317,15 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
             <span className="imp-edit-label" style={{ marginLeft: 8 }}>Qty</span>
             <input className="imp-edit-input imp-edit-input-sm" type="number" min={1} value={editMode.qty}
               onChange={e => editMode.onQtyChange(+e.target.value)} />
+            <div className="imp-type-btns" style={{ marginLeft: 8 }}>
+              <button className={editMode.visible ? "active" : ""} onClick={() => editMode.onVisibleChange(true)}>Visible</button>
+              <button className={!editMode.visible ? "active" : ""} onClick={() => editMode.onVisibleChange(false)}>Hidden</button>
+            </div>
             <button className="imp-action-sell" style={{ marginLeft: "auto" }} onClick={editMode.onSave}>Save</button>
             <button className="imp-action-buy" onClick={onClose}>Cancel</button>
           </div>
         ) : isLoggedIn ? (
-          <div className="imp-action-bar">
+          <div className="imp-action-bar imp-edit-bar">
             {!showForm ? (
               <>
                 <button className="imp-action-sell" onClick={() => openForm("sell")}>
@@ -302,7 +337,7 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
               </>
             ) : (
               <CreateOrderForm urlName={urlName} prefillPrice={prefillPrice} prefillType={prefillType}
-                onDone={() => { setShowForm(false); }} />
+                prefillModRank={prefillModRank} onDone={() => { setShowForm(false); }} />
             )}
           </div>
         ) : (

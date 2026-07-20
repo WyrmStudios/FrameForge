@@ -1,4 +1,4 @@
-# FrameForge — Warframe Companion `v2.4.0`
+# FrameForge — Warframe Companion `v2.5.0`
 
 A desktop companion for Warframe — live inventory, market prices, trading, timers, relic overlay, and riven analysis. Read-only, no game modification.
 
@@ -17,7 +17,7 @@ This gives complete coverage: resources, mods, arcanes, relics, weapons, Warfram
 Browse every craftable item with full ingredient trees. Components are colour-coded by ownership status and show which relics drop them. Star items to track them in the Modular Window. Filter by Prime, Vaulted/Unvaulted, Owned/Unowned, Ready to build, and Mastered/Unmastered.
 
 ### Market Helper
-Browse Prime sets with live platinum prices from [warframe.market](https://warframe.market). Click any item for a live order popup with sell/buy orders, 3-week price chart, and one-click listing (requires WFM login).
+Browse Prime sets and mods with live platinum prices from [warframe.market](https://warframe.market). Click any item for a live order popup with sell/buy orders, 3-week price chart, and one-click listing (requires WFM login). Mod cards show per-rank chips — click a chip to pre-fill the listing form with that exact rank and quantity.
 
 **WFM Status Automation** (requires WFM login):
 - Go Invisible on startup — set your status to Invisible the moment FrameForge opens
@@ -31,6 +31,8 @@ Full warframe.market integration — manage active listings, post new orders, an
 - **Auto trade detection** — when a trade completes in-game, the matching WFM whisper is automatically marked complete, the sold reply is copied to your clipboard, and the whisper stays visible as a ghost for 5 minutes.
 - **Auto listing update** — after a sale is detected, the corresponding WFM sell listing is automatically decremented (or deleted if the last copy). A Revert button appears on the ghost whisper to undo the change if needed.
 - **Status auto-reconnect** — if WFM drops your status to offline, it is automatically restored without any action needed. Session token stored in Windows Credential Manager.
+- **Riven auction management** — view all active riven auctions with AUC/DIR badges, starting price, and buyout price. Edit price, visibility, and auction type (AUC↔DIR) via a dedicated popup. Type switching is handled server-side with a guaranteed full data fetch.
+- **In-app WFM login** — authenticate via a built-in WebView browser popup instead of entering credentials manually.
 
 ### Relic Helper
 Browse void fissure drop tables with rarity colour-coding, ownership status, and platinum values. Supports all refinement levels (Intact → Radiant).

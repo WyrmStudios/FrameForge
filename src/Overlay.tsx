@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import "./Overlay.css";
 
@@ -232,9 +231,11 @@ function RewardCard({ item, left, width }: { item: RewardItem; left: number; wid
 // ─── Main overlay ─────────────────────────────────────────────────────────────
 export default function Overlay() {
   const [rewards, setRewards] = useState<RewardItem[]>([]);
-  const params   = new URLSearchParams(window.location.search);
-  const winW     = parseInt(params.get("ww") ?? "1920", 10);
-  const priority = (params.get("priority") ?? "completion") as PickPriority;
+  // winW = the overlay window's own pixel width, which equals the Warframe client
+  // width (App.tsx creates the window with width: ww). No URL param needed.
+  const winW     = window.innerWidth || 1920;
+  // priority comes from localStorage (shared origin with main window).
+  const priority = (localStorage.getItem("ff-overlay-priority") ?? "completion") as PickPriority;
 
   const prevKey      = useRef<string>("");
   const catalogRef   = useRef<Record<string, any>>({});
@@ -253,21 +254,24 @@ export default function Overlay() {
   }, []);
 
   useEffect(() => {
+    invoke("log_relic_fe", { msg: "[OV] Overlay.tsx useEffect start" }).catch(() => {});
     type EventPayload = { paths: string[]; positions: number[] };
     let pendingEvent: EventPayload | null = null;
     let dataReady = false;
 
     const processPayload = (paths: string[], positions: number[]) => {
+      invoke("log_relic_fe", { msg: `[OV] processPayload(${paths.length} items)` }).catch(() => {});
       const key = paths.join(",");
-      if (key === prevKey.current) return;
+      if (key === prevKey.current) { invoke("log_relic_fe", { msg: "[OV] processPayload: duplicate key, skipping" }).catch(() => {}); return; }
 
       const currentCount = rewards.length;
-      if (paths.length <= currentCount && currentCount > 0) return;
+      if (paths.length <= currentCount && currentCount > 0) { invoke("log_relic_fe", { msg: `[OV] processPayload: count guard (${paths.length}<=${currentCount}), skipping` }).catch(() => {}); return; }
 
       prevKey.current = key;
 
       const byUnique = catalogRef.current;
       const qty      = quantRef.current;
+      invoke("log_relic_fe", { msg: `[OV] building ${paths.length} base items` }).catch(() => {});
       const base: RewardItem[] = paths.map((path, i) => {
         if (path.startsWith("?:")) {
           return {
@@ -291,6 +295,7 @@ export default function Overlay() {
           owned_qty: qty[lk] ?? qty[path] ?? 0,
         };
       });
+      invoke("log_relic_fe", { msg: `[OV] setRewards(${base.length} items)` }).catch(() => {});
       setRewards(base);
 
       paths.forEach(async (path, i) => {
@@ -411,23 +416,56 @@ export default function Overlay() {
       });
     };
 
+    // Clear stale rewards when a new fissure starts so the diagnostic div shows
+    // while OCR is running instead of the previous fissure's stale cards.
+    const unsubTrigger = listen<null>("relic-trigger", () => {
+      invoke("log_relic_fe", { msg: "[OV] relic-trigger → clearing rewards" }).catch(() => {});
+      setRewards([]);
+      prevKey.current = "";
+    });
+
+    invoke("log_relic_fe", { msg: "[OV] registering relic-rewards listener" }).catch(() => {});
     const unsub = listen<{ items: string[]; positions: number[] } | null>(
       "relic-rewards",
       async (e) => {
         const payload = e.payload;
+        invoke("log_relic_fe", { msg: `[OV] relic-rewards event: items=${payload?.items?.length ?? "null"} dataReady=${dataReady}` }).catch(() => {});
         if (!payload || payload.items.length === 0) {
-          getCurrentWebviewWindow().close().catch(() => {});
+          invoke("log_relic_fe", { msg: "[OV] null/empty payload → moving off-screen" }).catch(() => {});
+          setRewards([]);
+          prevKey.current = "";
+          invoke("move_overlay_offscreen").catch(() => {});
           return;
         }
 
         if (dataReady) {
           processPayload(payload.items, payload.positions);
         } else {
+          invoke("log_relic_fe", { msg: "[OV] buffering event (dataReady=false)" }).catch(() => {});
           pendingEvent = { paths: payload.items, positions: payload.positions };
         }
       }
     );
 
+    // Pull any rewards already stored in AppState — guards against the gap between
+    // tauri://created firing (in App.tsx) and this listener being registered.
+    // .take() on the Rust side clears the stored value atomically, so there is no
+    // double-processing if the listener also receives the event.
+    invoke("log_relic_fe", { msg: "[OV] calling get_pending_relic_rewards" }).catch(() => {});
+    invoke<{ items: string[]; positions: number[] } | null>("get_pending_relic_rewards")
+      .then(pending => {
+        invoke("log_relic_fe", { msg: `[OV] pull result: ${pending ? pending.items.length + " items" : "null"}` }).catch(() => {});
+        if (pending && pending.items.length > 0) {
+          if (dataReady) {
+            processPayload(pending.items, pending.positions);
+          } else {
+            pendingEvent = { paths: pending.items, positions: pending.positions };
+          }
+        }
+      })
+      .catch((err) => { invoke("log_relic_fe", { msg: `[OV] pull error: ${err}` }).catch(() => {}); });
+
+    invoke("log_relic_fe", { msg: "[OV] starting Promise.allSettled for catalog/qty/crafting" }).catch(() => {});
     Promise.allSettled([
       invoke<any[]>("get_all_items"),
       invoke<Record<string, number>>("get_current_quantities"),
@@ -450,6 +488,7 @@ export default function Overlay() {
         craftingRef.current = byCraft;
       }
       dataReady = true;
+      invoke("log_relic_fe", { msg: `[OV] dataReady=true — pendingEvent=${pendingEvent ? pendingEvent.paths.length + " items" : "null"}` }).catch(() => {});
 
       if (pendingEvent) {
         processPayload(pendingEvent.paths, pendingEvent.positions);
@@ -500,7 +539,7 @@ export default function Overlay() {
       }));
     });
 
-    return () => { unsub.then(fn => fn()); unsubInv.then(fn => fn()); };
+    return () => { unsub.then(fn => fn()); unsubInv.then(fn => fn()); unsubTrigger.then(fn => fn()); };
   }, []);
 
   if (rewards.length === 0) return null;

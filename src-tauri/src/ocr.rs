@@ -1298,12 +1298,20 @@ pub fn extract_reward_items_twophase(
         ));
     }
 
-    // Relic selection / ESC screens contain " relic"; reward screen never does.
-    if raw_full.to_lowercase().contains(" relic") {
-        return (false, true, vec![], vec![], format!(
-            "├─ Capture  : {}\n└─ OCR      : relic selection screen detected (skipped)",
-            capture_info
-        ));
+    // Relic selection screens show relics named with a quality tier
+    // ("Axi N9 Intact Relic", "Neo R3 Flawless Relic", etc.).
+    // The reward screen never shows quality words — but endless missions show
+    // "1 Relic Opened" in the Endless Bonus tracker, which a bare " relic" check
+    // incorrectly matched, causing every reward-screen attempt to be skipped.
+    {
+        let lower = raw_full.to_lowercase();
+        const QUALITY: &[&str] = &["intact", "exceptional", "flawless", "radiant"];
+        if lower.contains(" relic") && QUALITY.iter().any(|q| lower.contains(q)) {
+            return (false, true, vec![], vec![], format!(
+                "├─ Capture  : {}\n└─ OCR      : relic selection screen detected (skipped)",
+                capture_info
+            ));
+        }
     }
 
     // ── 2. Find card positions from rarity bars ───────────────────────────────
@@ -1445,6 +1453,7 @@ pub fn extract_reward_items_twophase(
     let raw_ocr_log: String = {
         let mut lines_log = Vec::new();
         for (i, (text, x, y)) in ocr_lines.iter().enumerate() {
+            let tl = text.to_lowercase();
             let skip = if *y < 0.10 {
                 Some(format!("y={:.2} < 0.10 top-HUD cutoff", y))
             } else if *y >= ocr_y_max {
@@ -1453,6 +1462,8 @@ pub fn extract_reward_items_twophase(
                 Some("player name".into())
             } else if is_ui_badge(text) {
                 Some("UI badge".into())
+            } else if tl.contains("booster") || tl.contains("relic opened") || tl.contains("endless bonus") {
+                Some("endless bonus UI".into())
             } else {
                 None
             };

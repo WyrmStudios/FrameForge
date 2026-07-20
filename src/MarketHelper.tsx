@@ -62,6 +62,12 @@ interface BlobRivenEntry {
   rerolls:   number;
 }
 
+interface ModCopy {
+  uniqueName: string;
+  rank: number | null;
+  count: number;
+}
+
 interface Props {
   inventory: Record<string, InventoryItem>;
   refreshKey: number;
@@ -69,6 +75,7 @@ interface Props {
   onWfmLoginChange?: (loggedIn: boolean) => void;
   filters: MarketFilters;
   onFiltersChange: (f: MarketFilters) => void;
+  modCopiesMap?: Record<string, ModCopy[]>;
 }
 
 function toggle<T>(arr: T[], val: T): T[] {
@@ -203,7 +210,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
 
 // ─── Market Helper ────────────────────────────────────────────────────────────
 
-export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLoginChange, filters, onFiltersChange }: Props) {
+export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLoginChange, filters, onFiltersChange, modCopiesMap = {} }: Props) {
   const [allItems, setAllItems]           = useState<CatalogItem[]>([]);
   const [wfmItems, setWfmItems]           = useState<WfmItem[]>([]);
   const [wfmLoading, setWfmLoading]       = useState(false);
@@ -212,7 +219,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   const [wfmBadge, setWfmBadge]           = useState(0);
   const [wfmUsername, setWfmUsername]     = useState<string | null>(null);
   const [auctionRefreshKey, setAuctionRefreshKey] = useState(0);
-  const [popup, setPopup] = useState<{ urlName: string; displayName: string; imageName?: string } | null>(null);
+  const [popup, setPopup] = useState<{ urlName: string; displayName: string; imageName?: string; prefillModRank?: number } | null>(null);
   const [rivens, setRivens]               = useState<BlobRivenEntry[]>([]);
   const { search, ownership, conditions, vault, sortMode, activeMarketTab } = filters;
   const set = <K extends keyof MarketFilters>(k: K, v: MarketFilters[K]) => onFiltersChange({ ...filters, [k]: v });
@@ -260,6 +267,29 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
         });
       })
       .catch(() => {});
+  }, []); // eslint-disable-line
+
+  // Load the FrameForge centralised price cache from GitHub (~3 800 items, updated every ~2h).
+  // Overwrites stale disk-cache values; fails silently so the queue fills gaps if GitHub is down.
+  // Refreshes every 2 hours to pick up new prices without restarting the app.
+  useEffect(() => {
+    const applyRemote = () =>
+      invoke<Record<string, number>>("load_remote_price_cache")
+        .then(remote => {
+          if (!remote) return;
+          setPrices(prev => {
+            const m = new Map(prev);
+            for (const [urlName, price] of Object.entries(remote)) {
+              m.set(urlName, { url_name: urlName, sell_median: price });
+            }
+            return m;
+          });
+        })
+        .catch(() => {}); // GitHub unreachable — queue will fill gaps as normal
+
+    applyRemote();
+    const id = setInterval(applyRemote, 2 * 60 * 60 * 1000); // every 2 hours
+    return () => clearInterval(id);
   }, []); // eslint-disable-line
 
   // Listen for prices arriving from the Rust queue drain thread.
@@ -536,7 +566,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       </div>
 
       {/* Keep WfmTrading mounted at all times so auction/whisper state isn't lost on tab switch */}
-      <div style={{ display: activeMarketTab === "trading" ? "" : "none" }}>
+      <div style={{ display: activeMarketTab === "trading" ? "flex" : "none", flex: 1, flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
         <WfmTrading
           wfmLookup={wfmLookup}
           wfmItems={wfmItems}
@@ -549,9 +579,17 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       </div>
 
       {activeMarketTab === "mods" && (
-        <div className="market-placeholder">
-          <p>Mods &amp; Arcanes market coming soon.</p>
-        </div>
+        <ModsTab
+          allItems={allItems}
+          inventory={inventory}
+          wfmLookup={wfmLookup}
+          prices={prices}
+          modCopiesMap={modCopiesMap}
+          onOpenPopup={(urlName, displayName, imageName, prefillModRank) => {
+            invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
+            setPopup({ urlName, displayName, imageName, prefillModRank });
+          }}
+        />
       )}
 
       {activeMarketTab === "rivens" && (
@@ -652,10 +690,178 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           urlName={popup.urlName}
           displayName={popup.displayName}
           imageName={popup.imageName}
+          prefillModRank={popup.prefillModRank}
           onClose={() => setPopup(null)}
           isLoggedIn={!!wfmUsername}
           myUsername={wfmUsername ?? undefined}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Mods & Arcanes tab ───────────────────────────────────────────────────────
+
+const MODS_PAGE_SIZE = 60;
+
+function ModsTab({ allItems, inventory, wfmLookup, prices, modCopiesMap, onOpenPopup }: {
+  allItems: CatalogItem[];
+  inventory: Record<string, InventoryItem>;
+  wfmLookup: Map<string, string>;
+  prices: Map<string, WfmPrice>;
+  modCopiesMap: Record<string, ModCopy[]>;
+  onOpenPopup: (urlName: string, displayName: string, imageName?: string, prefillModRank?: number) => void;
+}) {
+  const [search, setSearch]       = useState("");
+  const [catFilter, setCatFilter] = useState<"all" | "mods" | "arcanes">("all");
+  const [ownFilter, setOwnFilter] = useState<"all" | "owned" | "notowned">("all");
+  const [sortMode, setSortMode]   = useState<"qty" | "plat" | "az" | "za">("qty");
+  const [page, setPage]           = useState(0);
+
+  const catalog = useMemo(() =>
+    allItems.filter(i => i.category === "Mods" || i.category === "Arcanes"),
+  [allItems]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return catalog
+      .filter(i => {
+        if (q && !i.name.toLowerCase().includes(q)) return false;
+        const qty = inventory[i.unique_name]?.quantity ?? 0;
+        if (ownFilter === "owned"    && qty === 0) return false;
+        if (ownFilter === "notowned" && qty  >  0) return false;
+        if (catFilter === "mods"    && i.category !== "Mods")    return false;
+        if (catFilter === "arcanes" && i.category !== "Arcanes") return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortMode === "qty") {
+          const qa = inventory[a.unique_name]?.quantity ?? 0;
+          const qb = inventory[b.unique_name]?.quantity ?? 0;
+          return qb - qa || a.name.localeCompare(b.name);
+        }
+        if (sortMode === "plat") {
+          const au = wfmLookup.get(normalizeForWfm(a.name));
+          const bu = wfmLookup.get(normalizeForWfm(b.name));
+          const ap = au ? (prices.get(au)?.sell_median ?? 0) : 0;
+          const bp = bu ? (prices.get(bu)?.sell_median ?? 0) : 0;
+          return bp - ap || a.name.localeCompare(b.name);
+        }
+        if (sortMode === "za") return b.name.localeCompare(a.name);
+        return a.name.localeCompare(b.name);
+      });
+  }, [catalog, inventory, search, ownFilter, catFilter, sortMode, prices, wfmLookup]);
+
+  useEffect(() => { setPage(0); }, [search, catFilter, ownFilter, sortMode]);
+
+  const totalPages = Math.ceil(filtered.length / MODS_PAGE_SIZE);
+  const pageItems  = useMemo(
+    () => filtered.slice(page * MODS_PAGE_SIZE, (page + 1) * MODS_PAGE_SIZE),
+    [filtered, page]
+  );
+
+  useEffect(() => {
+    const urls = pageItems
+      .map(i => wfmLookup.get(normalizeForWfm(i.name)))
+      .filter((u): u is string => !!u);
+    if (urls.length) invoke("wfm_queue_prices", { urlNames: urls }).catch(() => {});
+  }, [pageItems, wfmLookup]);
+
+  const ownedCount = useMemo(
+    () => catalog.filter(i => (inventory[i.unique_name]?.quantity ?? 0) > 0).length,
+    [catalog, inventory]
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div className="market-header">
+        <input className="foundry-search" style={{ width: 200 }} placeholder="Search mods &amp; arcanes…"
+          value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
+          <button className={`fchip ${catFilter === "all"     ? "fchip-on" : ""}`} onClick={() => setCatFilter("all")}>All</button>
+          <button className={`fchip ${catFilter === "mods"    ? "fchip-on" : ""}`} onClick={() => setCatFilter("mods")}>Mods</button>
+          <button className={`fchip ${catFilter === "arcanes" ? "fchip-on" : ""}`} onClick={() => setCatFilter("arcanes")}>Arcanes</button>
+          <span className="fbar-sep"/>
+          <button className={`fchip ${ownFilter === "all"      ? "fchip-on" : ""}`} onClick={() => setOwnFilter("all")}>All</button>
+          <button className={`fchip ${ownFilter === "owned"    ? "fchip-on" : ""}`} onClick={() => setOwnFilter("owned")}>Owned</button>
+          <button className={`fchip ${ownFilter === "notowned" ? "fchip-on" : ""}`} onClick={() => setOwnFilter("notowned")}>Not Owned</button>
+          <span className="fbar-sep"/>
+          <span className="fbar-label">Sort:</span>
+          <button className={`fchip ${sortMode === "qty"  ? "fchip-on" : ""}`} onClick={() => setSortMode("qty")}>Most Owned</button>
+          <button className={`fchip ${sortMode === "plat" ? "fchip-on" : ""}`} onClick={() => setSortMode("plat")}>Most Plat</button>
+          <button className={`fchip ${sortMode === "az"   ? "fchip-on" : ""}`} onClick={() => setSortMode("az")}>A–Z</button>
+          <button className={`fchip ${sortMode === "za"   ? "fchip-on" : ""}`} onClick={() => setSortMode("za")}>Z–A</button>
+        </div>
+      </div>
+
+      <div className="market-summary">
+        <span><strong>{ownedCount.toLocaleString()}</strong> owned · <strong>{catalog.length.toLocaleString()}</strong> total</span>
+        <span className="fbar-sep"/>
+        <span style={{ color: "var(--muted)" }}>{filtered.length.toLocaleString()} shown</span>
+      </div>
+
+      <div className="mods-grid">
+        {pageItems.map(item => {
+          const urlName  = wfmLookup.get(normalizeForWfm(item.name)) ?? normalizeForWfm(item.name);
+          const price    = prices.get(urlName)?.sell_median;
+          const qty      = inventory[item.unique_name]?.quantity ?? 0;
+          const isArcane = item.category === "Arcanes";
+          const copies   = modCopiesMap[item.unique_name];
+          // Ranked copies sorted highest-first (null rank = unknown, shown last)
+          const rankedCopies = copies
+            ? [...copies].filter(c => c.count > 0).sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1))
+            : [];
+          return (
+            <div
+              key={item.unique_name}
+              className={`mod-card ${qty === 0 ? "mod-card-unowned" : ""}`}
+              onClick={() => onOpenPopup(urlName, item.name, item.image_name ?? undefined)}
+            >
+              <span className={`mod-cat-badge ${isArcane ? "mod-cat-arcane" : "mod-cat-mod"}`}>
+                {isArcane ? "Arcane" : "Mod"}
+              </span>
+              <div className="mod-card-img">
+                <ItemImg imageName={item.image_name ?? undefined} size={56} />
+              </div>
+              <div className="mod-card-name">{item.name}</div>
+              <div className="mod-card-footer">
+                {rankedCopies.length > 0 ? (
+                  <div className="mod-rank-chips">
+                    {rankedCopies.map(c => (
+                      <span
+                        key={c.rank ?? "null"}
+                        className="mod-rank-chip"
+                        title={`Open market for rank ${c.rank ?? "?"}`}
+                        onClick={e => {
+                          e.stopPropagation();
+                          onOpenPopup(urlName, item.name, item.image_name ?? undefined, c.rank ?? undefined);
+                        }}
+                      >
+                        {c.rank !== null ? `R${c.rank}` : "?"} ×{c.count}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="mod-rank-badge mod-rank-none">—</span>
+                )}
+                {price != null
+                  ? <span className="mod-plat-cell"><PlatIcon size={10} />{fmtPt(price)}</span>
+                  : <span className="mod-plat-cell market-price-na">—</span>}
+              </div>
+            </div>
+          );
+        })}
+        {pageItems.length === 0 && (
+          <div className="empty-msg" style={{ padding: 24, gridColumn: "1/-1" }}>No items match the current filters.</div>
+        )}
+      </div>
+
+      {totalPages > 1 && (
+        <div className="mods-pagination">
+          <button className="fchip" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ Prev</button>
+          <span className="mods-page-info">Page {page + 1} of {totalPages} · {filtered.length} items</span>
+          <button className="fchip" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next ›</button>
+        </div>
       )}
     </div>
   );
@@ -1203,6 +1409,7 @@ interface VeiledSellModalProps {
 function VeiledSellModal({ category, count, onClose, onSuccess }: VeiledSellModalProps) {
   const [price,    setPrice]    = useState("20");
   const [quantity, setQuantity] = useState(String(Math.min(count, 1)));
+  const [visible,  setVisible]  = useState(true);
   const [busy,     setBusy]     = useState(false);
   const [error,    setError]    = useState<string | null>(null);
 
@@ -1220,7 +1427,7 @@ function VeiledSellModal({ category, count, onClose, onSuccess }: VeiledSellModa
       const info = await invoke<{ item: { id: string } }>("wfm_get_item_info", { urlName: slug });
       const itemId = info?.item?.id ?? (info as Record<string, Record<string, string>>)?.["data"]?.["id"];
       if (!itemId) throw new Error("Could not find WFM item ID for this riven type.");
-      await invoke("wfm_create_order", { itemId, orderType: "sell", platinum: plat, quantity: qty });
+      await invoke("wfm_create_order", { itemId, orderType: "sell", platinum: plat, quantity: qty, visible });
       onSuccess();
       onClose();
     } catch (e: unknown) {
@@ -1254,6 +1461,14 @@ function VeiledSellModal({ category, count, onClose, onSuccess }: VeiledSellModa
           <span className="riven-modal-label">Quantity to list</span>
           <input className="riven-modal-input" type="number" min={1} max={count} value={quantity}
             onChange={e => setQuantity(e.target.value)} />
+        </div>
+        <div className="riven-modal-row riven-modal-row-toggle">
+          <span className="riven-modal-label">Visible on WFM</span>
+          <label className="riven-toggle">
+            <input type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />
+            <span className="riven-toggle-track"><span className="riven-toggle-thumb" /></span>
+            <span className="riven-toggle-label">{visible ? "Visible" : "Hidden"}</span>
+          </label>
         </div>
 
         {!slug && (

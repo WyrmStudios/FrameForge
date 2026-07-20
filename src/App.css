@@ -1691,6 +1691,28 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
 .riven-modal-submit:hover:not(:disabled) { background: rgba(56,139,253,.28); }
 .riven-modal-submit:disabled { opacity: 0.5; cursor: default; }
 
+/* ── Mods & Arcanes tab ── */
+.mods-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 6px; padding: 8px; min-height: 0; align-content: start; }
+.mod-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px 6px; background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; transition: background .12s, border-color .12s; text-align: center; }
+.mod-card:hover { background: rgba(255,255,255,.07); border-color: var(--accent); }
+.mod-card-unowned { opacity: 0.5; }
+.mod-card-unowned:hover { opacity: 1; }
+.mod-cat-badge { position: absolute; top: 4px; left: 4px; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 3px; white-space: nowrap; line-height: 1.4; }
+.mod-cat-mod    { background: rgba(88,166,255,.18); color: #58a6ff; }
+.mod-cat-arcane { background: rgba(188,140,255,.18); color: #bc8cff; }
+.mod-card-img { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; margin-top: 4px; flex-shrink: 0; }
+.mod-card-name { font-size: 11px; color: var(--text); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; width: 100%; }
+.mod-card-footer { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: center; width: 100%; margin-top: 2px; }
+.mod-rank-badge { font-size: 10px; font-weight: 700; color: #d4a843; background: rgba(212,168,67,.12); padding: 1px 4px; border-radius: 3px; }
+.mod-rank-none { color: var(--muted); background: transparent; }
+.mod-rank-chips { display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; }
+.mod-rank-chip { font-size: 10px; font-weight: 700; color: #d4a843; background: rgba(212,168,67,.12); padding: 1px 5px; border-radius: 3px; cursor: pointer; transition: background .15s; }
+.mod-rank-chip:hover { background: rgba(212,168,67,.3); }
+.mod-qty-badge { font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; }
+.mod-plat-cell { display: flex; align-items: center; gap: 2px; font-size: 10px; color: var(--accent); white-space: nowrap; }
+.mods-pagination { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 8px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.mods-page-info { font-size: 12px; color: var(--muted); }
+
 /* ── Active riven auctions section ── */
 .riven-auctions-list { display: flex; flex-direction: column; gap: 5px; }
 .riven-auction-row { background: rgba(255,255,255,.03); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; }

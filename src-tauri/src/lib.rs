@@ -99,6 +99,11 @@ pub struct AppState {
     /// Local Warframe account name extracted from EE.log "Logged in NAME".
     /// Used to filter the player's own name from OCR captures and to display in the UI.
     pub local_player_name: Arc<Mutex<Option<String>>>,
+    /// Last successfully locked relic reward payload { items, positions }.
+    /// Written when the OCR loop emits relic-rewards; cleared on dismiss or when read.
+    /// Overlay.tsx pulls this on mount so it never misses rewards that arrived before
+    /// its relic-rewards listener was registered.
+    pub pending_relic_rewards: Mutex<Option<serde_json::Value>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -403,7 +408,8 @@ async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
     if let Ok(json) = serde_json::to_string(&result.items.iter().map(|i| serde_json::json!({
         "unique_name": i.unique_name, "name": i.name, "category": i.category,
         "image_name": i.image_name, "vaulted": i.vaulted, "ducats": i.ducats,
-        "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation
+        "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation,
+        "fusion_limit": i.fusion_limit
     })).collect::<Vec<_>>()) {
         let _ = std::fs::write(&state.items_cache_path, json);
     }
@@ -1059,19 +1065,154 @@ fn fetch_csrf_from_site(jwt: &str) -> Option<String> {
 }
 
 /// Open warframe.market signin in an embedded WebView.
-/// An initialization script intercepts WFM's own fetch/XHR calls to capture
-/// the JWT, then invokes wfm_receive_jwt to store it and close the window.
+/// Emits `wfm-login-window-closed` if the window is closed before auth completes.
 #[tauri::command]
 fn wfm_open_login_window(app: tauri::AppHandle) -> Result<(), String> {
-    // Intercept WFM's own auth calls to capture access + refresh tokens.
-    // Targets the signin *response* body (not outgoing headers) so we get both tokens.
-    let script = r#"
+    if let Some(existing) = app.get_webview_window("wfm-login") {
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let win = open_wfm_webview(&app, "https://warframe.market/auth/signin")?;
+    let app2 = app.clone();
+    win.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let _ = app2.emit("wfm-login-window-closed", ());
+        }
+    });
+    Ok(())
+}
+
+/// Close the WFM login popup programmatically (e.g. after an auto-timeout).
+#[tauri::command]
+fn wfm_close_login_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("wfm-login") {
+        let _ = win.close();
+    }
+    Ok(())
+}
+
+/// Opens a configured WebView at `start_url` with the shared injection script.
+fn open_wfm_webview(app: &tauri::AppHandle, start_url: &str) -> Result<tauri::WebviewWindow, String> {
+    static SCRIPT: &str = r#"
 (function() {
+  // ── Anti-detection ──────────────────────────────────────────────────────────
+  // WebView2 signals that Steam/Xbox/Discord use to show blank pages:
+  //   navigator.webdriver      = true   → automation flag
+  //   window.chrome.webview    = object → WebView2-specific object
+  //   navigator.userAgentData  exposes brand "Microsoft Edge WebView2"
+  //   navigator.languages      often missing or wrong
+  try { Object.defineProperty(navigator, 'webdriver', { get: function(){ return undefined; } }); } catch(e) {}
+  try { if (window.chrome && window.chrome.webview) { delete window.chrome.webview; } } catch(e) {}
+  try {
+    Object.defineProperty(navigator, 'languages', { get: function(){ return ['en-US','en']; } });
+  } catch(e) {}
+  // Override userAgentData so brands list looks like real Chrome, not WebView2.
+  try {
+    var _uaBrands = [
+      { brand: 'Google Chrome',  version: '125' },
+      { brand: 'Chromium',       version: '125' },
+      { brand: 'Not/A)Brand',    version: '24'  },
+    ];
+    var _uaData = {
+      brands:   _uaBrands,
+      mobile:   false,
+      platform: 'Windows',
+      getHighEntropyValues: function(hints) {
+        return Promise.resolve({
+          architecture:    'x86',
+          bitness:         '64',
+          brands:          _uaBrands,
+          fullVersionList: [
+            { brand: 'Google Chrome',  version: '125.0.6422.141' },
+            { brand: 'Chromium',       version: '125.0.6422.141' },
+            { brand: 'Not/A)Brand',    version: '24.0.0.0'       },
+          ],
+          mobile:          false,
+          model:           '',
+          platform:        'Windows',
+          platformVersion: '15.0.0',
+          uaFullVersion:   '125.0.6422.141',
+          wow64:           false,
+        });
+      },
+      toJSON: function() {
+        return { brands: _uaBrands, mobile: false, platform: 'Windows' };
+      },
+    };
+    Object.defineProperty(navigator, 'userAgentData', { get: function(){ return _uaData; } });
+  } catch(e) {}
+
+  // ── Nav bar (only on external OAuth pages so user can always go back) ───────
+  if (location.hostname !== 'warframe.market' && !location.hostname.endsWith('.warframe.market')) {
+    function injectNavBar() {
+      if (document.getElementById('__ff_nav') || !document.body) return;
+      var bar = document.createElement('div');
+      bar.id = '__ff_nav';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;height:32px;background:#1a1a2e;border-bottom:1px solid #333;display:flex;align-items:center;gap:6px;padding:0 8px;font-family:sans-serif;font-size:12px;color:#ccc;';
+      function btn(label, action) {
+        var b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = 'background:#2a2a4a;border:1px solid #444;color:#ccc;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:12px;';
+        b.onmouseenter = function(){ b.style.background='#3a3a5a'; };
+        b.onmouseleave = function(){ b.style.background='#2a2a4a'; };
+        b.onclick = action;
+        return b;
+      }
+      bar.appendChild(btn('← Back', function(){ history.back(); }));
+      bar.appendChild(btn('⌂ Login page', function(){ window.location.href='https://warframe.market/auth/signin'; }));
+      var lbl = document.createElement('span');
+      lbl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.5;font-size:11px;';
+      lbl.textContent = location.hostname;
+      bar.appendChild(lbl);
+      var s = document.createElement('style');
+      s.textContent = 'html{margin-top:32px!important}';
+      document.head.appendChild(s);
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+    if (document.body) injectNavBar(); else window.addEventListener('DOMContentLoaded', injectNavBar);
+  }
+
+  // ── WFM-only: token capture ─────────────────────────────────────────────────
+  if (location.hostname !== 'warframe.market' && !location.hostname.endsWith('.warframe.market')) return;
+
+  // Strip target="_blank" from all links before the user clicks them.
+  // WebView2 fires NewWindowRequested at the native level before any JavaScript
+  // click handler can call preventDefault — so a capture-phase interceptor is
+  // always too late. Removing the target attribute in advance means WebView2
+  // never sees target="_blank" and treats every link as a same-window navigation.
+  // This keeps Steam/Xbox/Discord OAuth flows inside this configured window
+  // (Chrome UA, anti-detection) instead of spawning a blank unconfigured popup.
+  function stripTargets(root) {
+    (root || document).querySelectorAll('a[target]').forEach(function(a) {
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
+    });
+  }
+  if (document.body) { stripTargets(); } else { window.addEventListener('DOMContentLoaded', function() { stripTargets(); }); }
+  new MutationObserver(function(mutations) {
+    mutations.forEach(function(m) {
+      m.addedNodes.forEach(function(n) {
+        if (n.nodeType !== 1) return;
+        if (n.tagName === 'A') { n.removeAttribute('target'); n.removeAttribute('rel'); }
+        if (n.querySelectorAll) { stripTargets(n); }
+      });
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
+  // Backup: override window.open() for any JS-triggered popups.
+  var _origOpen = window.open;
+  window.open = function(url, target, features) {
+    if (url && typeof url === 'string' && url.length > 0) {
+      window.location.href = url;
+      return null;
+    }
+    return _origOpen.apply(this, arguments);
+  };
+
   var _clientId = '', _deviceId = '';
   function sendTokens(d, v1Jwt) {
     if (!d || !d.accessToken || window.__wfmDone) return;
     window.__wfmDone = true;
-    // Delay slightly so the SPA can update the CSRF meta tag after login redirect.
     setTimeout(function() {
       var csrfMeta = document.querySelector('meta[name="csrf-token"]');
       var csrf = csrfMeta ? csrfMeta.getAttribute('content') : '';
@@ -1090,23 +1231,28 @@ fn wfm_open_login_window(app: tauri::AppHandle) -> Result<(), String> {
   var origFetch = window.fetch;
   window.fetch = function(input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
-    // Capture clientId / deviceId from outgoing signin body
     if (url.includes('/auth/signin') && init && init.body) {
       try { var b = JSON.parse(init.body); _clientId = b.clientId||''; _deviceId = b.deviceId||''; } catch(e) {}
     }
     var p = origFetch.apply(this, arguments);
-    // Capture tokens from auth response; also grab Authorization header for v1 endpoints
-    if (url.includes('/auth/signin') || url.includes('/auth/refresh')) {
+    if (url.includes('/auth/')) {
       p.then(function(r) {
         var v1Jwt = r.headers.get('Authorization') || '';
-        // Strip "JWT " prefix if present so we store just the raw token
         if (v1Jwt.startsWith('JWT ')) v1Jwt = v1Jwt.slice(4);
-        r.clone().json().then(function(j) { if (j && j.data) sendTokens(j.data, v1Jwt || null); }).catch(function(){});
+        r.clone().json().then(function(j) {
+          if (j && j.data && j.data.accessToken) sendTokens(j.data, v1Jwt || null);
+        }).catch(function(){});
       }).catch(function(){});
     }
     return p;
   };
-  // XHR fallback
+  // Also capture device_id from the URL — used by OAuth flows that start
+  // at /auth/steam?device_id=... instead of via the email/password form.
+  try {
+    var _urlDeviceId = new URLSearchParams(location.search).get('device_id');
+    if (_urlDeviceId) _deviceId = _urlDeviceId;
+  } catch(e) {}
+
   var origOpen = XMLHttpRequest.prototype.open;
   var origSend = XMLHttpRequest.prototype.send;
   var _xhrUrl = '';
@@ -1124,20 +1270,27 @@ fn wfm_open_login_window(app: tauri::AppHandle) -> Result<(), String> {
 })();
 "#;
 
+    build_wfm_webview(app, start_url, SCRIPT)
+}
+
+
+
+
+fn build_wfm_webview(app: &tauri::AppHandle, url: &str, script: &str) -> Result<tauri::WebviewWindow, String> {
     tauri::WebviewWindowBuilder::new(
-        &app,
+        app,
         "wfm-login",
-        tauri::WebviewUrl::External("https://warframe.market/signin".parse()
+        tauri::WebviewUrl::External(url.parse()
             .map_err(|e| format!("URL parse: {}", e))?),
     )
     .title("Log in to warframe.market")
     .inner_size(520.0, 760.0)
     .resizable(true)
+    .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+    .devtools(true)
     .initialization_script(script)
     .build()
-    .map_err(|e| format!("Window create: {}", e))?;
-
-    Ok(())
+    .map_err(|e| format!("Window create: {}", e))
 }
 
 /// Legacy — the new injection script calls wfm_receive_tokens directly.
@@ -3055,22 +3208,44 @@ fn wfm_get_riven_attributes() -> Result<Vec<String>, String> {
 }
 
 /// Get the internal WFM item ID for a URL slug (needed to create orders).
+/// Also returns `modMaxRank` from the local WFCD item cache when the item is a mod,
+/// so the frontend never needs a second network request to detect this.
 #[tauri::command]
 fn wfm_get_item_info(state: State<AppState>, url_name: String) -> Result<serde_json::Value, String> {
     let auth = state.wfm_session.lock().unwrap_or_else(|e| e.into_inner())
         .as_ref().map(|s| s.auth_header()).unwrap_or_default();
     wfm_wait();
-    wfm_request("GET", &format!("/v2/items/{}", url_name), &auth)
+    let mut data = wfm_request("GET", &format!("/v2/items/{}", url_name), &auth)
         .call().map_err(|e| format!("Item info: {}", e))?
         .into_json::<serde_json::Value>().map_err(|e| format!("Parse: {}", e))
-        .map(|j| j["data"].clone())
+        .map(|j| j["data"].clone())?;
+
+    // Enrich with modMaxRank from our WFCD cache (no extra network call).
+    // Match by display name since url_name ↔ unique_name conversion isn't 1:1.
+    if let Some(wfm_name) = data["i18n"]["en"]["name"].as_str()
+        .or_else(|| data["name"].as_str())
+    {
+        let wfm_name_lc = wfm_name.to_lowercase();
+        let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(fusion_limit) = items.iter()
+            .find(|i| i.name.to_lowercase() == wfm_name_lc)
+            .and_then(|i| i.fusion_limit)
+        {
+            data["modMaxRank"] = serde_json::json!(fusion_limit);
+        }
+    }
+
+    Ok(data)
 }
 
-/// Create a new buy or sell order.
+/// Create a new buy or sell order. `mod_rank` must be set for mods — WFM returns 400 without it.
 #[tauri::command]
-fn wfm_create_order(state: State<AppState>, item_id: String, order_type: String, platinum: u32, quantity: u32) -> Result<serde_json::Value, String> {
+fn wfm_create_order(state: State<AppState>, item_id: String, order_type: String, platinum: u32, quantity: u32, visible: bool, mod_rank: Option<u32>) -> Result<serde_json::Value, String> {
     let auth = session_auth(&state)?;
-    let body = serde_json::json!({ "itemId": item_id, "type": order_type, "platinum": platinum, "quantity": quantity, "visible": true });
+    let mut body = serde_json::json!({ "itemId": item_id, "type": order_type, "platinum": platinum, "quantity": quantity, "visible": visible });
+    if let Some(rank) = mod_rank {
+        body["rank"] = serde_json::json!(rank);
+    }
     wfm_wait();
     wfm_request("POST", "/v2/order", &auth)
         .send_string(&body.to_string()).map_err(|e| format!("Create order: {}", e))?
@@ -3116,6 +3291,7 @@ fn wfm_create_riven_auction(
     minimal_reputation: u32,
     note: String,
     visible: bool,
+    is_direct_sell: bool,
 ) -> Result<serde_json::Value, String> {
     let auth = session_v1_auth(&state)?;
     let attrs: Vec<serde_json::Value> = attributes.iter().map(|a| serde_json::json!({
@@ -3138,6 +3314,7 @@ fn wfm_create_riven_auction(
         "minimal_reputation": minimal_reputation,
         "note": note,
         "visible": visible,
+        "is_direct_sell": is_direct_sell,
     });
     // WFM v1 requires buyout_price to be present in the payload (null = no buyout).
     payload["buyout_price"] = serde_json::json!(buyout_price);
@@ -3227,6 +3404,92 @@ fn save_auction_ids(state: &State<AppState>) {
     }
 }
 
+/// Switch a riven auction between Auction and Direct Sale types.
+/// Because WFM's update endpoint does not accept is_direct_sell, this must be done via
+/// delete + recreate. This command fetches the full auction detail first (guaranteeing all
+/// fields including attributes are available), then closes the old listing and creates a new
+/// one with the requested type and updated prices.
+#[tauri::command]
+fn wfm_switch_riven_type(
+    state: State<AppState>,
+    auction_id: String,
+    new_is_direct_sell: bool,
+    starting_price: u32,
+    buyout_price: Option<u32>,
+    visible: bool,
+) -> Result<serde_json::Value, String> {
+    let auth = session_v1_auth(&state)?;
+
+    // Step 1: fetch full auction detail so we have all fields (attributes, polarity, etc.).
+    wfm_auction_wait();
+    let entry: serde_json::Value = wfm_request("GET", &format!("/v1/auctions/entry/{}", auction_id), &auth)
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => format!("Fetch auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
+            other => format!("Fetch auction: {}", other),
+        })?
+        .into_json()
+        .map_err(|e| format!("Parse auction entry: {}", e))?;
+
+    let auction = &entry["payload"]["auction"];
+    let item    = &auction["item"];
+
+    let item_payload = serde_json::json!({
+        "type":             "riven",
+        "weapon_url_name":  item["weapon_url_name"],
+        "name":             item["name"],
+        "mastery_level":    item["mastery_level"],
+        "mod_rank":         item["mod_rank"],
+        "re_rolls":         item["re_rolls"],
+        "polarity":         item["polarity"],
+        "attributes":       item["attributes"],
+    });
+    let note               = auction["note"].as_str().unwrap_or("").to_string();
+    let minimal_reputation = auction["minimal_reputation"].as_u64().unwrap_or(0) as u32;
+
+    // Step 2: close the old auction.
+    wfm_auction_wait();
+    wfm_request("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => format!("Delete auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
+            other => format!("Delete auction: {}", other),
+        })?;
+    state.auction_ids.lock().unwrap_or_else(|e| e.into_inner()).retain(|id| id != &auction_id);
+    save_auction_ids(&state);
+
+    // Step 3: create new auction with the chosen type.
+    let mut payload = serde_json::json!({
+        "item":               item_payload,
+        "starting_price":     starting_price,
+        "minimal_reputation": minimal_reputation,
+        "note":               note,
+        "visible":            visible,
+        "is_direct_sell":     new_is_direct_sell,
+    });
+    payload["buyout_price"] = serde_json::json!(buyout_price);
+
+    wfm_auction_wait();
+    let resp = wfm_request("POST", "/v1/auctions/create", &auth)
+        .send_json(payload)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => format!("Create riven auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
+            other => format!("Create riven auction: {}", other),
+        })?;
+    let json: serde_json::Value = resp.into_json()
+        .map_err(|e| format!("Parse auction response: {}", e))?;
+
+    if let Some(id) = json["payload"]["auction"]["id"].as_str() {
+        let mut ids = state.auction_ids.lock().unwrap_or_else(|e| e.into_inner());
+        if !ids.contains(&id.to_string()) {
+            ids.push(id.to_string());
+            drop(ids);
+            save_auction_ids(&state);
+        }
+    }
+    Ok(json)
+}
+
 /// Delete a riven auction via the /close endpoint.
 #[tauri::command]
 fn wfm_delete_auction(state: State<AppState>, auction_id: String) -> Result<(), String> {
@@ -3243,6 +3506,26 @@ fn wfm_delete_auction(state: State<AppState>, auction_id: String) -> Result<(), 
         })?;
     state.auction_ids.lock().unwrap_or_else(|e| e.into_inner()).retain(|id| id != &auction_id);
     save_auction_ids(&state);
+    Ok(())
+}
+
+/// Update a riven auction's starting price, buyout price, and visibility.
+/// Sends PUT /v1/auctions/entry/{id}. Pass buyout_price=None to clear the buyout.
+#[tauri::command]
+fn wfm_update_auction(state: State<AppState>, auction_id: String, starting_price: u32, buyout_price: Option<u32>, visible: bool) -> Result<(), String> {
+    let auth = session_v1_auth(&state)?;
+    let mut body = serde_json::json!({ "starting_price": starting_price, "visible": visible });
+    body["buyout_price"] = buyout_price.map_or(serde_json::Value::Null, |v| serde_json::json!(v));
+    wfm_auction_wait();
+    wfm_request("PUT", &format!("/v1/auctions/entry/{}", auction_id), &auth)
+        .send_json(body)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => {
+                let body = r.into_string().unwrap_or_default();
+                format!("Update auction: HTTP {}: {}", code, body)
+            }
+            other => format!("Update auction: {}", other),
+        })?;
     Ok(())
 }
 
@@ -3378,6 +3661,35 @@ fn get_item_price(item_name: String, state: State<AppState>) -> Result<Option<u3
     Ok(price)
 }
 
+/// Trimmed median of per-bucket price medians.
+/// Removes the bottom and top 15 % of buckets by price before computing the
+/// median. This filters single-trade outlier days (e.g. a Disruptor mod listed
+/// at 45 834 p) without needing volume data.
+/// Falls back to the full-set median when there are too few data points to trim.
+fn trimmed_median_from_stats(arr: &[serde_json::Value]) -> Option<u32> {
+    let mut prices: Vec<f64> = arr.iter()
+        .filter_map(|e| e["median"].as_f64())
+        .filter(|&p| p > 0.0)
+        .collect();
+
+    if prices.is_empty() { return None; }
+    prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let n   = prices.len();
+    let cut = (n as f64 * 0.15).floor() as usize;
+    let lo  = cut;
+    let hi  = n.saturating_sub(cut);
+
+    let slice = if lo < hi { &prices[lo..hi] } else { &prices[..] };
+    let mid   = slice.len() / 2;
+    let median = if slice.len() % 2 == 0 {
+        (slice[mid - 1] + slice[mid]) / 2.0
+    } else {
+        slice[mid]
+    };
+    Some(median.round() as u32)
+}
+
 fn wfm_price_for_slug(slug: &str) -> Result<Option<u32>, String> {
     wfm_wait();
     let url = format!("https://api.warframe.market/v1/items/{}/statistics", slug);
@@ -3385,17 +3697,23 @@ fn wfm_price_for_slug(slug: &str) -> Result<Option<u32>, String> {
         Ok(resp) => {
             let json: serde_json::Value = resp.into_json()
                 .map_err(|e| format!("wfm price parse: {}", e))?;
-            let closed = &json["payload"]["statistics_closed"]["48hours"];
-            let p = closed.as_array()
-                .and_then(|arr| arr.last())
-                .and_then(|e| e["median"].as_f64())
-                .map(|f| f.round() as u32);
-            Ok(p.or_else(|| {
-                json["payload"]["statistics_closed"]["90days"].as_array()
-                    .and_then(|arr| arr.last())
-                    .and_then(|e| e["median"].as_f64())
-                    .map(|f| f.round() as u32)
-            }))
+
+            let h48 = json["payload"]["statistics_closed"]["48hours"].as_array();
+            let d90 = json["payload"]["statistics_closed"]["90days"].as_array();
+
+            // Use 48h VWAP only when there are enough trades to be meaningful.
+            // Rare items with <3 trades in 48h fall through to the 90-day window.
+            let vol_48: f64 = h48.map(|arr| {
+                arr.iter().filter_map(|e| e["volume"].as_f64()).sum()
+            }).unwrap_or(0.0);
+
+            let p = if vol_48 >= 3.0 {
+                h48.and_then(|arr| trimmed_median_from_stats(arr))
+            } else {
+                None
+            };
+
+            Ok(p.or_else(|| d90.and_then(|arr| trimmed_median_from_stats(arr))))
         }
         Err(_) => Ok(None),
     }
@@ -3567,6 +3885,37 @@ fn wfm_queue_price_priority(state: State<'_, AppState>, url_name: String) {
 #[tauri::command]
 fn wfm_get_cached_prices(state: State<'_, AppState>) -> HashMap<String, Option<u32>> {
     state.wfm_price_cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Fetch the FrameForge centralised price cache from GitHub and seed wfm_price_cache.
+/// Only inserts items that have a valid vwap (null-vwap items are left absent so the
+/// queue can still fetch them live). Remote prices overwrite stale disk-cache values
+/// since the remote cache is refreshed every ~2 hours.
+/// Returns slug → price for all items that had a valid vwap.
+#[tauri::command]
+fn load_remote_price_cache(state: State<'_, AppState>) -> Result<HashMap<String, u32>, String> {
+    let json: serde_json::Value = ureq::get(
+        "https://raw.githubusercontent.com/WyrmStudios/FrameForgePricing/main/prices.json"
+    )
+    .call()
+    .map_err(|e| format!("remote price cache fetch: {}", e))?
+    .into_json()
+    .map_err(|e| format!("remote price cache parse: {}", e))?;
+
+    let items = json["items"].as_object()
+        .ok_or_else(|| "remote price cache: missing items field".to_string())?;
+
+    let mut cache = state.wfm_price_cache.lock().unwrap_or_else(|e| e.into_inner());
+    let mut result = HashMap::new();
+
+    for (slug, data) in items {
+        if let Some(price) = data["vwap"].as_u64().map(|v| v as u32) {
+            cache.insert(slug.clone(), Some(price));
+            result.insert(slug.clone(), price);
+        }
+    }
+
+    Ok(result)
 }
 
 // ─── Change log ───────────────────────────────────────────────────────────────
@@ -4599,6 +4948,23 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                     }
                                 }
                             }
+                            // "NAME - new avatar: CombatOperatorAvatar…" fires when any player
+                            // switches to Operator or Necramech — catches squadmates who joined
+                            // before FrameForge started (and thus missed AddSquadMember lines).
+                            if line.contains(" - new avatar: ") {
+                                if let Some(after_bracket) = line.find("]: ").map(|i| &line[i + 3..]) {
+                                    if let Some(name) = after_bracket.split(" - new avatar:").next() {
+                                        let name = name.trim();
+                                        if name.len() >= 3 && !name.contains(' ') {
+                                            if let Ok(mut g) = shared_squad_names2.lock() {
+                                                if !g.iter().any(|n: &String| n == name) {
+                                                    g.push(name.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -4657,7 +5023,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 
                 // ── VoidProjections squad parsing ─────────────────────────────
                 // Parse the reward-handshake sequence that fires before the screen opens:
-                //   "VoidProjections: GetVoidProjectionRewards"   → sequence start
+                //   "VoidProjections: GetVoidProjectionReward[s]"  → sequence start
                 //   "[id] gets reward /Lotus/..."                  → local player's item
                 //   "Still waiting on response from [id]"          → one other player
                 //   "Client has reward info for all players now"   → sequence complete
@@ -4666,7 +5032,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                 // Logging only for now; item path matching is a future improvement.
                 for line in buf.lines() {
                     let ll = line.to_lowercase();
-                    if ll.contains("voidprojections: getvoidprojectionrewards") {
+                    if ll.contains("voidprojections: getvoidprojectionreward") {
                         vp_in_seq  = true;
                         vp_other_ids.clear();
                         vp_own_item.clear();
@@ -4722,6 +5088,20 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         if let Some(after) = line.find("AddSquadMember: ").map(|i| &line[i + 16..]) {
                             if let Some(name) = after.split(',').next().map(str::trim) {
                                 if !name.is_empty() {
+                                    if let Ok(mut g) = shared_squad_names2.lock() {
+                                        if !g.iter().any(|n: &String| n == name) {
+                                            g.push(name.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if line.contains(" - new avatar: ") {
+                        if let Some(after_bracket) = line.find("]: ").map(|i| &line[i + 3..]) {
+                            if let Some(name) = after_bracket.split(" - new avatar:").next() {
+                                let name = name.trim();
+                                if name.len() >= 3 && !name.contains(' ') {
                                     if let Ok(mut g) = shared_squad_names2.lock() {
                                         if !g.iter().any(|n: &String| n == name) {
                                             g.push(name.to_string());
@@ -4909,13 +5289,12 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     pending_trade = None;
                 }
 
-                // Trigger: "ProjectionRewardChoice.lua: Relic rewards initialized" fires
-                // when the selection screen first becomes visible — specific to this Lua
-                // script so it won't fire for login/mission rewards.
-                // "openvoidprojectionrewardscreen" and vp_seq_completed kept as fallbacks
-                // since they appear in some configurations.
-                let has_trigger = lower.contains("projectionrewardchoice.lua: relic rewards initialized")
-                    || lower.contains("openvoidprojectionrewardscreen")
+                // Trigger: "VoidProjections: GetVoidProjectionReward[s]" fires when the
+                // server actually delivers the reward choices to the client — later than
+                // the old "initialized" / "openvoidprojectionrewardscreen" lines, which
+                // fired before the cards were visible in endless missions.
+                // Matching the singular prefix catches both "Reward" and "Rewards" variants.
+                let has_trigger = lower.contains("voidprojections: getvoidprojectionreward")
                     || vp_seq_completed;
                 vp_seq_completed = false; // consume the flag
 
@@ -5005,6 +5384,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     if let Some(win) = ee_ocr_app.get_webview_window("relic-overlay") {
                         let _ = win.close();
                     }
+                    if let Ok(mut g) = ee_ocr_app.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                     let _ = ee_ocr_app.emit("relic-rewards", serde_json::Value::Null);
                 }
 
@@ -5023,13 +5403,23 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     reward_screen_active2.store(true, Ordering::SeqCst);
                     active_since = Some(std::time::Instant::now());
 
+                    // Always ensure the local player's name is in the OCR filter — it may be
+                    // absent if FrameForge started after the "Logged in" line was written.
+                    if let Ok(local_name) = ee_ocr_app.state::<AppState>().local_player_name.lock() {
+                        if let Some(ref name) = *local_name {
+                            if let Ok(mut g) = shared_squad_names.lock() {
+                                if !g.iter().any(|n: &String| n == name) {
+                                    g.push(name.clone());
+                                }
+                            }
+                        }
+                    }
+
                     // Find the exact EE.log line that matched so we can log it
                     let trigger_line = buf.lines()
                         .find(|l| {
                             let ll = l.to_lowercase();
-                            ll.contains("relic rewards initialized")
-                                || ll.contains("openvoidprojectionrewardscreen")
-                                || ll.contains("has reward info for all players now")
+                            ll.contains("voidprojections: getvoidprojectionreward")
                         })
                         .unwrap_or("<unknown trigger line>")
                         .trim()
@@ -5222,7 +5612,8 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                     // Partial updates are intentionally suppressed — emitting
                                     // partial data while the user is still hovering cards causes
                                     // the overlay to flicker with wrong items between attempts.
-                                    if items.len() > best_item_count {
+                                    let is_new_best = items.len() > best_item_count;
+                                    if is_new_best {
                                         best_item_count = items.len();
                                         best_payload = payload.clone();
                                         let label = if *complete && confirm_ready { "✅" } else { "⚡" };
@@ -5239,11 +5630,10 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                              ├─ Time     : {}\n\
                                              {}\n\
                                              └─ RESULT   : {} items found → {}\n\
-                                             └─ Items    : {:?}\n\n{}",
+                                             └─ Items    : {:?}\n\n",
                                             attempt, ts, dbg, items.len(),
                                             result_label,
                                             items,
-                                            if *complete && confirm_ready { "[STEP 3] OVERLAY OPENED\n\n" } else { "" }
                                         );
                                         let _ = append_to_file(&slog, &session_entry);
                                         let _ = std::fs::write(&lpath, format!(
@@ -5255,21 +5645,28 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                         if confirm_ready {
                                             // Hard cutoff: if dismiss arrived while OCR was running, drop the result.
                                             if !active.load(Ordering::SeqCst) { break; }
-                                            // Log the confirming attempt when item count didn't improve
-                                            // (the logging block above only fires when items.len() > best_item_count).
-                                            if items.len() <= best_item_count {
+                                            // Log the confirming attempt only when the improvement block above
+                                            // didn't already log this attempt (is_new_best = false means item
+                                            // count didn't change, so the block above was skipped).
+                                            if !is_new_best {
                                                 let _ = append_to_file(&slog, &format!(
                                                     "[STEP 2] OCR ATTEMPT #{} (confirm)\n\
                                                      ├─ Time     : {}\n\
-                                                     └─ {} items — same as before, confirmed\n\n\
-                                                     [STEP 3] OVERLAY OPENED\n\n",
+                                                     └─ {} items — same as before, confirmed\n\n",
                                                     attempt, ts, items.len()
                                                 ));
                                             }
+                                            let _ = append_to_file(&slog, "[STEP 3] OVERLAY OPENED\n\n");
                                             // Always emit the BEST result captured so far, not the
                                             // current attempt — later attempts may have worse OCR
                                             // quality (player-name pollution, brightness change).
                                             let emit_val = if best_payload.is_some() { &best_payload } else { &payload };
+                                            // Store so Overlay.tsx can pull it on mount (race-condition fix).
+                                            if let Some(v) = emit_val.as_ref() {
+                                                if let Ok(mut g) = app.state::<AppState>().pending_relic_rewards.lock() {
+                                                    *g = Some(v.clone());
+                                                }
+                                            }
                                             let _ = app.emit("relic-rewards", emit_val);
                                             // After 1.5 s the overlay has finished animating in —
                                             // capture the full desktop (DXGI) so the BMP shows the overlay.
@@ -5294,6 +5691,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                                 // 20s safety fallback — normally the overlay closes
                                                 // when EE.log fires "relic timer closed" (player picks).
                                                 tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                                                if let Ok(mut g) = app2.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                                                 let _ = app2.emit("relic-rewards", serde_json::Value::Null);
                                                 if let Some(w) = app2.get_webview_window("relic-overlay") {
                                                     let _ = w.close();
@@ -5324,6 +5722,11 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                         // Emit best_payload now rather than retrying until timeout.
                                         if !active.load(Ordering::SeqCst) { break; }
                                         let emit_val = best_payload.clone().unwrap_or(serde_json::Value::Null);
+                                        if !emit_val.is_null() {
+                                            if let Ok(mut g) = app.state::<AppState>().pending_relic_rewards.lock() {
+                                                *g = Some(emit_val.clone());
+                                            }
+                                        }
                                         let _ = app.emit("relic-rewards", &emit_val);
                                         let _ = append_to_file(&slog,
                                             "[STEP 3] OVERLAY OPENED (soft-complete confirmed — no improvement)\n\n");
@@ -5346,6 +5749,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                         let slog_fb = slog.clone();
                                         tauri::async_runtime::spawn(async move {
                                             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                                            if let Ok(mut g) = app2.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                                             let _ = app2.emit("relic-rewards", serde_json::Value::Null);
                                             if let Some(w) = app2.get_webview_window("relic-overlay") {
                                                 let _ = w.close();
@@ -5434,6 +5838,11 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                 } else {
                                     serde_json::Value::Null
                                 };
+                                if !emit_val.is_null() {
+                                    if let Ok(mut g) = app.state::<AppState>().pending_relic_rewards.lock() {
+                                        *g = Some(emit_val.clone());
+                                    }
+                                }
                                 let _ = app.emit("relic-rewards", &emit_val);
                                 let _ = append_to_file(&slog,
                                     "[STEP 2] OCR TIMEOUT — 45 seconds elapsed, emitting best result\n\n");
@@ -5481,6 +5890,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         if let Some(win) = ee_ocr_app.get_webview_window("relic-overlay") {
                             let _ = win.close();
                         }
+                        if let Ok(mut g) = ee_ocr_app.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                         let _ = ee_ocr_app.emit("relic-rewards", serde_json::Value::Null);
                     }
                 }
@@ -6688,6 +7098,239 @@ fn get_overlay_session_log() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|_| "(no session log yet — trigger a Void Fissure first)".into())
 }
 
+/// Frontend tracing — App.tsx and Overlay.tsx call this to write diagnostic
+/// lines into the same session log that gets copied to the diagnostics folder.
+#[tauri::command]
+fn log_relic_fe(msg: String) {
+    let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
+    let _ = append_to_file(&path, &format!("[FE] {}\n", msg));
+}
+
+/// Force-set the relic-overlay window to HWND_TOPMOST via SetWindowPos.
+/// Called from JS on a 150 ms interval while the overlay is visible, to beat
+/// Warframe's continuous HWND_TOPMOST reassertion.
+#[tauri::command]
+fn set_overlay_topmost() {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, SetWindowPos,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE,
+            HWND_TOPMOST,
+        };
+        let title: Vec<u16> = "FrameForge Overlay\0".encode_utf16().collect();
+        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+        if hwnd != 0 {
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/// Diagnostic: position a test window ON TOP OF WARFRAME (finds Warframe's HWND
+/// to guarantee the correct monitor) and inject a full-screen coloured div via
+/// evaluate_script — bypasses IPC and React entirely (Rust → WebView2 direct).
+/// Creates the window from Rust if the pre-declared one doesn't exist.
+/// Red = WebView renders, IPC broken. Green = WebView renders, IPC ok.
+/// Nothing at all = window creation failed or WebView not rendering.
+#[tauri::command]
+fn inject_overlay_diagnostic(app: tauri::AppHandle) -> String {
+    use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder, WebviewUrl};
+
+    // Find Warframe's client area to anchor the diagnostic window to the right monitor.
+    #[cfg(target_os = "windows")]
+    let (wf_x, wf_y, wf_w, wf_h) = unsafe {
+        use windows_sys::Win32::Foundation::{POINT, RECT};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetClientRect};
+        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+        let title: Vec<u16> = "Warframe\0".encode_utf16().collect();
+        let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+        if hwnd != 0 {
+            let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetClientRect(hwnd, &mut r);
+            let mut pt = POINT { x: 0, y: 0 };
+            ClientToScreen(hwnd, &mut pt);
+            (pt.x, pt.y, (r.right - r.left) as i32, (r.bottom - r.top) as i32)
+        } else {
+            (0, 0, 1920i32, 1080i32)
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let (wf_x, wf_y, wf_w, wf_h) = (0i32, 0i32, 1920i32, 1080i32);
+
+    // Place diagnostic at the vertical centre of the Warframe client area, full width.
+    let diag_x = wf_x;
+    let diag_y = wf_y + wf_h / 2 - 150;
+    let diag_w = wf_w.max(400) as u32;
+    let diag_h = 300u32;
+
+    let win = match app.get_webview_window("relic-overlay") {
+        Some(w) => w,
+        None => {
+            // Pre-declared window missing — create a fresh one from Rust.
+            match WebviewWindowBuilder::new(&app, "relic-overlay",
+                WebviewUrl::App("index.html#overlay".into()))
+                .title("FrameForge Overlay")
+                .position(diag_x as f64, diag_y as f64)
+                .inner_size(diag_w as f64, diag_h as f64)
+                .transparent(true).decorations(false)
+                .always_on_top(true).skip_taskbar(true)
+                .resizable(false).focused(false)
+                .build()
+            {
+                Ok(w) => w,
+                Err(e) => return format!("create-err:{e}"),
+            }
+        }
+    };
+
+    let _ = win.set_position(tauri::Position::Physical(PhysicalPosition { x: diag_x, y: diag_y }));
+    let _ = win.set_size(tauri::Size::Physical(PhysicalSize { width: diag_w, height: diag_h }));
+    let _ = win.set_always_on_top(true);
+    let _ = win.show();
+
+    // Give WebView2 a moment to paint before we also eval.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let script = r#"
+        (function() {
+            document.documentElement.style.cssText = 'margin:0;padding:0;width:100%;height:100%;';
+            document.body.style.cssText = 'margin:0;padding:0;background:rgba(200,0,0,0.95);color:#fff;font-family:sans-serif;font-size:26px;font-weight:bold;display:flex;align-items:center;justify-content:center;height:100vh;box-sizing:border-box;';
+            document.body.innerHTML = '<span>FF WEBVIEW ALIVE — IPC test pending...</span>';
+            try {
+                window.__TAURI_INTERNALS__.invoke('log_relic_fe', {msg:'[OV] inject_diagnostic IPC ok'});
+                document.body.style.background = 'rgba(0,160,0,0.95)';
+                document.body.innerHTML = '<span>FF WEBVIEW — IPC OK (you should see this in green)</span>';
+            } catch(e) {
+                document.body.innerHTML = '<span>FF WEBVIEW — NO IPC: ' + String(e).slice(0,100) + '</span>';
+            }
+        })();
+    "#;
+    match win.eval(script) {
+        Ok(_) => format!("eval-ok wf=({wf_x},{wf_y},{wf_w},{wf_h}) diag=({diag_x},{diag_y})"),
+        Err(e) => format!("eval-err:{e}"),
+    }
+}
+
+/// Debug helper: create a test window from Rust side to verify whether JS-side
+/// WebviewWindow creation is broken. Returns Ok("created") or Err(reason).
+/// Uses a URL hash (#modular) so the Tauri asset protocol serves clean index.html
+/// and the Tauri init script is injected properly — query strings prevent this.
+#[tauri::command]
+fn debug_create_window(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::{Manager, WebviewWindowBuilder, WebviewUrl};
+    if let Some(existing) = app.get_webview_window("relic-overlay-solid") {
+        let _ = existing.close();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        "relic-overlay-solid",
+        WebviewUrl::App("index.html#modular".into()),
+    )
+    .title("FF Debug Window — look in taskbar!")
+    .inner_size(800.0, 500.0)
+    .position(200.0, 200.0)
+    .transparent(false)
+    .decorations(true)
+    .always_on_top(false)
+    .skip_taskbar(false)
+    .resizable(true)
+    .focused(true)
+    .build()
+    .map(|_| "created".to_string())
+    .map_err(|e| format!("build() failed: {e}"))
+}
+
+/// Reposition the pre-declared relic-overlay window and bring it on screen.
+/// The overlay is pre-declared in tauri.conf.json at y=-3000 (off-screen) so
+/// WebView2 initialises at app startup. We never create/destroy it — just move it.
+#[tauri::command]
+fn show_overlay_window(
+    app: tauri::AppHandle,
+    x: i32, y: i32, w: u32, h: u32,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let win = app.get_webview_window("relic-overlay")
+        .ok_or_else(|| "relic-overlay window not found".to_string())?;
+    let _ = win.set_position(tauri::Position::Physical(
+        tauri::PhysicalPosition { x, y }
+    ));
+    let _ = win.set_size(tauri::Size::Physical(
+        tauri::PhysicalSize { width: w, height: h }
+    ));
+    let _ = win.set_always_on_top(true);
+    Ok(())
+}
+
+/// Move the relic-overlay window back off-screen (visual "close" without destroying it).
+/// Destroying and recreating transparent WebView2 windows deadlocks on Windows.
+#[tauri::command]
+fn move_overlay_offscreen(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("relic-overlay") {
+        let _ = win.set_position(tauri::Position::Physical(
+            tauri::PhysicalPosition { x: 0, y: -3000 }
+        ));
+    }
+    Ok(())
+}
+
+/// Show the pre-declared overlay-test window.
+/// Pre-declared in tauri.conf.json so WebView2 initialises during app startup
+/// (dynamic build() deadlocks because the Win32 event loop can't process messages while
+/// the calling closure is running).
+#[tauri::command]
+fn show_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let win = app.get_webview_window("overlay-test")
+        .ok_or_else(|| "overlay-test window not found".to_string())?;
+    // Move to a visible position using logical coords (DPI-safe)
+    let _ = win.set_position(tauri::Position::Logical(
+        tauri::LogicalPosition { x: 400.0, y: 300.0 }
+    ));
+    let _ = win.set_always_on_top(true);
+    let _ = win.set_focus();
+    // Log current URL and force navigation in case WebView2 deferred loading while off-screen
+    match win.url() {
+        Ok(url) => {
+            eprintln!("[OVERLAY-TEST] current url: {url}");
+            // Only re-navigate if we're on blank (WebView2 never loaded the app URL)
+            if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
+                eprintln!("[OVERLAY-TEST] was on about:blank — navigating to app URL");
+                if let Ok(nav_url) = tauri::Url::parse("http://localhost:1420/index.html?overlaytest") {
+                    let _ = win.navigate(nav_url);
+                }
+            }
+        }
+        Err(e) => eprintln!("[OVERLAY-TEST] url() error: {e}"),
+    }
+    eprintln!("[OVERLAY-TEST] show_test_overlay_window: moved to logical(400,300), alwaysOnTop=true");
+    Ok(())
+}
+
+/// Move the overlay-test window back off-screen and remove always-on-top.
+#[tauri::command]
+fn hide_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let win = app.get_webview_window("overlay-test")
+        .ok_or_else(|| "overlay-test window not found".to_string())?;
+    let _ = win.set_always_on_top(false);
+    let _ = win.set_position(tauri::Position::Physical(
+        tauri::PhysicalPosition { x: 0, y: -3000 }
+    ));
+    eprintln!("[OVERLAY-TEST] hide_test_overlay_window: moved offscreen");
+    Ok(())
+}
+
+/// Pull and clear the last locked relic reward payload { items, positions }.
+/// Overlay.tsx calls this on mount so it never misses rewards that arrived before
+/// its relic-rewards listener was registered (the tauri://created → React mount gap).
+#[tauri::command]
+fn get_pending_relic_rewards(state: State<'_, AppState>) -> Option<serde_json::Value> {
+    state.pending_relic_rewards.lock().ok()?.take()
+}
+
 fn diag_dir() -> std::path::PathBuf {
     std::env::temp_dir().join("warframe-companion").join("diagnostics")
 }
@@ -7071,7 +7714,8 @@ fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
         let category = patch_item_category(&name, &raw_cat);
         let mastery_req       = v["mastery_req"].as_u64().map(|n| n as u32);
         let omega_attenuation = v["omega_attenuation"].as_f64().map(|n| n as f32);
-        Some(WfcdItem { unique_name, name, category, image_name, vaulted, ducats, mastery_req, omega_attenuation })
+        let fusion_limit      = v["fusion_limit"].as_u64().map(|n| n as u32);
+        Some(WfcdItem { unique_name, name, category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit })
     }).collect();
     if items.is_empty() { None } else { Some(dedup_known_aliases(items)) }
 }
@@ -7552,6 +8196,7 @@ pub fn run() {
             img_cache_dir,
             img_server_port: Mutex::new(0),
             local_player_name: Arc::new(Mutex::new(None)),
+            pending_relic_rewards: Mutex::new(None),
         })
         .setup(|app| {
             use tauri::Manager;
@@ -7586,6 +8231,30 @@ pub fn run() {
                 restore_window_state(app.handle(), &window, &state.settings_path, "window", 400, 300);
                 let _ = window.show();
             }
+
+            // Overlay windows start as visible:false in tauri.conf.json.
+            // We call show() here (while they are still at y=-3000) so WebView2 can
+            // initialise their content in the background without flashing on screen.
+            // We NEVER call hide() on relic-overlay — hiding a transparent WebView2
+            // window breaks DirectComposition: JS keeps running but pixels stop reaching
+            // the screen.  Instead we park it at y=-3000 and move it on-screen during
+            // fissures.  overlay-test is not transparent so hide() is safe for it, but
+            // we use the same show()-once pattern for consistency.
+            // show() triggers WebView2 initialisation; immediately park off-screen so
+            // nothing is visible to the user at startup.
+            // We NEVER call hide() on relic-overlay — hiding a transparent WebView2
+            // window breaks DirectComposition.
+            // Only relic-overlay needs pre-initialization at startup (to avoid the
+            // WebView2 init delay on the first fissure).  overlay-test is on-demand only.
+            if let Some(win) = app.get_webview_window("relic-overlay") {
+                let _ = win.show();
+                // Windows may reposition a newly-shown window that is outside all
+                // monitors.  Force it back off-screen immediately after show().
+                let _ = win.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition { x: 0, y: -3000 }
+                ));
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -7625,6 +8294,7 @@ pub fn run() {
             wfm_queue_prices,
             wfm_queue_price_priority,
             wfm_get_cached_prices,
+            load_remote_price_cache,
             get_wfm_top_items,
             get_item_price,
             wfm_set_status,
@@ -7647,6 +8317,7 @@ pub fn run() {
             wfm_get_item_orders,
             wfm_get_item_statistics,
             wfm_open_login_window,
+            wfm_close_login_window,
             wfm_receive_jwt,
             wfm_receive_tokens,
             wfm_refresh_token,
@@ -7665,8 +8336,10 @@ pub fn run() {
             wfm_update_order,
             wfm_delete_order,
             wfm_create_riven_auction,
+            wfm_switch_riven_type,
             wfm_get_my_riven_auctions,
             wfm_delete_auction,
+            wfm_update_auction,
             wfm_set_auction_visible,
             scan_warframe_credentials,
             scan_warframe_api_urls,
@@ -7682,6 +8355,15 @@ pub fn run() {
             fetch_worldstate,
             get_warframe_window_rect,
             get_overlay_session_log,
+            get_pending_relic_rewards,
+            log_relic_fe,
+            set_overlay_topmost,
+            inject_overlay_diagnostic,
+            debug_create_window,
+            show_overlay_window,
+            move_overlay_offscreen,
+            show_test_overlay_window,
+            hide_test_overlay_window,
             get_diag_folder_size,
             clear_diag_folder,
             save_auto_diag_capture,

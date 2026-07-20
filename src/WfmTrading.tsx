@@ -37,20 +37,32 @@ interface WfmWhisper {
 
 interface WfmItemEntry { id: string; item_name: string; url_name: string; }
 
+interface WfmRivenAttribute {
+  url_name: string;
+  positive: boolean;
+  value:    number;
+}
+
 interface WfmAuction {
-  id:             string;
-  starting_price: number;
-  buyout_price:   number | null;
-  top_bid:        number | null;
-  bids:           number;
-  winner:         { ingame_name: string } | null;
-  is_closed:      boolean;
-  visible:        boolean;
+  id:                 string;
+  starting_price:     number;
+  buyout_price:       number | null;
+  top_bid:            number | null;
+  bids:               number;
+  winner:             { ingame_name: string } | null;
+  is_closed:          boolean;
+  is_direct_sell:     boolean;
+  visible:            boolean;
+  note:               string;
+  minimal_reputation: number;
   item: {
     weapon_url_name: string;
     name:            string;
+    mastery_level:   number;
     mod_rank:        number;
     re_rolls:        number;
+    polarity:        string;
+    attributes:      WfmRivenAttribute[];
   };
 }
 
@@ -100,79 +112,57 @@ async function invokeWfm<T>(command: string, args?: Record<string, unknown>): Pr
 function LoginPanel({ onLogin }: { onLogin: (u: string) => void }) {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
-  const [hasSaved, setHasSaved] = useState(false);
-  const [showWarning, setShowWarning] = useState(false);
-  const [saveChecked, setSaveChecked] = useState(false);
-
-  // Check if we have a saved token (for the "Forget saved session" button visibility)
-  useEffect(() => {
-    invoke<[string, string] | null>("wfm_load_credentials")
-      .then(c => { if (c) setHasSaved(true); })
-      .catch(() => {});
-  }, []); // eslint-disable-line
 
   const submit = async () => {
     if (!email || !password) return;
     setLoading(true); setError("");
     try {
       const username = await invoke<string>("wfm_login", { email, password });
-      if (saveChecked) {
-        // Save the session token (not the password) for next session
+      if (remember) {
         const tokenJson = await invoke<string | null>("wfm_get_jwt").catch(() => null);
-        if (tokenJson) await invoke("wfm_save_credentials", { email: "token", password: tokenJson }).catch(() => {});
+        if (tokenJson) invoke("wfm_save_credentials", { email, password: tokenJson }).catch(() => {});
       }
       onLogin(username);
     } catch (e) { setError(String(e)); setLoading(false); }
   };
-
-  const forget = () => { invoke("wfm_delete_credentials").catch(() => {}); setHasSaved(false); };
 
   return (
     <div className="wfm-login-wrap">
       <div className="wfm-login-card">
         <div className="wfm-login-title">Connect warframe.market</div>
         <p className="wfm-login-desc">Log in to view live orders, manage listings, and receive trade whispers.</p>
+
         <div className="wfm-field">
           <label>Email</label>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && submit()} autoComplete="off" />
+            onKeyDown={e => e.key === "Enter" && submit()} autoComplete="email" />
         </div>
         <div className="wfm-field">
           <label>Password</label>
           <input type="password" value={password} onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()} />
         </div>
-        <label className="wfm-save-row">
-          <input type="checkbox" checked={saveChecked}
-            onChange={e => { if (e.target.checked) setShowWarning(true); else setSaveChecked(false); }} />
-          <span>Stay logged in</span>
-        </label>
-        {hasSaved && <button className="wfm-forget-btn" onClick={forget}>Forget saved session</button>}
         {error && <div className="wfm-error">{error}</div>}
+        <label className="wfm-remember-row">
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+          Remember credentials
+        </label>
         <button className="wfm-btn-primary" onClick={submit} disabled={loading || !email || !password}>
           {loading ? "Logging in…" : "Log in"}
         </button>
-      </div>
 
-      {showWarning && (
-        <div className="wfm-warning-overlay" onClick={() => setShowWarning(false)}>
-          <div className="wfm-warning-card" onClick={e => e.stopPropagation()}>
-            <div className="wfm-warning-title">⚠ About staying logged in</div>
-            <ul className="wfm-warning-list">
-              <li>Your <strong>session token</strong> (not your password) is saved to <strong>Windows Credential Manager</strong> — the encrypted OS vault used by Chrome and Windows apps.</li>
-              <li>Your email and password are <strong>never stored</strong>.</li>
-              <li>Encrypted with your Windows login key.</li>
-              <li>Remove it any time using "Forget saved session".</li>
-            </ul>
-            <div className="wfm-warning-actions">
-              <button className="wfm-btn-primary" onClick={() => { setSaveChecked(true); setShowWarning(false); }}>Got it — stay logged in</button>
-              <button className="wfm-btn-secondary" onClick={() => setShowWarning(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+        <p className="wfm-alt-login-note">
+          Using Steam, Xbox, Discord, or GitHub to log in to warframe.market? You'll need to create
+          email/password credentials first — go to{" "}
+          <a href="https://warframe.market/settings/account" target="_blank" rel="noreferrer">
+            warframe.market/settings/account
+          </a>{" "}
+          and fill in <strong>Create credentials</strong>, then use those here.
+        </p>
+      </div>
     </div>
   );
 }
@@ -191,9 +181,138 @@ function orderName(o: WfmOrder, itemIdMap: Map<string, string>): string {
   );
 }
 
-function RivenAuctionsSection({ auctionRefreshKey }: { auctionRefreshKey?: number }) {
+function isRivenOrder(o: WfmOrder, itemIdMap: Map<string, string>): boolean {
+  const url = (o.item?.urlName ?? o.item?.url_name ?? o.item?.slug ?? "").toLowerCase();
+  const name = orderName(o, itemIdMap).toLowerCase();
+  return url.includes("riven") || name.includes("riven");
+}
+
+function AuctionEditPopup({ auction, onSave, onClose }: {
+  auction: WfmAuction;
+  onSave: (id: string, start: number, buyout: number | null, visible: boolean, newIsDirect: boolean) => Promise<void>;
+  onClose: () => void;
+}) {
+  const weaponName = auction.item.weapon_url_name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  const modName    = auction.item.name ? auction.item.name.charAt(0).toUpperCase() + auction.item.name.slice(1) : "";
+
+  const [isDirect, setIsDirect]       = useState(auction.is_direct_sell);
+  const [price, setPrice]             = useState(auction.buyout_price ?? auction.starting_price);
+  const [startPrice, setStartPrice]   = useState(auction.starting_price);
+  const [buyoutPrice, setBuyoutPrice] = useState(auction.buyout_price != null ? String(auction.buyout_price) : "");
+  const [visible, setVisible]         = useState(auction.visible);
+  const [busy, setBusy]               = useState(false);
+  const [error, setError]             = useState("");
+
+  const switchType = (newDirect: boolean) => {
+    if (newDirect) {
+      setPrice(auction.buyout_price ?? auction.starting_price);
+    } else {
+      setStartPrice(auction.starting_price);
+      setBuyoutPrice(auction.buyout_price != null ? String(auction.buyout_price) : "");
+    }
+    setIsDirect(newDirect);
+  };
+
+  const save = async () => {
+    setBusy(true); setError("");
+    try {
+      if (isDirect) {
+        const p = Math.max(1, Math.round(price));
+        await onSave(auction.id, p, p, visible, true);
+      } else {
+        const start  = Math.max(1, Math.round(startPrice));
+        const buyout = buyoutPrice.trim() === "" ? null : Math.max(1, Math.round(+buyoutPrice));
+        await onSave(auction.id, start, buyout, visible, false);
+      }
+    } catch (e) { setError(String(e)); setBusy(false); }
+  };
+
+  const typeChanged = isDirect !== auction.is_direct_sell;
+
+  return (
+    <div className="wfm-ae-popup-overlay" onClick={onClose}>
+      <div className="wfm-ae-popup-card" onClick={e => e.stopPropagation()}>
+        <div className="wfm-ae-popup-header">
+          <span className="wfm-ae-popup-title">
+            {weaponName}{modName && <em className="wfm-riven-mod"> {modName}</em>}
+          </span>
+          <button className="wfm-logout-btn" style={{ fontSize: 18 }} onClick={onClose}>×</button>
+        </div>
+        <div className="wfm-ae-popup-body">
+          <div className="wfm-ae-popup-field">
+            <label>Listing type</label>
+            <div className="wfm-ae-vis-row">
+              <button className={`wfm-btn-sm wfm-ae-vis${!isDirect ? " active" : ""}`} onClick={() => switchType(false)}>Auction</button>
+              <button className={`wfm-btn-sm wfm-ae-vis${isDirect ? " active" : ""}`} onClick={() => switchType(true)}>Direct Sale</button>
+            </div>
+            {typeChanged && (
+              <span className="wfm-ae-popup-hint wfm-ae-type-warn">
+                ⚠ Switching type deletes and recreates the listing — may take up to 20 s due to WFM rate limits
+              </span>
+            )}
+          </div>
+
+          {isDirect ? (
+            <div className="wfm-ae-popup-field">
+              <label>Price</label>
+              <div className="wfm-ae-popup-input-row">
+                <input type="number" min={1} className="wfm-ae-input" value={price}
+                  onChange={e => setPrice(+e.target.value)} />
+                <span className="wfm-plat">p</span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="wfm-ae-popup-field">
+                <label>Start price</label>
+                <div className="wfm-ae-popup-input-row">
+                  <input type="number" min={1} className="wfm-ae-input" value={startPrice}
+                    onChange={e => setStartPrice(+e.target.value)} />
+                  <span className="wfm-plat">p</span>
+                </div>
+              </div>
+              <div className="wfm-ae-popup-field">
+                <label>Buyout price</label>
+                <div className="wfm-ae-popup-input-row">
+                  <input type="number" min={1} placeholder="none" className="wfm-ae-input" value={buyoutPrice}
+                    onChange={e => setBuyoutPrice(e.target.value)} />
+                  <span className="wfm-plat">p</span>
+                  <span className="wfm-ae-popup-hint">empty = no buyout</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="wfm-ae-popup-field">
+            <label>Visibility</label>
+            <div className="wfm-ae-vis-row">
+              <button className={`wfm-btn-sm wfm-ae-vis${visible ? " active" : ""}`} onClick={() => setVisible(true)}>Visible</button>
+              <button className={`wfm-btn-sm wfm-ae-vis${!visible ? " active" : ""}`} onClick={() => setVisible(false)}>Hidden</button>
+            </div>
+          </div>
+          {error && <div className="wfm-ae-error">{error}</div>}
+        </div>
+        <div className="wfm-ae-popup-footer">
+          <button className="wfm-btn-sm wfm-btn-save" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          <button className="wfm-btn-sm" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder, onDeleteOrder, onToggleOrderVisible, onBulkOrdersVisible }: {
+  rivenOrders: WfmOrder[];
+  itemIdMap: Map<string, string>;
+  auctionRefreshKey?: number;
+  onEditOrder: (o: WfmOrder) => void;
+  onDeleteOrder: (id: string) => void;
+  onToggleOrderVisible: (o: WfmOrder) => void;
+  onBulkOrdersVisible: (vis: boolean) => Promise<void>;
+}) {
   const [auctions, setAuctions] = useState<WfmAuction[]>([]);
   const [busy, setBusy] = useState(false);
+  const [editingAuction, setEditingAuction] = useState<WfmAuction | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -207,61 +326,133 @@ function RivenAuctionsSection({ auctionRefreshKey }: { auctionRefreshKey?: numbe
 
   useEffect(() => { load(); }, [load, auctionRefreshKey]);
 
-  function toggleVisible(id: string, currentlyVisible: boolean) {
+  const toggleAuctionVisible = (id: string, currentlyVisible: boolean) => {
     invoke("wfm_set_auction_visible", { auctionId: id, visible: !currentlyVisible })
       .then(() => load())
       .catch((e: unknown) => alert(String(e)));
-  }
+  };
 
-  function deleteAuction(id: string) {
+  const deleteAuction = (id: string) => {
     invoke("wfm_delete_auction", { auctionId: id })
       .then(() => load())
       .catch((e: unknown) => alert(String(e)));
-  }
+  };
+
+  const setAllAuctionsVisible = async (visible: boolean) => {
+    await Promise.all(auctions.map(a =>
+      invoke("wfm_set_auction_visible", { auctionId: a.id, visible }).catch(() => {})
+    ));
+    load();
+  };
+
+  const setAllVisible = async (vis: boolean) => {
+    await Promise.all([onBulkOrdersVisible(vis), setAllAuctionsVisible(vis)]);
+  };
+
+  const saveAuctionEdit = async (id: string, start: number, buyout: number | null, visible: boolean, newIsDirect: boolean) => {
+    const original = auctions.find(a => a.id === id);
+    if (!original) throw new Error("Auction not found");
+    if (newIsDirect !== original.is_direct_sell) {
+      // Server-side: fetch full detail → delete → recreate with new type.
+      // This guarantees all riven fields (attributes, polarity, etc.) are complete.
+      // 3 rate-limited API calls: may take up to ~20 s if the limit is near.
+      await invokeWfm("wfm_switch_riven_type", {
+        auctionId:        id,
+        newIsDirectSell:  newIsDirect,
+        startingPrice:    start,
+        buyoutPrice:      newIsDirect ? start : (buyout ?? null),
+        visible,
+      });
+    } else {
+      await invokeWfm("wfm_update_auction", {
+        auctionId: id, startingPrice: start, buyoutPrice: buyout ?? null, visible,
+      });
+    }
+    setEditingAuction(null);
+    // Small delay: WFM may not reflect the new listing immediately.
+    await new Promise(r => setTimeout(r, 1500));
+    load();
+  };
+
+  const openAuctionEdit = (a: WfmAuction) => setEditingAuction(a);
+
+  const totalCount = rivenOrders.length + auctions.length;
 
   return (
     <div style={{ marginTop: 16 }}>
-      <div className="wfm-section-label">
-        Riven Auctions ({auctions.length})
+      <div className="wfm-section-label wfm-section-label-row">
+        <span>Rivens ({totalCount})</span>
         <button className="wfm-refresh-btn" onClick={load} title="Refresh" disabled={busy}>↻</button>
+        {totalCount > 0 && <>
+          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllVisible(true)} title="Set all rivens visible">Vis All</button>
+          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllVisible(false)} title="Set all rivens hidden">Hide All</button>
+        </>}
       </div>
-      {busy ? (
+      {busy && totalCount === 0 ? (
         <div className="wfm-empty">Loading…</div>
-      ) : auctions.length === 0 ? (
-        <div className="wfm-empty">No active riven auctions. Post from Market → Rivens tab.</div>
+      ) : totalCount === 0 ? (
+        <div className="wfm-empty">No active riven listings. Post from Market → Rivens tab.</div>
       ) : (
         <div className="wfm-orders">
+          {rivenOrders.map(o => (
+            <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
+              <button
+                className="wfm-vis-btn"
+                title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
+                onClick={() => onToggleOrderVisible(o)}>
+                {o.visible ? "👁" : "🚫"}
+              </button>
+              <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
+              <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
+              <span className="wfm-order-price">{fmt(o.platinum)}p</span>
+              <span className="wfm-order-qty">×{o.quantity}</span>
+              <button className="wfm-btn-sm" onClick={() => onEditOrder(o)}>Edit</button>
+              <button className="wfm-btn-sm wfm-btn-del" onClick={() => onDeleteOrder(o.id)}>✕</button>
+            </div>
+          ))}
           {auctions.map(a => {
             const weaponName = a.item.weapon_url_name.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
             const modName = a.item.name ? a.item.name.charAt(0).toUpperCase() + a.item.name.slice(1) : "";
             return (
-              <div key={a.id} className={`wfm-auction-card${a.visible ? "" : " riven-auction-hidden"}`}>
-                <div className="wfm-auction-card-header">
-                  <span
-                    className="riven-auction-vis"
-                    title={a.visible ? "Visible — click to hide" : "Hidden — click to show"}
-                    onClick={() => toggleVisible(a.id, a.visible)}>
-                    {a.visible ? "👁" : "🚫"}
+              <div key={a.id} className={`wfm-order-row${a.visible ? "" : " wfm-order-hidden"}`}>
+                <button
+                  className="wfm-vis-btn"
+                  title={a.visible ? "Visible — click to hide" : "Hidden — click to show"}
+                  onClick={() => toggleAuctionVisible(a.id, a.visible)}>
+                  {a.visible ? "👁" : "🚫"}
+                </button>
+                <span className={`wfm-order-type ${a.is_direct_sell ? "direct" : "auction"}`}>
+                  {a.is_direct_sell ? "DIR" : "AUC"}
+                </span>
+                <span className="wfm-order-name">
+                  {weaponName}{modName && <em className="wfm-riven-mod"> {modName}</em>}
+                </span>
+                <span className="wfm-order-price">
+                  {a.is_direct_sell ? (a.buyout_price ?? a.starting_price) : a.starting_price}p
+                </span>
+                {!a.is_direct_sell && (
+                  <span className="wfm-auction-buyout">
+                    {a.buyout_price != null ? `bo: ${a.buyout_price}p` : "bo: —"}
                   </span>
-                  <span className="wfm-order-name">
-                    {weaponName}{modName && <span className="riven-mod-name"> {modName}</span>}
+                )}
+                {!a.is_direct_sell && (
+                  <span className="wfm-order-qty">
+                    {a.bids ?? 0} {(a.bids ?? 0) === 1 ? "bid" : "bids"}
                   </span>
-                  <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteAuction(a.id)}>✕</button>
-                </div>
-                <div className="wfm-auction-card-details">
-                  <span className="wfm-auction-stat"><span className="wfm-auction-label">Start</span> {a.starting_price}p</span>
-                  <span className="wfm-auction-stat"><span className="wfm-auction-label">Buyout</span> {a.buyout_price != null ? `${a.buyout_price}p` : "—"}</span>
-                  <span className="wfm-auction-stat"><span className="wfm-auction-label">Bids</span> {a.bids ?? 0}</span>
-                  {a.top_bid != null && (
-                    <span className="wfm-auction-stat wfm-auction-topbid">
-                      <span className="wfm-auction-label">Top</span> {a.top_bid}p{a.winner && <span className="wfm-auction-bidder"> · {a.winner.ingame_name}</span>}
-                    </span>
-                  )}
-                </div>
+                )}
+                <button className="wfm-btn-sm" onClick={() => openAuctionEdit(a)}>Edit</button>
+                <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteAuction(a.id)}>✕</button>
               </div>
             );
           })}
         </div>
+      )}
+      {editingAuction && (
+        <AuctionEditPopup
+          auction={editingAuction}
+          onSave={saveAuctionEdit}
+          onClose={() => setEditingAuction(null)}
+        />
       )}
     </div>
   );
@@ -274,9 +465,8 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
   const [orders, setOrders] = useState<{ sell: WfmOrder[]; buy: WfmOrder[] }>({ sell: [], buy: [] });
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
-  const [editing, setEditing] = useState<{ id: string; urlName: string; name: string; imageName?: string; pt: number; qty: number } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; urlName: string; name: string; imageName?: string; pt: number; qty: number; visible: boolean } | null>(null);
 
-  // canonical name → WFM slug lookup built from the /v2/items list
   const nameToUrl = useMemo(() =>
     new Map(wfmItems.map(i => [i.item_name.toLowerCase(), i.url_name])),
     [wfmItems]
@@ -301,9 +491,24 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
     loadOrders();
   };
 
+  const toggleOrderVisible = async (o: WfmOrder) => {
+    const cur = orders.sell.find(x => x.id === o.id) ?? orders.buy.find(x => x.id === o.id);
+    if (!cur) return;
+    await invokeWfm("wfm_update_order", { orderId: o.id, platinum: cur.platinum, quantity: cur.quantity, visible: !cur.visible }).catch(() => {});
+    loadOrders();
+  };
+
+  const setAllOrdersVisible = async (vis: boolean) => {
+    const all = [...orders.sell, ...orders.buy];
+    await Promise.all(all.map(o =>
+      invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: vis }).catch(() => {})
+    ));
+    loadOrders();
+  };
+
   const saveEdit = async () => {
     if (!editing) return;
-    await invokeWfm("wfm_update_order", { orderId: editing.id, platinum: editing.pt, quantity: editing.qty, visible: true }).catch(() => {});
+    await invokeWfm("wfm_update_order", { orderId: editing.id, platinum: editing.pt, quantity: editing.qty, visible: editing.visible }).catch(() => {});
     setEditing(null);
     loadOrders();
   };
@@ -313,18 +518,31 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
     const urlName = nameToUrl.get(name.toLowerCase())
       ?? o.item?.slug ?? o.item?.urlName ?? o.item?.url_name ?? "";
     const imageName = imageMap.get(name.toLowerCase());
-    setEditing({ id: o.id, urlName, name, imageName, pt: o.platinum, qty: o.quantity });
+    setEditing({ id: o.id, urlName, name, imageName, pt: o.platinum, qty: o.quantity, visible: o.visible });
   };
 
   const allOrders = [...orders.sell, ...orders.buy];
+  const rivenOrders = allOrders.filter(o => isRivenOrder(o, itemIdMap));
+  const nonRivenOrders = allOrders.filter(o => !isRivenOrder(o, itemIdMap));
   const q = search.trim().toLowerCase();
-  const visible = q ? allOrders.filter(o => orderName(o, itemIdMap).toLowerCase().includes(q)) : allOrders;
+  const visibleOrders = q ? nonRivenOrders.filter(o => orderName(o, itemIdMap).toLowerCase().includes(q)) : nonRivenOrders;
+
+  const bulkRivenOrdersVisible = async (vis: boolean) => {
+    await Promise.all(rivenOrders.map(o =>
+      invokeWfm("wfm_update_order", { orderId: o.id, platinum: o.platinum, quantity: o.quantity, visible: vis }).catch(() => {})
+    ));
+    loadOrders();
+  };
 
   return (
     <div className="wfm-panel">
-      <div className="wfm-section-label">
-        Active Listings
+      <div className="wfm-section-label wfm-section-label-row">
+        <span>Active Listings ({nonRivenOrders.length})</span>
         <button className="wfm-refresh-btn" onClick={loadOrders} title="Refresh">↻</button>
+        {nonRivenOrders.length > 0 && <>
+          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllOrdersVisible(true)} title="Set all listings visible">Vis All</button>
+          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllOrdersVisible(false)} title="Set all listings hidden">Hide All</button>
+        </>}
       </div>
       <div className="wfm-listings-hint">To post a new listing, click any set in the Prime Sets tab.</div>
       <input
@@ -335,10 +553,16 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
         onChange={e => setSearch(e.target.value)}
       />
       {loading ? <div className="wfm-empty">Loading…</div> :
-       visible.length === 0 ? <div className="wfm-empty">{q ? "No listings match." : "No active listings."}</div> :
+       visibleOrders.length === 0 ? <div className="wfm-empty">{q ? "No listings match." : "No active listings."}</div> :
        <div className="wfm-orders">
-         {visible.map(o => (
-           <div key={o.id} className="wfm-order-row">
+         {visibleOrders.map(o => (
+           <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
+             <button
+               className="wfm-vis-btn"
+               title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
+               onClick={() => toggleOrderVisible(o)}>
+               {o.visible ? "👁" : "🚫"}
+             </button>
              <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
              <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
              <span className="wfm-order-price">{fmt(o.platinum)}p</span>
@@ -357,14 +581,23 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
           onClose={() => setEditing(null)}
           isLoggedIn={true}
           editMode={{
-            pt: editing.pt, qty: editing.qty,
+            pt: editing.pt, qty: editing.qty, visible: editing.visible,
             onPtChange: v => setEditing(e => e && { ...e, pt: v }),
             onQtyChange: v => setEditing(e => e && { ...e, qty: v }),
+            onVisibleChange: v => setEditing(e => e && { ...e, visible: v }),
             onSave: saveEdit,
           }}
         />
       )}
-      <RivenAuctionsSection auctionRefreshKey={auctionRefreshKey} />
+      <RivensSection
+        rivenOrders={rivenOrders}
+        itemIdMap={itemIdMap}
+        auctionRefreshKey={auctionRefreshKey}
+        onEditOrder={startEdit}
+        onDeleteOrder={deleteOrder}
+        onToggleOrderVisible={toggleOrderVisible}
+        onBulkOrdersVisible={bulkRivenOrdersVisible}
+      />
     </div>
   );
 }
@@ -531,7 +764,7 @@ function MessagesPanel({ username: _username, wfmItems }: { username: string; wf
         await invokeWfm("wfm_update_order", { orderId, platinum, quantity: originalQty, visible });
       } else {
         // We deleted the listing → re-create it
-        await invokeWfm("wfm_create_order", { itemId, orderType: "sell", platinum, quantity: originalQty });
+        await invokeWfm("wfm_create_order", { itemId, orderType: "sell", platinum, quantity: originalQty, visible });
       }
       // Clear revertInfo after a successful revert so the button disappears
       setWhispers(prev => {

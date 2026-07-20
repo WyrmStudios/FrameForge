@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef, memo, useContext, Component, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit, emitTo } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 // ── Riven overlay — module-level window management ────────────────────────────
@@ -35,7 +35,7 @@ async function ensureRivenWindow(wx: number, wy: number, wh: number): Promise<{ 
   // 3. Create fresh at correct position — shows immediately
   try {
     _rivenWin = new WebviewWindow("riven-overlay", {
-      url: `index.html?rivenoverlay`,
+      url: `index.html#rivenoverlay`,
       title: "FrameForge Riven",
       transparent: true, decorations: false,
       alwaysOnTop: true, skipTaskbar: true,
@@ -66,11 +66,15 @@ import ModularWindow from "./ModularWindow";
 import { HelpTip } from "./HelpTip";
 import "./App.css";
 
-const _params = new URLSearchParams(window.location.search);
-// If the URL contains ?overlay, render the overlay instead of the main app
-const IS_OVERLAY       = _params.has("overlay");
-const IS_MODULAR       = _params.has("modular");
-const IS_RIVEN_OVERLAY = _params.has("rivenoverlay");
+const _winLabel = getCurrentWindow().label;
+// Support all URL formats: query string (?overlay), hash (#overlay), or window label.
+// v2.0.0 used query strings and they worked fine — keep as primary detection path.
+const _params          = new URLSearchParams(window.location.search);
+const _hash            = window.location.hash;
+const IS_OVERLAY       = _params.has("overlay")      || _hash === "#overlay"      || _winLabel === "relic-overlay";
+const IS_MODULAR       = _params.has("modular")      || _hash === "#modular"      || _winLabel === "modular-popout";
+const IS_RIVEN_OVERLAY = _params.has("rivenoverlay") || _hash === "#rivenoverlay" || _winLabel === "riven-overlay";
+const IS_OVERLAY_TEST  = _params.has("overlaytest")  || _hash === "#overlaytest"  || _winLabel === "overlay-test";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
   constructor(props: any) { super(props); this.state = { err: null }; }
@@ -497,7 +501,41 @@ const InvCard = memo(function InvCard({
 
 // RelicAndRivenTab is kept but now just shows RelicHelper — Rivens moved to own tab
 
+// ── Isolated overlay test page ────────────────────────────────────────────────
+// Rendered when window URL contains ?overlaytest.
+// No data loading, no events — pure window-creation smoke test.
+function OverlayTestPage() {
+  useEffect(() => {
+    [document.documentElement, document.body, document.getElementById('root')]
+      .forEach(el => el?.style.setProperty('background', 'transparent', 'important'));
+  }, []);
+
+  return (
+    <div style={{
+      width: '100vw', height: '100vh', boxSizing: 'border-box',
+      background: '#00cc55',
+      border: '4px solid #00ff88',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: 12, fontFamily: 'sans-serif', color: '#fff',
+    }}>
+      <div style={{ fontSize: 22, fontWeight: 700, textShadow: '0 2px 6px #000' }}>
+        FrameForge Overlay Test
+      </div>
+      <div style={{ fontSize: 13, opacity: 0.85 }}>If you see green: window + React are working</div>
+      <button
+        onClick={() => getCurrentWindow().close().catch(() => {})}
+        style={{ marginTop: 8, padding: '8px 24px', cursor: 'pointer', fontSize: 14,
+          background: '#00ff88', color: '#000', border: 'none', borderRadius: 6, fontWeight: 700 }}
+      >
+        Close
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
+  // Isolated overlay test — no data, no events, just proves the window appears.
+  if (IS_OVERLAY_TEST) return <OverlayTestPage />;
   // If we're the overlay window, render only the overlay UI
   if (IS_OVERLAY) return <Overlay />;
   if (IS_RIVEN_OVERLAY) return <RivenOverlayWindow />;
@@ -704,10 +742,12 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   }, []); // eslint-disable-line
 
   // ── WFM: intercept window close to go invisible first ─────────────────────
+  // Only runs in the main window — overlay/test windows must not call force_quit.
   useEffect(() => {
+    if (_winLabel !== "main") return;
     let unlistenFn: (() => void) | null = null;
     getCurrentWindow().onCloseRequested(async event => {
-      event.preventDefault(); // always prevent default; we handle all closes via force_quit
+      event.preventDefault();
       if (wfmInvisibleOnCloseRef.current && wfmLoggedInRef.current) {
         await Promise.race([
           invoke("wfm_set_status", { status: "invisible" }).catch(() => {}),
@@ -1253,7 +1293,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       // Only restore saved position if it lands on a currently connected monitor.
       // Guards against secondary monitor being unplugged since last session.
       const createWin = (usePos: boolean) => new WebviewWindow("modular-popout", {
-        url: "index.html?modular",
+        url: "index.html#modular",
         title: "FrameForge — Modular Window",
         width: g.w ?? modularWidth,
         height: g.h ?? 700,
@@ -1425,21 +1465,19 @@ if (typeof s.autoDiagEnabled === "boolean") {
   }, []); // eslint-disable-line
 
   // ── Relic reward overlay ──────────────────────────────────────────────────
+  // The overlay window is pre-declared in tauri.conf.json (y=-3000, off-screen).
+  // We never create/destroy it — just reposition it on-screen and back off-screen.
+  // This avoids a Windows deadlock: WebviewWindowBuilder::build() called dynamically
+  // (from tokio threads, run_on_main_thread, or JS new WebviewWindow) all hang because
+  // the Win32 event loop cannot process messages while our code is executing.
   useEffect(() => {
-    let overlayWin: WebviewWindow | null = null;
-    // Set to true when a dismiss arrives while the window is still being created.
-    // Checked in tauri://created to close immediately instead of showing items.
-    let dismissed   = false;
-    // Pending items buffered if they arrive before tauri://created fires.
+    let overlayVisible = false;
     let pendingItems: { items: string[]; positions: number[] } | null = null;
 
-    const closeOverlay = () => {
-      dismissed = true;
+    const closeOverlay = async () => {
       pendingItems = null;
-      if (overlayWin) {
-        overlayWin.close().catch(() => {});
-        overlayWin = null;
-      }
+      overlayVisible = false;
+      await invoke("move_overlay_offscreen").catch(() => {});
     };
 
     const unsubStatus = listen<string>("ff-status", (e) => {
@@ -1447,105 +1485,69 @@ if (typeof s.autoDiagEnabled === "boolean") {
       setTimeout(() => setOverlayStatus(""), 4000);
     });
 
-    // "relic-trigger" fires the moment EE.log detects the reward screen —
-    // we pre-create the overlay window immediately so it's ready by the time
-    // OCR finishes (window creation takes 1-2 s; OCR also takes ~700 ms).
+    const openOverlay = async (
+      wx: number, wy: number, ww: number, wh: number,
+      yFrac: number, hFrac: number,
+    ): Promise<boolean> => {
+      const stripY = wy + Math.round(wh * yFrac);
+      const stripH = Math.round(wh * hFrac);
+      try {
+        await invoke("show_overlay_window", { x: wx, y: stripY, w: ww, h: stripH });
+        overlayVisible = true;
+        return true;
+      } catch { return false; }
+    };
+
     const unsubTrigger = listen<null>("relic-trigger", async () => {
-      dismissed = false;
       pendingItems = null;
       const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
-      if (overlayWin || !enabled) return;
+      if (!enabled) return;
       try {
-        const rect = await invoke<[number, number, number, number]>("get_warframe_window_rect");
-        const [wx, wy, ww, wh] = rect;
-        const stripY = wy + Math.round(wh * 0.60);
-        const stripH = Math.round(wh * 0.30);
-        const pri    = localStorage.getItem("ff-overlay-priority") ?? "completion";
-        overlayWin = new WebviewWindow("relic-overlay", {
-          url: `index.html?overlay&ww=${ww}&wh=${wh}&priority=${pri}`,
-          title: "FrameForge Overlay",
-          transparent: true, decorations: false,
-          alwaysOnTop: true, skipTaskbar: true,
-          resizable: false, focus: false,
-          x: wx, y: stripY, width: ww, height: stripH,
-        });
-
-        const _triggerWin = overlayWin;
-        overlayWin.once("tauri://destroyed", () => { overlayWin = null; pendingItems = null; });
-        overlayWin.once("tauri://created", async () => {
-          await _triggerWin.setIgnoreCursorEvents(true).catch(() => {});
-          if (dismissed) {
-            // Dismiss arrived while window was being created — close immediately
-            _triggerWin.close().catch(() => {});
-            dismissed = false;
-            overlayWin = null;
-            return;
-          }
-          if (pendingItems) {
-            // Items arrived before the window was ready — send them now
-            const { emit } = await import("@tauri-apps/api/event");
-            await emit("relic-rewards", pendingItems);
-            pendingItems = null;
-          }
-        });
-      } catch { /* Warframe not running */ }
+        const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
+        invoke("log_relic_fe", { msg: `[APP] relic-trigger: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
+        await openOverlay(wx, wy, ww, wh, 0.60, 0.30);
+      } catch (e) {
+        // get_warframe_window_rect failed (Warframe may be in a different state).
+        // Fall back to screen dimensions so the overlay still moves on-screen and
+        // WebView2 un-freezes its JS before relic-rewards arrives.
+        invoke("log_relic_fe", { msg: `[APP] relic-trigger: wf-rect failed (${e}), falling back to screen dims` }).catch(() => {});
+        const sw = window.screen.width, sh = window.screen.height;
+        await openOverlay(0, 0, sw, sh, 0.60, 0.30);
+      }
     });
 
     const unsubRelic = listen<boolean>("relic-screen", () => { closeOverlay(); });
 
     const unsub = listen<{ items: string[]; positions: number[] } | null>("relic-rewards", async (e) => {
       const rewards = e.payload;
-
-      if (rewards && rewards.items.length >= 1) {
-        if (dismissed) return;
-        const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
-        if (!enabled) return;
-
-        if (overlayWin) {
-          // Window already exists (pre-created by relic-trigger or previous emit)
-          const { emit } = await import("@tauri-apps/api/event");
-          await emit("relic-rewards", rewards);
-        } else {
-          // relic-trigger didn't fire or window wasn't ready — create now as fallback
-          pendingItems = rewards;
-          try {
-            const rect = await invoke<[number, number, number, number]>("get_warframe_window_rect");
-            const [wx, wy, ww, wh] = rect;
-            const stripY = wy + Math.round(wh * 0.54);
-            const stripH = Math.round(wh * 0.28);
-            const pri    = localStorage.getItem("ff-overlay-priority") ?? "completion";
-            overlayWin = new WebviewWindow("relic-overlay", {
-              url: `index.html?overlay&ww=${ww}&wh=${wh}&priority=${pri}`,
-              title: "FrameForge Overlay",
-              transparent: true, decorations: false,
-              alwaysOnTop: true, skipTaskbar: true,
-              resizable: false, focus: false,
-              x: wx, y: stripY, width: ww, height: stripH,
-            });
-    
-            const _fallbackWin = overlayWin;
-            overlayWin.once("tauri://destroyed", () => { overlayWin = null; pendingItems = null; });
-            overlayWin.once("tauri://created", async () => {
-              await _fallbackWin.setIgnoreCursorEvents(true).catch(() => {});
-              if (dismissed) { _fallbackWin.close().catch(() => {}); overlayWin = null; dismissed = false; return; }
-              if (pendingItems) {
-                const { emit } = await import("@tauri-apps/api/event");
-                await emit("relic-rewards", pendingItems);
-                pendingItems = null;
-              }
-            });
-          } catch { /* Warframe not running */ }
-        }
+      if (!rewards || rewards.items.length === 0) { closeOverlay(); return; }
+      const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
+      if (!enabled) return;
+      invoke("log_relic_fe", { msg: `[APP] relic-rewards: ${rewards.items.length} items, overlayVisible=${overlayVisible}` }).catch(() => {});
+      if (overlayVisible) {
+        await emitTo("relic-overlay", "relic-rewards", rewards);
       } else {
-        // Null = dismiss. Close overlay or set flag if window still being created.
-        closeOverlay();
+        pendingItems = rewards;
+        try {
+          const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
+          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
+          const ok = await openOverlay(wx, wy, ww, wh, 0.54, 0.28);
+          if (ok && pendingItems) {
+            await emitTo("relic-overlay", "relic-rewards", pendingItems);
+            pendingItems = null;
+          }
+        } catch (e) {
+          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf-rect failed (${e}), using screen dims` }).catch(() => {});
+          const sw = window.screen.width, sh = window.screen.height;
+          const ok = await openOverlay(0, 0, sw, sh, 0.54, 0.28);
+          if (ok && pendingItems) {
+            await emitTo("relic-overlay", "relic-rewards", pendingItems);
+            pendingItems = null;
+          }
+        }
       }
     });
 
-    // "inventory-reward" fires when EE.log confirms the local player's reward
-    // selection ("gets reward /Lotus/StoreItems/..."). We increment just that
-    // one item in the quantities map immediately — no need to wait for the next
-    // memory scan cycle (~10 s) to see the new item appear in inventory.
     const unsubReward = listen<{ path: string; qty: number }>("inventory-reward", (e) => {
       const { path, qty } = e.payload;
       setQuantities(prev => ({ ...prev, [path]: qty }));
@@ -1557,7 +1559,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       unsubTrigger.then(fn => fn());
       unsubStatus.then(fn => fn());
       unsubReward.then(fn => fn());
-      if (overlayWin) { overlayWin.close(); overlayWin = null; }
+      invoke("move_overlay_offscreen").catch(() => {});
     };
   }, []);
 
@@ -2332,7 +2334,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
                       {/* Auto-capture */}
                       <div className="settings-row-info">
                         <span className="settings-row-label">Auto-capture</span>
-                        <span className="settings-row-desc">Saves screenshot + OCR log when a relic reward screen opens.</span>
+                        <span className="settings-row-desc">Automatically saves a screenshot and OCR session log for every relic reward screen. One folder is created per relic in the diagnostics directory.</span>
                       </div>
                       <button className="btn-secondary" onClick={() => invoke("open_debug_folder", { which: "diag" }).catch(() => {})}>Go To Folder</button>
                       <button className="btn-secondary"
@@ -2408,6 +2410,85 @@ if (typeof s.autoDiagEnabled === "boolean") {
                         onClick={async () => { await invoke("clear_debug_data", { which: "raw_scan" }); setRawScanSize(0); }}
                       >{rawScanSize > 0 ? `Clear (${fmtBytes(rawScanSize)})` : "Clear"}</button>
 
+                    </div>
+                  </div>
+
+                  {/* Overlay Test */}
+                  <div className="settings-section">
+                    <div className="settings-section-title">Overlay Test</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', padding: '4px 0 8px' }}>
+                      Isolated window tests — no connection to the real relic overlay.
+                    </div>
+
+                    {/* Stage 1: show pre-declared test window */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <button className="btn-secondary" onClick={() => {
+                        invoke("show_test_overlay_window")
+                          .then(() => setOverlayStatus("✓ Stage 1: test window moved on-screen — should show green"))
+                          .catch(e => setOverlayStatus(`✗ Stage 1 error: ${e}`));
+                        setTimeout(() => setOverlayStatus(""), 8000);
+                      }}>Stage 1 — Show Test Window</button>
+                      <button className="btn-secondary" onClick={() => {
+                        invoke("hide_test_overlay_window")
+                          .then(() => setOverlayStatus("test window moved off-screen"))
+                          .catch(e => setOverlayStatus(`hide error: ${e}`));
+                        setTimeout(() => setOverlayStatus(""), 3000);
+                      }}>Hide Test Window</button>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>Window is pre-loaded at app start (y=−3000). Should appear green immediately.</span>
+                    </div>
+
+                    {/* Stage 2: transparent window — proves transparent rendering works */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <button className="btn-secondary" onClick={() => {
+                        invoke("create_test_overlay_window", { transparent: true })
+                          .then(() => setOverlayStatus("stage 2: transparent test window created"))
+                          .catch(e => setOverlayStatus(`stage 2 error: ${e}`));
+                        setTimeout(() => setOverlayStatus(""), 6000);
+                      }}>Stage 2 — Transparent Window</button>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>Green-tinted box with no title bar — should float over everything.</span>
+                    </div>
+
+                    {/* Real overlay test */}
+                    <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Real relic overlay (only use after Stage 1+2 pass):</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button className="btn-secondary" onClick={async () => {
+                          await emitTo("relic-overlay", "relic-trigger", null).catch(() => {});
+                          try {
+                            const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
+                            const oy = Math.round(wy + wh * 0.60);
+                            const oh = Math.round(wh * 0.30);
+                            await invoke("show_overlay_window", { x: wx, y: oy, w: ww, h: oh });
+                            setOverlayStatus(`shown — wf(${wx},${wy} ${ww}×${wh}) → ov(${wx},${oy} ${ww}×${oh})`);
+                          } catch (e) {
+                            const sw = window.screen.width, sh = window.screen.height;
+                            const oy = Math.round(sh * 0.55), oh = Math.round(sh * 0.35);
+                            await invoke("show_overlay_window", { x: 0, y: oy, w: sw, h: oh }).catch(() => {});
+                            setOverlayStatus(`shown (no WF — ${e}) → ov(0,${oy} ${sw}×${oh})`);
+                          }
+                          setTimeout(() => setOverlayStatus(""), 8000);
+                        }}>Show Overlay</button>
+                        <button className="btn-secondary" onClick={() => {
+                          emitTo("relic-overlay", "relic-rewards", {
+                            items: [
+                              "/Lotus/Types/Recipes/Weapons/WeaponParts/BroncoPrimeBarrel",
+                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimeFangBlade",
+                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimePolearmBlade",
+                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimeLightningGunStock",
+                            ],
+                            positions: [0.25, 0.38, 0.62, 0.75],
+                          }).catch(() => {});
+                          setOverlayStatus("test rewards sent");
+                          setTimeout(() => setOverlayStatus(""), 3000);
+                        }}>Send Test Rewards</button>
+                        <button className="btn-secondary" onClick={() => {
+                          // Direct Rust call — no routing through Overlay.tsx JS
+                          invoke("move_overlay_offscreen")
+                            .then(() => setOverlayStatus("dismissed"))
+                            .catch(e => setOverlayStatus(`dismiss error: ${e}`));
+                          setTimeout(() => setOverlayStatus(""), 4000);
+                        }}>Dismiss</button>
+                      </div>
                     </div>
                   </div>
 
@@ -2678,7 +2759,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
         {/* ── Market Helper module ── */}
         {activeModule === "market" && (
-          <MarketHelper inventory={inventory} refreshKey={itemsRefreshKey} crafting={crafting} onWfmLoginChange={handleWfmLoginChange} filters={marketFilters} onFiltersChange={setMarketFilters} />
+          <MarketHelper inventory={inventory} refreshKey={itemsRefreshKey} crafting={crafting} onWfmLoginChange={handleWfmLoginChange} filters={marketFilters} onFiltersChange={setMarketFilters} modCopiesMap={modCopiesMap} />
         )}
 
         {/* ── Relics module ── */}
