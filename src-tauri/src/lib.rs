@@ -104,6 +104,9 @@ pub struct AppState {
     /// Overlay.tsx pulls this on mount so it never misses rewards that arrived before
     /// its relic-rewards listener was registered.
     pub pending_relic_rewards: Mutex<Option<serde_json::Value>>,
+    /// relics.run daily bulk price cache: item display name (lowercase) → median sell price.
+    pub relics_run_prices: Mutex<HashMap<String, u32>>,
+    pub relics_run_prices_cache_path: PathBuf,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -421,7 +424,7 @@ async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
 
     let patched_items: Vec<WfcdItem> = result.items.into_iter().map(|mut i| {
         i.name = patch_item_name(&i.unique_name, &i.name);
-        i.category = patch_item_category(&i.name, &i.category);
+        i.category = patch_item_category(&i.name, &i.category, &i.unique_name);
         i
     }).collect();
     if let Ok(json) = serde_json::to_string(&result.relic_drops) {
@@ -430,7 +433,24 @@ async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
     if let Ok(json) = serde_json::to_string(&result.relic_rewards) {
         let _ = std::fs::write(&state.relic_rewards_cache_path, json);
     }
-    *state.wfcd_items.lock().map_err(|e| e.to_string())? = dedup_known_aliases(patched_items);
+    let deduped = dedup_known_aliases(patched_items);
+
+    // Write mod_max_rank into inventory_state_cache.json for every mod/arcane so it is
+    // available at startup without requiring wfcd_items to be loaded first.
+    {
+        let mut inv = load_inventory_state_cache(&state.inventory_state_cache_path);
+        for item in deduped.iter().filter(|i| i.fusion_limit.is_some()) {
+            let entry = inv.items.entry(item.unique_name.clone())
+                .or_insert_with(|| CachedItem { unique_name: item.unique_name.clone(), ..Default::default() });
+            if entry.name.is_empty() { entry.name = item.name.clone(); }
+            entry.mod_max_rank = item.fusion_limit;
+        }
+        if let Ok(json) = serde_json::to_string(&inv) {
+            let _ = atomic_write(&state.inventory_state_cache_path, json.as_bytes());
+        }
+    }
+
+    *state.wfcd_items.lock().map_err(|e| e.to_string())? = deduped;
     *state.recipes.lock().map_err(|e| e.to_string())? = result.recipes;
     *state.relic_drops.lock().map_err(|e| e.to_string())? = result.relic_drops;
     *state.relic_rewards.lock().map_err(|e| e.to_string())? = result.relic_rewards;
@@ -1445,8 +1465,9 @@ fn wfm_login(state: State<AppState>, email: String, password: String) -> Result<
 }
 
 /// Fetch current in-game buy and sell orders for an item, sorted by price.
+/// When `mod_rank` is provided the results are filtered to that specific rank only.
 #[tauri::command]
-fn wfm_get_item_orders(state: State<AppState>, url_name: String) -> Result<serde_json::Value, String> {
+fn wfm_get_item_orders(state: State<AppState>, url_name: String, mod_rank: Option<u32>) -> Result<serde_json::Value, String> {
     let auth = state.wfm_session.lock().unwrap_or_else(|e| e.into_inner())
         .as_ref().map(|s| s.auth_header());
     wfm_wait();
@@ -1462,7 +1483,14 @@ fn wfm_get_item_orders(state: State<AppState>, url_name: String) -> Result<serde
             _ => 2,
         }
     }
-    let orders = json["data"].as_array().cloned().unwrap_or_default();
+    let all_orders = json["data"].as_array().cloned().unwrap_or_default();
+    let orders: Vec<serde_json::Value> = if let Some(rank) = mod_rank {
+        all_orders.into_iter().filter(|o| {
+            o["rank"].as_u64().map(|r| r as u32 == rank).unwrap_or(false)
+        }).collect()
+    } else {
+        all_orders
+    };
     let mut sell: Vec<serde_json::Value> = orders.iter().filter(|o| o["type"] == "sell").cloned().collect();
     sell.sort_by(|a, b| {
         status_rank(a).cmp(&status_rank(b))
@@ -2644,6 +2672,107 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
     }))
 }
 
+// ── Trade dialog parser ───────────────────────────────────────────────────────
+
+struct ParsedTrade {
+    with_player: String,
+    trade_type: String,
+    offered_items: Vec<(String, i64)>,
+    offered_plat: i64,
+    received_items: Vec<(String, i64)>,
+    received_plat: i64,
+    session_id: String,
+    timestamp: String,
+}
+
+/// Clean a single item line from a trade dialog:
+/// strips Warframe PUA rank-dot characters and normalises mod rank suffixes.
+fn clean_trade_item(raw: &str) -> String {
+    let raw = raw.trim();
+    let filled = raw.chars().filter(|&c| c == '\u{E114}').count();
+    let total  = raw.chars().filter(|&c| c == '\u{E114}' || c == '\u{E112}').count();
+    if total > 0 {
+        let base: String = raw.chars().take_while(|&c| c != '\u{E114}' && c != '\u{E112}').collect();
+        let base = base.trim();
+        return if filled == 0 { format!("{} (R0)", base) } else { format!("{} (R{})", base, filled) };
+    }
+    if let Some(p) = raw.find(" (") {
+        let inside = &raw[p + 2..];
+        if let Some(r) = inside.to_lowercase().find("rank ") {
+            let rank_n = inside[r + 5..].trim_end_matches(')').trim();
+            return format!("{} (R{})", &raw[..p], rank_n);
+        }
+        return raw[..p].trim().to_string();
+    }
+    raw.to_string()
+}
+
+/// Parse all items from one section of a trade dialog (offered or received).
+/// Handles both repeated-line stacking and "Item x N" inline quantities.
+fn extract_trade_items(section: &str) -> Vec<(String, i64)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for line in section.lines() {
+        let raw = line.trim();
+        if raw.is_empty() || raw.to_lowercase().contains("platinum") { continue; }
+        let (raw_name, qty) = if let Some(x_pos) = raw.rfind(" x ") {
+            let qty_part = raw[x_pos + 3..].trim();
+            if let Ok(n) = qty_part.parse::<i64>() { (&raw[..x_pos], n) } else { (raw, 1i64) }
+        } else {
+            (raw, 1i64)
+        };
+        let name = clean_trade_item(raw_name);
+        if !name.is_empty() {
+            if !counts.contains_key(&name) { order.push(name.clone()); }
+            *counts.entry(name).or_insert(0) += qty;
+        }
+    }
+    order.into_iter().map(|k| { let q = counts[&k]; (k, q) }).collect()
+}
+
+/// Parse the full trade confirmation dialog from EE.log.
+/// Returns None if the dialog doesn't contain the expected markers.
+fn parse_trade_dialog(raw: &str) -> Option<ParsedTrade> {
+    let with_player = raw.find("will receive from ")
+        .and_then(|i| { let a = &raw[i + 18..]; a.find(" the following").map(|j| a[..j].trim().to_string()) })?;
+    let offered_raw = raw.find("You are offering:")
+        .and_then(|i| { let a = &raw[i + 17..]; a.find("and will receive from").map(|j| a[..j].trim().to_string()) })
+        .unwrap_or_default();
+    let received_raw = raw.find("the following:")
+        .and_then(|i| { let a = &raw[i + 14..]; a.find(", title=").map(|j| a[..j].trim().to_string()) })
+        .unwrap_or_default();
+
+    let parse_plat = |s: &str| -> i64 {
+        s.find("Platinum x ")
+            .and_then(|i| s[i + 11..].split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+
+    let offered_plat  = parse_plat(&offered_raw);
+    let received_plat = parse_plat(&received_raw);
+    let offered_items  = extract_trade_items(&offered_raw);
+    let received_items = extract_trade_items(&received_raw);
+
+    if offered_items.is_empty() && received_items.is_empty() && offered_plat == 0 && received_plat == 0 {
+        return None;
+    }
+
+    let trade_type = if offered_plat > 0 { "purchase" } else if received_plat > 0 { "sale" } else { "trade" };
+    let now = chrono::Utc::now();
+
+    Some(ParsedTrade {
+        with_player,
+        trade_type: trade_type.to_string(),
+        offered_items,
+        offered_plat,
+        received_items,
+        received_plat,
+        session_id: now.format("%Y%m%dT%H%M%S%3f").to_string(),
+        timestamp: now.to_rfc3339(),
+    })
+}
+
 /// Start a lightweight EE.log watcher for features that don't need the memory scanner:
 /// riven reroll detection, trade completion detection, WFM whisper detection.
 /// Called unconditionally at app startup — EE.log is plain file I/O, not memory reading.
@@ -2773,40 +2902,18 @@ fn start_log_watcher(app: tauri::AppHandle) -> Result<(), String> {
             }
             if lower.contains("the trade was successful") {
                 if let Some(ref trade_raw) = pending_trade.clone() {
-                    // (same parsing logic as in start_monitor)
-                    let r = trade_raw.as_str();
-                    let with_player = r.find("will receive from ").and_then(|i| {
-                        let a = &r[i+18..]; a.find(" the following").map(|j| a[..j].trim().to_string())
-                    }).unwrap_or_default();
-                    let offered = r.find("You are offering:").and_then(|i| {
-                        let a=&r[i+17..]; a.find("and will receive from").map(|j| a[..j].trim().to_string())
-                    }).unwrap_or_default();
-                    let received = r.find("the following:").and_then(|i| {
-                        let a=&r[i+14..]; a.find(", title=").map(|j| a[..j].trim().to_string())
-                    }).unwrap_or_default();
-                    let parse_plat = |s: &str| -> i64 { s.find("Platinum x ").and_then(|i| s[i+11..].split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse().ok()).unwrap_or(0) };
-                    let plat_off = parse_plat(&offered);
-                    let plat_rec = parse_plat(&received);
-                    let (direction, raw_item, platinum) = if plat_off > 0 {
-                        ("bought", received.lines().find(|l| !l.trim().is_empty() && !l.to_lowercase().contains("platinum")).map(|l| l.trim().to_string()).unwrap_or_default(), plat_off)
-                    } else {
-                        ("sold", offered.lines().find(|l| !l.trim().is_empty() && !l.to_lowercase().contains("platinum")).map(|l| l.trim().to_string()).unwrap_or_default(), plat_rec)
-                    };
-                    // Parse "Item Name x 50" → item_name="Item Name", quantity=50
-                    let (item_name, quantity) = if let Some(x_pos) = raw_item.rfind(" x ") {
-                        let qty_str = raw_item[x_pos + 3..].trim();
-                        match qty_str.parse::<i64>() {
-                            Ok(n) => (raw_item[..x_pos].trim().to_string(), n),
-                            Err(_) => (raw_item, 1i64),
-                        }
-                    } else {
-                        (raw_item, 1i64)
-                    };
-                    let _ = app.emit("trade-completed", serde_json::json!({
-                        "withPlayer": with_player, "direction": direction,
-                        "itemName": item_name, "quantity": quantity, "platinum": platinum,
-                        "timestamp": chrono::Utc::now().to_rfc3339(),
-                    }));
+                    if let Some(t) = parse_trade_dialog(trade_raw) {
+                        let _ = app.emit("trade-completed", serde_json::json!({
+                            "sessionId":     t.session_id,
+                            "withPlayer":    t.with_player,
+                            "tradeType":     t.trade_type,
+                            "offeredItems":  t.offered_items.iter().map(|(n, q)| serde_json::json!({"name": n, "qty": q})).collect::<Vec<_>>(),
+                            "offeredPlat":   t.offered_plat,
+                            "receivedItems": t.received_items.iter().map(|(n, q)| serde_json::json!({"name": n, "qty": q})).collect::<Vec<_>>(),
+                            "receivedPlat":  t.received_plat,
+                            "timestamp":     t.timestamp,
+                        }));
+                    }
                 }
                 pending_trade = None;
             }
@@ -3220,18 +3327,18 @@ fn wfm_get_item_info(state: State<AppState>, url_name: String) -> Result<serde_j
         .into_json::<serde_json::Value>().map_err(|e| format!("Parse: {}", e))
         .map(|j| j["data"].clone())?;
 
-    // Enrich with modMaxRank from our WFCD cache (no extra network call).
+    // Enrich with modMaxRank from inventory_state_cache.json — the canonical source.
     // Match by display name since url_name ↔ unique_name conversion isn't 1:1.
     if let Some(wfm_name) = data["i18n"]["en"]["name"].as_str()
         .or_else(|| data["name"].as_str())
     {
         let wfm_name_lc = wfm_name.to_lowercase();
-        let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(fusion_limit) = items.iter()
-            .find(|i| i.name.to_lowercase() == wfm_name_lc)
-            .and_then(|i| i.fusion_limit)
+        let inv = load_inventory_state_cache(&state.inventory_state_cache_path);
+        if let Some(max_rank) = inv.items.values()
+            .find(|item| item.name.to_lowercase() == wfm_name_lc)
+            .and_then(|item| item.mod_max_rank)
         {
-            data["modMaxRank"] = serde_json::json!(fusion_limit);
+            data["modMaxRank"] = serde_json::json!(max_rank);
         }
     }
 
@@ -3612,6 +3719,15 @@ fn to_wfm_slug(name: &str) -> String {
 /// Returns None when the item is not listed on warframe.market.
 #[tauri::command]
 fn get_item_price(item_name: String, state: State<AppState>) -> Result<Option<u32>, String> {
+    // 1. Check relics.run bulk price cache (no network call needed)
+    {
+        let prices = state.relics_run_prices.lock().map_err(|e| e.to_string())?;
+        let key = item_name.to_lowercase();
+        if let Some(&price) = prices.get(&key) {
+            return Ok(Some(price));
+        }
+    }
+
     let slug = to_wfm_slug(&item_name);
 
     {
@@ -3887,36 +4003,6 @@ fn wfm_get_cached_prices(state: State<'_, AppState>) -> HashMap<String, Option<u
     state.wfm_price_cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// Fetch the FrameForge centralised price cache from GitHub and seed wfm_price_cache.
-/// Only inserts items that have a valid vwap (null-vwap items are left absent so the
-/// queue can still fetch them live). Remote prices overwrite stale disk-cache values
-/// since the remote cache is refreshed every ~2 hours.
-/// Returns slug → price for all items that had a valid vwap.
-#[tauri::command]
-fn load_remote_price_cache(state: State<'_, AppState>) -> Result<HashMap<String, u32>, String> {
-    let json: serde_json::Value = ureq::get(
-        "https://raw.githubusercontent.com/WyrmStudios/FrameForgePricing/main/prices.json"
-    )
-    .call()
-    .map_err(|e| format!("remote price cache fetch: {}", e))?
-    .into_json()
-    .map_err(|e| format!("remote price cache parse: {}", e))?;
-
-    let items = json["items"].as_object()
-        .ok_or_else(|| "remote price cache: missing items field".to_string())?;
-
-    let mut cache = state.wfm_price_cache.lock().unwrap_or_else(|e| e.into_inner());
-    let mut result = HashMap::new();
-
-    for (slug, data) in items {
-        if let Some(price) = data["vwap"].as_u64().map(|v| v as u32) {
-            cache.insert(slug.clone(), Some(price));
-            result.insert(slug.clone(), price);
-        }
-    }
-
-    Ok(result)
-}
 
 // ─── Change log ───────────────────────────────────────────────────────────────
 
@@ -3971,11 +4057,13 @@ fn add_trade(
     platinum: i64,
     source: String,
     notes: String,
+    session_id: Option<String>,
+    trade_type: Option<String>,
+    timestamp: Option<String>,
 ) -> Result<i64, String> {
-    let timestamp = chrono::Utc::now().to_rfc3339();
     let trade = Trade {
         id: 0,
-        timestamp,
+        timestamp: timestamp.unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
         with_player,
         direction,
         item_name,
@@ -3984,6 +4072,8 @@ fn add_trade(
         platinum,
         source,
         notes,
+        session_id: session_id.unwrap_or_default(),
+        trade_type: trade_type.unwrap_or_default(),
     };
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::add_trade(&conn, &trade).map_err(|e| e.to_string())
@@ -4445,6 +4535,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         // Cache the game-running state so we only re-enumerate processes once every 5 s
         // instead of on every 2-second loop tick (CreateToolhelp32Snapshot is not free).
         let mut last_pid_check: Option<std::time::Instant> = None;
+        let mut last_pid: Option<u32> = None;
         let mut cached_game_running = false;
         // When game is not running, suppress redundant inventory-update emits.
         // Only emit on the status-change tick and then at most once every 30 s as a heartbeat.
@@ -4649,7 +4740,15 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
             let needs_pid_check = last_pid_check
                 .map_or(true, |t: std::time::Instant| t.elapsed().as_secs() >= 5);
             if needs_pid_check {
-                cached_game_running = memory_scanner::find_warframe_pid_pub().is_some();
+                let current_pid = memory_scanner::find_warframe_pid_pub();
+                cached_game_running = current_pid.is_some();
+                if current_pid != last_pid {
+                    if current_pid.is_some() {
+                        eprintln!("[monitor] Warframe PID changed ({:?} → {:?}), clearing blob region cache", last_pid, current_pid);
+                        memory_scanner::reset_last_blob_region();
+                    }
+                    last_pid = current_pid;
+                }
                 last_pid_check = Some(std::time::Instant::now());
             }
             let game_running = cached_game_running;
@@ -4671,8 +4770,13 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     });
                     eprintln!("[monitor] blob capture starting (save={})", save);
                     std::thread::spawn(move || {
+                        // Ensure the flag is cleared even if capture_all_blobs panics.
+                        struct ClearOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+                        impl Drop for ClearOnDrop {
+                            fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); }
+                        }
+                        let _guard = ClearOnDrop(active);
                         let count = memory_scanner::capture_all_blobs(&dir, &ts, tx, save);
-                        active.store(false, Ordering::SeqCst);
                         eprintln!("[monitor] blob capture finished (files_saved={} save_flag={} ts={})", count, save, ts);
                     });
                 }
@@ -4866,8 +4970,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     // tools (WFInfo, warframeocr, Sentinel) use this string as their trigger.
     // We tail the log file instead of relying on fragile OCR gate heuristics.
     let ee_log_path = dirs::data_local_dir()
-        .map(|d| d.join("Warframe").join("EE.log"))
-        .filter(|p| p.exists());
+        .map(|d| d.join("Warframe").join("EE.log"));
 
     // Shared flag: true while the reward screen is active according to EE.log
     let reward_screen_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -4981,6 +5084,13 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
             // Cooldown: after any dismiss, block new triggers for 5 s to filter
             // stale EE.log lines that can arrive shortly after a dismiss.
             let mut last_dismiss_at: Option<std::time::Instant> = None;
+            // ── Relic prefilter ───────────────────────────────────────────────────
+            // Projection paths collected from "Resource load completed" EE.log lines
+            // while squad loadouts download. Used at trigger time to narrow the OCR
+            // candidate list from ~700 items to the ~6-24 rewards of the active relics.
+            // To revert: delete this Vec, the collection block below, the clear in the
+            // dismiss handler, and the filtered_cat block at trigger time.
+            let mut session_relics: Vec<String> = Vec::new();
             // One diagnostics folder per trigger→dismiss cycle.
             // Created at trigger, BMP written after overlay confirmed, session log at dismiss.
             let diag_arc: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
@@ -5078,6 +5188,25 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     }
                 }
 
+                // ── Relic prefilter: collect squad projection paths ───────────────
+                // "Resource load completed 0x... (/Lotus/Types/Game/Projections/T?VoidProjection...)"
+                // fires once per squad member's relic as their loadout is downloaded.
+                // All 4 relics appear seconds before the mission starts, well ahead of
+                // the reward screen trigger (~200+ seconds later).
+                for line in buf.lines() {
+                    if line.contains("Resource load completed")
+                        && line.contains("/Lotus/Types/Game/Projections/")
+                    {
+                        if let Some(paren) = line.find("(/Lotus/Types/Game/Projections/") {
+                            let rest = &line[paren + 1..]; // skip the '('
+                            let path = rest.split(')').next().unwrap_or("").trim().to_string();
+                            if !path.is_empty() && !session_relics.contains(&path) {
+                                session_relics.push(path.clone());
+                            }
+                        }
+                    }
+                }
+
                 // ── Squad member name collection ─────────────────────────────────
                 // "AddSquadMember: NAME, mm=..." fires when each squadmate loads in.
                 // "Logged in NAME" fires when the local player signs in — their name
@@ -5169,122 +5298,18 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 
                 if lower.contains("the trade was successful") {
                     if let Some(ref trade_raw) = pending_trade.clone() {
-                        let r = trade_raw.as_str();
-
-                        // Extract trading partner
-                        let with_player = r.find("will receive from ")
-                            .and_then(|i| {
-                                let after = &r[i + 18..];
-                                after.find(" the following").map(|j| after[..j].trim().to_string())
-                            })
-                            .unwrap_or_default();
-
-                        // Extract what YOU offered (between "You are offering:" and "and will receive from")
-                        let offered = r.find("You are offering:")
-                            .and_then(|i| {
-                                let after = &r[i + 17..];
-                                after.find("and will receive from").map(|j| after[..j].trim().to_string())
-                            })
-                            .unwrap_or_default();
-
-                        // Extract what you RECEIVED (between "the following:" and ", title=")
-                        let received = r.find("the following:")
-                            .and_then(|i| {
-                                let after = &r[i + 14..];
-                                after.find(", title=").map(|j| after[..j].trim().to_string())
-                            })
-                            .unwrap_or_default();
-
-                        // Parse platinum amounts
-                        let parse_plat = |s: &str| -> i64 {
-                            s.find("Platinum x ")
-                                .and_then(|i| s[i + 11..].split(|c: char| !c.is_ascii_digit()).next())
-                                .and_then(|n| n.parse().ok())
-                                .unwrap_or(0)
-                        };
-                        let plat_offered  = parse_plat(&offered);
-                        let plat_received = parse_plat(&received);
-
-                        // Warframe encodes item ranks as Unicode Private Use Area dots:
-                        //   U+E114 (bytes EE 84 94) = filled dot = one acquired rank level
-                        //   U+E112 (bytes EE 84 92) = empty dot  = unacquired rank level
-                        // Count filled dots to get actual rank.
-                        // Mods use text suffix " (COMMON RANK N)" instead.
-                        let clean_item_line = |l: &str| -> String {
-                            let l = l.trim();
-                            // Check for Warframe PUA rank dots (arcanes, some items)
-                            let filled = l.chars().filter(|&c| c == '\u{E114}').count();
-                            let total  = l.chars().filter(|&c| c == '\u{E114}' || c == '\u{E112}').count();
-                            if total > 0 {
-                                // Strip the PUA characters to get the base name
-                                let base: String = l.chars()
-                                    .take_while(|&c| c != '\u{E114}' && c != '\u{E112}')
-                                    .collect::<String>();
-                                let base = base.trim();
-                                return if filled == 0 && total > 0 {
-                                    // All empty dots = rank 0 — omit rank suffix for cleanliness
-                                    // OR include it for completeness. We include it so R0 is explicit.
-                                    format!("{} (R0)", base)
-                                } else {
-                                    format!("{} (R{})", base, filled)
-                                };
-                            }
-                            // Check for mod text rank suffix " (RARITY RANK N)"
-                            if let Some(p) = l.find(" (") {
-                                let inside = &l[p+2..];
-                                if let Some(r) = inside.to_lowercase().find("rank ") {
-                                    let rank_n = inside[r+5..].trim_end_matches(')').trim();
-                                    return format!("{} (R{})", &l[..p], rank_n);
-                                }
-                                return l[..p].trim().to_string();
-                            }
-                            l.to_string()
-                        };
-
-                        let extract_item_and_qty = |section: &str| -> (String, i64) {
-                            let items: Vec<String> = section.lines()
-                                .filter(|l| {
-                                    let t = l.trim();
-                                    !t.is_empty() && !t.to_lowercase().contains("platinum")
-                                })
-                                .map(|l| clean_item_line(l))
-                                .filter(|s| !s.is_empty())
-                                .collect();
-
-                            if items.is_empty() { return (String::new(), 1); }
-
-                            let qty = items.len() as i64;
-                            let first = &items[0];
-                            let all_same = items.iter().all(|i| i == first);
-
-                            if all_same {
-                                // 6× same item → "Neo R1 Relic", qty 6
-                                (first.clone(), qty)
-                            } else {
-                                // Mixed items → join them, qty = total count
-                                (items.join(", "), qty)
-                            }
-                        };
-
-                        // Determine direction, item, quantity, platinum
-                        let (direction, item_name, quantity, platinum) = if plat_offered > 0 {
-                            // Paid platinum → bought something
-                            let (item, qty) = extract_item_and_qty(&received);
-                            ("bought", item, qty, plat_offered)
-                        } else {
-                            // Received platinum → sold something
-                            let (item, qty) = extract_item_and_qty(&offered);
-                            ("sold", item, qty, plat_received)
-                        };
-
-                        let _ = ee_ocr_app.emit("trade-completed", serde_json::json!({
-                            "withPlayer": with_player,
-                            "direction":  direction,
-                            "itemName":   item_name,
-                            "quantity":   quantity,
-                            "platinum":   platinum,
-                            "timestamp":  chrono::Local::now().to_rfc3339(),
-                        }));
+                        if let Some(t) = parse_trade_dialog(trade_raw) {
+                            let _ = ee_ocr_app.emit("trade-completed", serde_json::json!({
+                                "sessionId":     t.session_id,
+                                "withPlayer":    t.with_player,
+                                "tradeType":     t.trade_type,
+                                "offeredItems":  t.offered_items.iter().map(|(n, q)| serde_json::json!({"name": n, "qty": q})).collect::<Vec<_>>(),
+                                "offeredPlat":   t.offered_plat,
+                                "receivedItems": t.received_items.iter().map(|(n, q)| serde_json::json!({"name": n, "qty": q})).collect::<Vec<_>>(),
+                                "receivedPlat":  t.received_plat,
+                                "timestamp":     t.timestamp,
+                            }));
+                        }
                     }
                     pending_trade = None;
                 }
@@ -5341,6 +5366,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     reward_screen_active2.store(false, Ordering::SeqCst);
                     active_since = None;
                     last_dismiss_at = Some(std::time::Instant::now());
+                    session_relics.clear(); // relic prefilter: reset for next mission
 
                     // ── Immediate inventory update from EE.log reward line ────────
                     // "gets reward /Lotus/StoreItems/..." fires when the player
@@ -5382,7 +5408,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     }
 
                     if let Some(win) = ee_ocr_app.get_webview_window("relic-overlay") {
-                        let _ = win.close();
+                        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: -3000 }));
                     }
                     if let Ok(mut g) = ee_ocr_app.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                     let _ = ee_ocr_app.emit("relic-rewards", serde_json::Value::Null);
@@ -5437,6 +5463,62 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                             names.iter().map(|n| format!("  • {}", n)).collect::<Vec<_>>().join("\n")
                         }
                     };
+                    // ── Relic prefilter: build narrowed catalog from session relics ──
+                    // Union the rewards of all collected relics; fall back to the full
+                    // catalog if none were seen (FrameForge started mid-mission, solo, etc.)
+                    // To revert: delete this block and restore the two lines below it.
+                    let (filtered_cat, prefilter_log) = if !session_relics.is_empty() {
+                        // Collect reward display names from Relics.json for all active relics.
+                        // Relics.json keys match EE.log paths exactly (full path incl. refinement).
+                        // Filter ee_catalog by name — avoids unique_name format mismatches.
+                        let allowed_names: std::collections::HashSet<String> = {
+                            let state = ee_ocr_app.state::<AppState>();
+                            let rw = state.relic_rewards.lock().unwrap_or_else(|e| e.into_inner());
+                            session_relics.iter()
+                                .filter_map(|p| rw.get(p.as_str()))
+                                .flat_map(|rewards| rewards.iter().map(|r| r.name.to_lowercase()))
+                                .collect()
+                        };
+                        if allowed_names.is_empty() {
+                            let msg = format!(
+                                "  {} relic path(s) found but none matched relic_rewards — using full catalog\n  Paths: {:?}",
+                                session_relics.len(), session_relics
+                            );
+                            (Arc::clone(&ee_catalog), msg)
+                        } else {
+                            let filtered: Vec<(String, String)> = ee_catalog.iter()
+                                .filter(|(_, display_name)| {
+                                    let dn = display_name.to_lowercase();
+                                    // Relics.json omits " Blueprint" from component names
+                                    // (e.g. "Nautilus Prime Carapace") while the item catalog
+                                    // stores them as "Nautilus Prime Carapace Blueprint".
+                                    // Strip the suffix before comparing so both forms match.
+                                    let dn_no_bp = dn.strip_suffix(" blueprint").unwrap_or(&dn);
+                                    allowed_names.contains(dn_no_bp) || allowed_names.contains(dn.as_str())
+                                })
+                                .cloned()
+                                .collect();
+                            if filtered.is_empty() {
+                                let mut sample: Vec<&String> = allowed_names.iter().take(8).collect();
+                                sample.sort();
+                                let msg = format!(
+                                    "  {} relic(s) → 0 catalog matches (allowed_names={}) — using full catalog\n  Relics: {:?}\n  Names sample: {:?}",
+                                    session_relics.len(), allowed_names.len(), session_relics, sample
+                                );
+                                (Arc::clone(&ee_catalog), msg)
+                            } else {
+                                let msg = format!(
+                                    "  {} relic(s) → {} candidates (full catalog: {})\n  Relics: {:?}",
+                                    session_relics.len(), filtered.len(), ee_catalog.len(), session_relics
+                                );
+                                (std::sync::Arc::new(filtered), msg)
+                            }
+                        }
+                    } else {
+                        (Arc::clone(&ee_catalog), "  No relics collected — using full catalog (FrameForge started mid-mission?)".to_string())
+                    };
+                    // ── END relic prefilter ───────────────────────────────────────
+
                     let write_err = std::fs::write(&session_log_path, format!(
                         "══════════════════════════════════════════════\n\
                          RELIC OVERLAY SESSION — {}\n\
@@ -5447,9 +5529,10 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                          [STEP 1] EE.log TRIGGER\n\
                          ├─ Time     : {}\n\
                          ├─ Line     : \"{}\"\n\
+                         ├─ Prefilter: {}\n\
                          └─ Catalog  : {} items\n\n",
                         ts0, session_log_path.display(), known_names_str,
-                        ts0, trigger_line, ee_catalog.len()
+                        ts0, trigger_line, prefilter_log, filtered_cat.len()
                     ));
                     if let Err(e) = write_err {
                         eprintln!("[FrameForge] session log write failed: {e}");
@@ -5470,7 +5553,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     let _ = ee_ocr_app.emit("relic-trigger", ());
 
                     let app        = ee_ocr_app.clone();
-                    let cat        = std::sync::Arc::clone(&ee_catalog);
+                    let cat        = filtered_cat; // relic prefilter (was: Arc::clone(&ee_catalog))
                     let cat_len    = cat.len();
                     let lpath      = ee_last_path.clone();
                     let slog       = session_log_path.clone();
@@ -5674,7 +5757,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                                 let diag_snap = diag_arc2.lock().ok().and_then(|g| g.clone());
                                                 if let Some(folder) = diag_snap {
                                                     tauri::async_runtime::spawn(async move {
-                                                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                                        tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
                                                         tauri::async_runtime::spawn_blocking(move || {
                                                             if let Some((px, w, h)) = ocr::capture_desktop_for_diag() {
                                                                 let _ = write_bmp(&folder.join("screenshot.bmp"), &px, w, h);
@@ -5694,7 +5777,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                                 if let Ok(mut g) = app2.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                                                 let _ = app2.emit("relic-rewards", serde_json::Value::Null);
                                                 if let Some(w) = app2.get_webview_window("relic-overlay") {
-                                                    let _ = w.close();
+                                                    let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: -3000 }));
                                                 }
                                                 append_to_diag(&slog2,
                                                     "[STEP 4] AUTO-DISMISS (20s safety fallback)\n\n");
@@ -5734,7 +5817,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                             let diag_snap = diag_arc2.lock().ok().and_then(|g| g.clone());
                                             if let Some(folder) = diag_snap {
                                                 tauri::async_runtime::spawn(async move {
-                                                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                                    tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
                                                     tauri::async_runtime::spawn_blocking(move || {
                                                         if let Some((px, w, h)) = ocr::capture_desktop_for_diag() {
                                                             let _ = write_bmp(&folder.join("screenshot.bmp"), &px, w, h);
@@ -5752,7 +5835,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                             if let Ok(mut g) = app2.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                                             let _ = app2.emit("relic-rewards", serde_json::Value::Null);
                                             if let Some(w) = app2.get_webview_window("relic-overlay") {
-                                                let _ = w.close();
+                                                let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: -3000 }));
                                             }
                                             let _ = append_to_file(&slog2,
                                                 "[STEP 4] AUTO-DISMISS (20s safety fallback)\n\n");
@@ -5847,7 +5930,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                                 let _ = append_to_file(&slog,
                                     "[STEP 2] OCR TIMEOUT — 45 seconds elapsed, emitting best result\n\n");
                                 if let Some(win) = app.get_webview_window("relic-overlay") {
-                                    let _ = win.close();
+                                    let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: -3000 }));
                                 }
                                 active.store(false, Ordering::SeqCst);
                                 if let Ok(mut g) = diag_arc2.lock() {
@@ -5888,7 +5971,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         active_since = None;
                         last_dismiss_at = Some(std::time::Instant::now());
                         if let Some(win) = ee_ocr_app.get_webview_window("relic-overlay") {
-                            let _ = win.close();
+                            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: 0, y: -3000 }));
                         }
                         if let Ok(mut g) = ee_ocr_app.state::<AppState>().pending_relic_rewards.lock() { *g = None; }
                         let _ = ee_ocr_app.emit("relic-rewards", serde_json::Value::Null);
@@ -7253,13 +7336,31 @@ fn show_overlay_window(
     use tauri::Manager;
     let win = app.get_webview_window("relic-overlay")
         .ok_or_else(|| "relic-overlay window not found".to_string())?;
-    let _ = win.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition { x, y }
-    ));
     let _ = win.set_size(tauri::Size::Physical(
         tauri::PhysicalSize { width: w, height: h }
     ));
+    let _ = win.set_position(tauri::Position::Physical(
+        tauri::PhysicalPosition { x, y }
+    ));
+    let _ = win.show();
     let _ = win.set_always_on_top(true);
+
+    // On Windows 10, WebView2 defers loading the page when the window starts
+    // off-screen. If it's still on about:blank, navigate to the overlay URL now.
+    if let Ok(url) = win.url() {
+        if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
+            eprintln!("[overlay] WebView2 deferred load detected (url={}) — navigating to overlay URL", url);
+            let overlay_url = if cfg!(debug_assertions) {
+                "http://localhost:1420/index.html?overlay"
+            } else {
+                "tauri://localhost/index.html?overlay"
+            };
+            if let Ok(nav_url) = tauri::Url::parse(overlay_url) {
+                let _ = win.navigate(nav_url);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -7696,8 +7797,71 @@ fn patch_item_name(unique_name: &str, name: &str) -> String {
     }
 }
 
-fn patch_item_category(name: &str, category: &str) -> String {
+fn patch_item_category(name: &str, category: &str, unique_name: &str) -> String {
+    if unique_name.contains("/Recipes/") {
+        return if name.contains("Blueprint") { "Blueprints".to_string() } else { "Parts".to_string() };
+    }
     if name.contains("Blueprint") { "Blueprints".to_string() } else { category.to_string() }
+}
+
+/// Load today's relics.run price cache from disk.
+/// Returns (by_name, by_slug) or None if missing/stale.
+fn load_relics_run_cache(path: &PathBuf) -> Option<(HashMap<String, u32>, HashMap<String, u32>)> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if v.get("date").and_then(|d| d.as_str()) != Some(today.as_str()) { return None; }
+    let by_name: HashMap<String, u32> = serde_json::from_value(v["by_name"].clone()).ok()?;
+    let by_slug: HashMap<String, u32> = serde_json::from_value(v["by_slug"].clone()).ok()?;
+    Some((by_name, by_slug))
+}
+
+/// Fetch items.json + today's price_history from relics.run.
+/// Returns (by_name, by_slug):
+///   by_name: item display name (lowercase) → median sell price  (for get_item_price)
+///   by_slug: authoritative WFM slug         → median sell price  (for wfm_price_cache)
+fn fetch_relics_run_data() -> (HashMap<String, u32>, HashMap<String, u32>) {
+    // items.json gives the authoritative name → WFM slug mapping for every tradeable item.
+    let name_to_slug: HashMap<String, String> = ureq::get("https://relics.run/items.json")
+        .call().ok()
+        .and_then(|r| r.into_json::<Vec<serde_json::Value>>().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| {
+            let name = v["i18n"]["en"]["name"].as_str()?.to_lowercase();
+            let slug = v["slug"].as_str()?.to_string();
+            Some((name, slug))
+        })
+        .collect();
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let price_json: serde_json::Value = ureq::get(
+        &format!("https://relics.run/history/price_history_{}.json", today)
+    ).call().ok().and_then(|r| r.into_json().ok()).unwrap_or_default();
+
+    let mut by_name: HashMap<String, u32> = HashMap::new();
+    let mut by_slug: HashMap<String, u32> = HashMap::new();
+
+    if let Some(obj) = price_json.as_object() {
+        for (name, records) in obj {
+            let price = records.as_array()
+                .and_then(|arr| arr.iter()
+                    .find(|r| r["order_type"].as_str() == Some("closed"))
+                    .and_then(|r| r["median"].as_f64()));
+            if let Some(p) = price {
+                let price_u32 = p.round() as u32;
+                let name_lower = name.to_lowercase();
+                // Use authoritative slug from items.json; heuristic fallback for unknown items.
+                let slug = name_to_slug.get(&name_lower)
+                    .cloned()
+                    .unwrap_or_else(|| to_wfm_slug(&name_lower));
+                by_name.insert(name_lower, price_u32);
+                by_slug.insert(slug, price_u32);
+            }
+        }
+    }
+
+    (by_name, by_slug)
 }
 
 fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
@@ -7711,7 +7875,7 @@ fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
         let vaulted = v["vaulted"].as_bool();
         let ducats = v["ducats"].as_u64().map(|n| n as u32);
         let raw_cat = v["category"].as_str()?.to_string();
-        let category = patch_item_category(&name, &raw_cat);
+        let category = patch_item_category(&name, &raw_cat, &unique_name);
         let mastery_req       = v["mastery_req"].as_u64().map(|n| n as u32);
         let omega_attenuation = v["omega_attenuation"].as_f64().map(|n| n as f32);
         let fusion_limit      = v["fusion_limit"].as_u64().map(|n| n as u32);
@@ -7764,6 +7928,9 @@ struct CachedItem {
     /// Socketed Archon Shards (warframes only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     archon_shards: Vec<memory_scanner::ArchonShard>,
+    /// Maximum rank this mod/arcane can reach (from WFCD fusionLimit). Absent for non-mod items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mod_max_rank: Option<u32>,
     /// Mod/arcane rank breakdown: rank (as string) → copy count at that rank.
     /// Present only for mods and arcanes. Sum of values equals `amount`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -8090,6 +8257,10 @@ pub fn run() {
     let auction_ids_path = data_dir.join("auction_ids.json");
     let initial_auction_ids: Vec<String> = std::fs::read_to_string(&auction_ids_path)
         .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let relics_run_prices_cache_path = data_dir.join("relics_run_prices.json");
+    let initial_relics_run_prices = load_relics_run_cache(&relics_run_prices_cache_path)
+        .map(|(by_name, _)| by_name)
+        .unwrap_or_default();
 
     let conn = db::init_db(&db_path).expect("Failed to initialize database");
 
@@ -8101,8 +8272,8 @@ pub fn run() {
     let initial_recipes = load_recipes_cache(&recipes_cache_path);
     let initial_relic_drops: HashMap<String, Vec<String>> = std::fs::read_to_string(&relic_drops_cache_path)
         .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let initial_relic_rewards: HashMap<String, Vec<wfcd::RelicReward>> = std::fs::read_to_string(&relic_rewards_cache_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let _ = std::fs::remove_file(&relic_rewards_cache_path);
+    let initial_relic_rewards: HashMap<String, Vec<wfcd::RelicReward>> = HashMap::new();
     // Load unified inventory state cache. All data lives in items: unique_name → CachedItem.
     let initial_state = load_inventory_state_cache(&inventory_state_cache_path);
     // Stackable resources: non-mod, non-unique paths.
@@ -8197,6 +8368,8 @@ pub fn run() {
             img_server_port: Mutex::new(0),
             local_player_name: Arc::new(Mutex::new(None)),
             pending_relic_rewards: Mutex::new(None),
+            relics_run_prices: Mutex::new(initial_relics_run_prices),
+            relics_run_prices_cache_path,
         })
         .setup(|app| {
             use tauri::Manager;
@@ -8255,6 +8428,36 @@ pub fn run() {
                 ));
             }
 
+            // Load relics.run prices in the background. On a cache hit (today's file exists)
+            // this is just a disk read; on a miss it fetches items.json + price_history.
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app_handle.state::<AppState>();
+                    let (by_name, by_slug) = match load_relics_run_cache(&state.relics_run_prices_cache_path) {
+                        Some(cached) => cached,
+                        None => {
+                            let data = tauri::async_runtime::spawn_blocking(fetch_relics_run_data)
+                                .await.unwrap_or_default();
+                            if !data.0.is_empty() {
+                                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                                let j = serde_json::json!({ "date": today, "by_name": &data.0, "by_slug": &data.1 });
+                                if let Ok(s) = serde_json::to_string(&j) {
+                                    let _ = std::fs::write(&state.relics_run_prices_cache_path, s);
+                                }
+                            }
+                            data
+                        }
+                    };
+                    if by_name.is_empty() { return; }
+                    *state.relics_run_prices.lock().unwrap_or_else(|e| e.into_inner()) = by_name;
+                    let mut wfm = state.wfm_price_cache.lock().unwrap_or_else(|e| e.into_inner());
+                    for (slug, price) in by_slug {
+                        wfm.entry(slug).or_insert(Some(price));
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -8294,7 +8497,6 @@ pub fn run() {
             wfm_queue_prices,
             wfm_queue_price_priority,
             wfm_get_cached_prices,
-            load_remote_price_cache,
             get_wfm_top_items,
             get_item_price,
             wfm_set_status,

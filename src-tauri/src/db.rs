@@ -18,13 +18,15 @@ pub struct Trade {
     pub id: i64,
     pub timestamp: String,      // ISO-8601
     pub with_player: String,
-    pub direction: String,      // "sold" | "bought"
+    pub direction: String,      // "sold" | "bought" | "traded-out" | "traded-in"
     pub item_name: String,
     pub item_url: String,       // WFM slug (for price lookup), may be empty
     pub quantity: i64,
     pub platinum: i64,
     pub source: String,         // "wfm" | "ingame" | "manual"
     pub notes: String,
+    pub session_id: String,     // groups items from the same trade session
+    pub trade_type: String,     // "sale" | "purchase" | "trade" | "" (legacy)
 }
 
 pub fn init_db(db_path: &PathBuf) -> Result<Connection> {
@@ -86,6 +88,14 @@ fn migrate(conn: &Connection) -> Result<()> {
             );",
         )?;
         conn.pragma_update(None, "user_version", 2)?;
+    }
+
+    if version < 3 {
+        conn.execute_batch(
+            "ALTER TABLE trades ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+             ALTER TABLE trades ADD COLUMN trade_type TEXT NOT NULL DEFAULT '';"
+        )?;
+        conn.pragma_update(None, "user_version", 3)?;
     }
 
     // Prune entries older than 7 days so the log doesn't grow unbounded.
@@ -236,12 +246,13 @@ pub fn count_saved_rivens(conn: &Connection) -> Result<i64> {
 
 pub fn add_trade(conn: &Connection, trade: &Trade) -> Result<i64> {
     conn.execute(
-        "INSERT INTO trades (timestamp, with_player, direction, item_name, item_url, quantity, platinum, source, notes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO trades (timestamp, with_player, direction, item_name, item_url, quantity, platinum, source, notes, session_id, trade_type)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             trade.timestamp, trade.with_player, trade.direction,
             trade.item_name, trade.item_url, trade.quantity,
             trade.platinum, trade.source, trade.notes,
+            trade.session_id, trade.trade_type,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -250,7 +261,7 @@ pub fn add_trade(conn: &Connection, trade: &Trade) -> Result<i64> {
 pub fn get_trades(conn: &Connection) -> Result<Vec<Trade>> {
     let mut stmt = conn.prepare(
         "SELECT id, timestamp, with_player, direction, item_name, item_url,
-                quantity, platinum, source, notes
+                quantity, platinum, source, notes, session_id, trade_type
          FROM trades ORDER BY timestamp DESC",
     )?;
     let rows = stmt.query_map([], |row| Ok(Trade {
@@ -264,6 +275,8 @@ pub fn get_trades(conn: &Connection) -> Result<Vec<Trade>> {
         platinum: row.get(7)?,
         source: row.get(8)?,
         notes: row.get(9)?,
+        session_id: row.get(10)?,
+        trade_type: row.get(11)?,
     }))?.filter_map(|r| r.ok()).collect();
     Ok(rows)
 }

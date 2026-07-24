@@ -43,6 +43,14 @@ export const MARKET_FILTERS_DEFAULT: MarketFilters = {
   activeMarketTab: "trading",
 };
 
+interface RecipeComponent {
+  unique_name: string;
+  name: string;
+  count: number;
+  result_count: number;
+  components: RecipeComponent[];
+}
+
 interface BlobRivenStat { tag: string; value: number; }
 interface BlobRivenEntry {
   item_id:   string;
@@ -111,6 +119,14 @@ function normalizeForWfm(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
+function flattenRecipeCounts(comps: RecipeComponent[], multiplier: number, out: Map<string, number>): void {
+  for (const c of comps) {
+    const total = multiplier * c.count;
+    out.set(c.unique_name, Math.max(out.get(c.unique_name) ?? 0, total));
+    if (c.components.length > 0) flattenRecipeCounts(c.components, total, out);
+  }
+}
+
 function ItemImg({ imageName, size = 32 }: { imageName?: string; size?: number }) {
   const baseUrl = useContext(ImgCacheDirContext);
   const [localFailed, setLocalFailed] = useState(false);
@@ -128,7 +144,7 @@ function ItemImg({ imageName, size = 32 }: { imageName?: string; size?: number }
 
 // ─── Set card ─────────────────────────────────────────────────────────────────
 
-interface SetPart { item: CatalogItem; qty: number; sellMedian?: number; loading: boolean; urlName: string; }
+interface SetPart { item: CatalogItem; qty: number; required_count: number; sellMedian?: number; loading: boolean; urlName: string; }
 
 function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
   setKey: string; parts: SetPart[]; parentItem?: CatalogItem;
@@ -139,7 +155,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
   const totalDucats  = parts.reduce((s, p) => s + (p.item.ducats ?? 0) * p.qty, 0);
   const ownedCount   = parts.filter(p => p.qty > 0).length;
   const isComplete   = ownedCount === parts.length;
-  const hasDupes     = parts.some(p => p.qty > 1);
+  const hasDupes     = parts.some(p => p.qty > p.required_count);
   const isCrafting   = crafting.some(c =>
     c.unique_name === parentItem?.unique_name ||
     parts.some(p => p.item.unique_name === c.unique_name)
@@ -220,6 +236,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   const [wfmUsername, setWfmUsername]     = useState<string | null>(null);
   const [auctionRefreshKey, setAuctionRefreshKey] = useState(0);
   const [popup, setPopup] = useState<{ urlName: string; displayName: string; imageName?: string; prefillModRank?: number } | null>(null);
+  const [recipeCountMap, setRecipeCountMap]       = useState<Map<string, number>>(new Map());
   const [rivens, setRivens]               = useState<BlobRivenEntry[]>([]);
   const { search, ownership, conditions, vault, sortMode, activeMarketTab } = filters;
   const set = <K extends keyof MarketFilters>(k: K, v: MarketFilters[K]) => onFiltersChange({ ...filters, [k]: v });
@@ -269,28 +286,6 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       .catch(() => {});
   }, []); // eslint-disable-line
 
-  // Load the FrameForge centralised price cache from GitHub (~3 800 items, updated every ~2h).
-  // Overwrites stale disk-cache values; fails silently so the queue fills gaps if GitHub is down.
-  // Refreshes every 2 hours to pick up new prices without restarting the app.
-  useEffect(() => {
-    const applyRemote = () =>
-      invoke<Record<string, number>>("load_remote_price_cache")
-        .then(remote => {
-          if (!remote) return;
-          setPrices(prev => {
-            const m = new Map(prev);
-            for (const [urlName, price] of Object.entries(remote)) {
-              m.set(urlName, { url_name: urlName, sell_median: price });
-            }
-            return m;
-          });
-        })
-        .catch(() => {}); // GitHub unreachable — queue will fill gaps as normal
-
-    applyRemote();
-    const id = setInterval(applyRemote, 2 * 60 * 60 * 1000); // every 2 hours
-    return () => clearInterval(id);
-  }, []); // eslint-disable-line
 
   // Listen for prices arriving from the Rust queue drain thread.
   // Batch updates with rAF so bursts of events don't cause a re-render per price.
@@ -376,6 +371,20 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   }, [allItems]);
 
 
+  // Load recipe trees for all prime set parents so we know the required count per component.
+  // Accounts for multi-count cases like Aksomati Prime (2× Barrel, 2× Receiver).
+  useEffect(() => {
+    if (parentItems.size === 0) return;
+    const uniqueNames = Array.from(parentItems.values()).map(p => p.unique_name);
+    invoke<Record<string, RecipeComponent[]>>("get_recipes_bulk", { uniqueNames })
+      .then(result => {
+        const map = new Map<string, number>();
+        for (const comps of Object.values(result)) flattenRecipeCounts(comps, 1, map);
+        setRecipeCountMap(map);
+      })
+      .catch(() => {});
+  }, [parentItems]);
+
   // item name (lowercase) → image_name — used by the Trading tab edit popup
   const imageMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -449,8 +458,8 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   [primeItems, inventory]);
 
   const dupeDucats = useMemo(() =>
-    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (inventory[i.unique_name]?.quantity ?? 0) - 1), 0),
-  [primeItems, inventory]);
+    primeItems.reduce((s, i) => s + (i.ducats ?? 0) * Math.max(0, (inventory[i.unique_name]?.quantity ?? 0) - (recipeCountMap.get(i.unique_name) ?? 1)), 0),
+  [primeItems, inventory, recipeCountMap]);
 
   // Enqueue only the slugs the Market tab actually displays, owned sets first.
   // Runs once when wfmLookup and sets are both ready; Rust deduplicates if called again.
@@ -504,7 +513,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
 
         // Group 2: specific conditions (OR — set matches if it satisfies ANY selected)
         if (conditions.length > 0) {
-          const hasDupes   = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > 1);
+          const hasDupes   = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > (recipeCountMap.get(p.unique_name) ?? 1));
           const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
           const ok = conditions.some(c =>
             (c === "hasparts"  && ownedAny)    ||
@@ -542,7 +551,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
         if (sortMode === "za") return bKey.localeCompare(aKey);
         return aKey.localeCompare(bKey); // az
       });
-  }, [sets, inventory, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup]);
+  }, [sets, inventory, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup, recipeCountMap]);
 
   return (
     <div className="market-helper">
@@ -664,6 +673,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
               const url = wfmLookup.get(normalKey) ?? normalKey;
               const priceData = prices.get(url);
               return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
+                required_count: recipeCountMap.get(p.unique_name) ?? 1,
                 sellMedian: priceData?.sell_median, loading: false, urlName: url };
             });
           return (

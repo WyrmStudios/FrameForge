@@ -92,6 +92,120 @@
   margin-left: 6px;
 }
 
+.rpt-view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+}
+
+/* ── Trade log ────────────────────────────────────────────────────────────── */
+
+.rpt-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rpt-session-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.rpt-session-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,.03);
+  border-bottom: 1px solid var(--border);
+}
+
+.rpt-session-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+
+.rpt-badge-sale     { background: rgba(39,174, 96,.2); color: #27ae60; border: 1px solid rgba(39,174, 96,.35); }
+.rpt-badge-purchase { background: rgba(231, 76,60,.2); color: #e74c3c; border: 1px solid rgba(231, 76,60,.35); }
+.rpt-badge-trade    { background: rgba(52,152,219,.2); color: #3498db; border: 1px solid rgba(52,152,219,.35); }
+
+.rpt-session-player {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rpt-session-date {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.rpt-session-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.rpt-session-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rpt-session-side-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.rpt-session-gave { align-items: flex-end; }
+.rpt-session-received { align-items: flex-start; }
+
+.rpt-session-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.rpt-session-qty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rpt-session-plat {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rpt-session-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rpt-session-arrow {
+  font-size: 18px;
+  color: var(--muted);
+  padding-top: 20px;
+  flex-shrink: 0;
+}
+
 /* ── Summary stats ────────────────────────────────────────────────────────── */
 
 .rpt-summary {

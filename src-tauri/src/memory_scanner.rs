@@ -858,6 +858,12 @@ fn blob_extract_mod_rank(fingerprint: Option<&str>) -> u8 {
 static LAST_BLOB_REGION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+/// Clear the fast-path region cache. Call when Warframe's PID changes so the
+/// next scan doesn't probe a stale address from the previous process instance.
+pub fn reset_last_blob_region() {
+    LAST_BLOB_REGION.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Scans Warframe process memory for the FULL_ACCOUNT inventory blob and sends it
 /// through `blob_tx` for the monitor loop to apply.
 ///

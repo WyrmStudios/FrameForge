@@ -1,4 +1,4 @@
-# FrameForge — Warframe Companion `v2.5.0`
+# FrameForge — Warframe Companion `v2.6.0`
 
 A desktop companion for Warframe — live inventory, market prices, trading, timers, relic overlay, and riven analysis. Read-only, no game modification.
 
@@ -17,7 +17,9 @@ This gives complete coverage: resources, mods, arcanes, relics, weapons, Warfram
 Browse every craftable item with full ingredient trees. Components are colour-coded by ownership status and show which relics drop them. Star items to track them in the Modular Window. Filter by Prime, Vaulted/Unvaulted, Owned/Unowned, Ready to build, and Mastered/Unmastered.
 
 ### Market Helper
-Browse Prime sets and mods with live platinum prices from [warframe.market](https://warframe.market). Click any item for a live order popup with sell/buy orders, 3-week price chart, and one-click listing (requires WFM login). Mod cards show per-rank chips — click a chip to pre-fill the listing form with that exact rank and quantity.
+Browse Prime sets and mods with live platinum prices from [warframe.market](https://warframe.market). Prices are loaded from the [relics.run](https://relics.run) daily bulk cache on startup — no per-item network calls needed. Click any item for a live order popup with sell/buy orders, 3-week price chart, and one-click listing (requires WFM login). Mod cards show per-rank chips — click a chip to pre-fill the listing form with that exact rank and quantity. A **rank selector** in the orders popup filters listings to a specific mod/arcane rank.
+
+**Recipe-aware duplication detection** — multi-count recipes (e.g. Aksomati Prime requires 2× Barrel) are respected when calculating sellable duplicates and the "Has dupes" filter.
 
 **WFM Status Automation** (requires WFM login):
 - Go Invisible on startup — set your status to Invisible the moment FrameForge opens
@@ -46,7 +48,8 @@ Live dashboard from DE's worldstate API:
 - Alerts, Invasions, Void Fissures with configurable fissure watches
 
 ### Statistics
-- **Trades** — auto-detected from EE.log and WFM messages, with manual entry fallback
+- **Trades** — auto-detected from EE.log. Now captures all items from both sides of every trade, including item-for-item barters (no platinum involved). Each trade is classified as Sale, Purchase, or Trade.
+- **Trade Log** — individual trade cards showing the full exchange: what you gave, what you received, with which player, and when. Toggle between Log and Analytics views in the Reports tab.
 - **Reports** — date-filtered KPIs, platinum charts, per-item breakdown, top trading partners
 - **Item Report** — track any item's quantity over time with daily snapshots and drag-to-reorder cards
 
@@ -66,10 +69,11 @@ Reorganised into a tabbed sidebar layout: **General** (overlay, scanner, API, ac
 
 ## EULA Transparency
 
-Two features touch EULA grey areas and are **off by default** with explicit opt-in warnings:
+One feature touches a EULA grey area and is **off by default** with an explicit opt-in warning:
 
 - **Memory Scanner** — `ReadProcessMemory` for live inventory. Read-only, same API as Overwolf.
-- **Warframe Companion API** — `api.warframe.com/api/inventory.php` for mod ranks and inventory detail.
+
+The **Warframe Companion API** (`api.warframe.com/api/inventory.php`) has been **temporarily suspended**. DE confirmed third-party tools run at your own risk but could not clarify whether this specific undocumented endpoint is permitted. The feature is disabled until clearer guidance is received.
 
 Everything else (Foundry, Market, Relics, Timers, Statistics) runs on public data only.
 

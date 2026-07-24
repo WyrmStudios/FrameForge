@@ -15,13 +15,26 @@ interface Trade {
   id: number;
   timestamp: string;
   with_player: string;
-  direction: "sold" | "bought";
+  direction: "sold" | "bought" | "traded-out" | "traded-in";
   item_name: string;
   item_url: string;
   quantity: number;
   platinum: number;
   source: string;
   notes: string;
+  session_id: string;
+  trade_type: string;
+}
+
+interface TradeSession {
+  sessionId: string;
+  withPlayer: string;
+  tradeType: "sale" | "purchase" | "trade";
+  givenItems: { name: string; qty: number }[];
+  givenPlat: number;
+  receivedItems: { name: string; qty: number }[];
+  receivedPlat: number;
+  timestamp: string;
 }
 
 interface CategoryStat {
@@ -57,6 +70,124 @@ function inferCategory(name: string): string {
   if (/ set$/.test(n))      return "Set";
   if (/\bmod\b/.test(n))    return "Mod";
   return "Other";
+}
+
+function groupBySessions(trades: Trade[]): TradeSession[] {
+  const byId = new Map<string, Trade[]>();
+  const legacy: Trade[] = [];
+
+  for (const t of trades) {
+    if (t.session_id) {
+      if (!byId.has(t.session_id)) byId.set(t.session_id, []);
+      byId.get(t.session_id)!.push(t);
+    } else {
+      legacy.push(t);
+    }
+  }
+
+  const sessions: TradeSession[] = [];
+
+  for (const [sid, rows] of byId) {
+    const first = rows[0];
+    const rawType = first.trade_type;
+    const tradeType: TradeSession["tradeType"] =
+      rawType === "purchase" ? "purchase" : rawType === "trade" ? "trade" : "sale";
+
+    const givenItems = rows
+      .filter(r => r.direction === "sold" || r.direction === "traded-out")
+      .map(r => ({ name: r.item_name, qty: r.quantity }));
+    const receivedItems = rows
+      .filter(r => r.direction === "bought" || r.direction === "traded-in")
+      .map(r => ({ name: r.item_name, qty: r.quantity }));
+    // Plat is stored on the first row of the relevant direction
+    const receivedPlat = rows.filter(r => r.direction === "sold").reduce((s, r) => s + r.platinum, 0);
+    const givenPlat    = rows.filter(r => r.direction === "bought").reduce((s, r) => s + r.platinum, 0);
+
+    sessions.push({ sessionId: sid, withPlayer: first.with_player, tradeType,
+      givenItems, givenPlat, receivedItems, receivedPlat, timestamp: first.timestamp });
+  }
+
+  // Legacy rows (no session_id) — one row = one session
+  for (const t of legacy) {
+    const tradeType: TradeSession["tradeType"] =
+      t.direction === "bought" ? "purchase" : "sale";
+    sessions.push({
+      sessionId: String(t.id),
+      withPlayer: t.with_player,
+      tradeType,
+      givenItems:    t.direction === "sold"   ? [{ name: t.item_name, qty: t.quantity }] : [],
+      givenPlat:     t.direction === "bought" ? t.platinum : 0,
+      receivedItems: t.direction === "bought" ? [{ name: t.item_name, qty: t.quantity }] : [],
+      receivedPlat:  t.direction === "sold"   ? t.platinum : 0,
+      timestamp: t.timestamp,
+    });
+  }
+
+  return sessions.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+}
+
+const BADGE: Record<string, string> = { sale: "Sale", purchase: "Purchase", trade: "Trade" };
+const BADGE_CLASS: Record<string, string> = {
+  sale: "rpt-badge-sale", purchase: "rpt-badge-purchase", trade: "rpt-badge-trade",
+};
+
+function TradeCard({ session }: { session: TradeSession }) {
+  const date = new Date(session.timestamp);
+  const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const timeStr = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="rpt-session-card">
+      <div className="rpt-session-header">
+        <span className={`rpt-session-badge ${BADGE_CLASS[session.tradeType]}`}>
+          {BADGE[session.tradeType]}
+        </span>
+        {session.withPlayer && (
+          <span className="rpt-session-player">{session.withPlayer}</span>
+        )}
+        <span className="rpt-session-date">{dateStr} {timeStr}</span>
+      </div>
+      <div className="rpt-session-body">
+        <div className="rpt-session-side rpt-session-gave">
+          <span className="rpt-session-side-label">Gave</span>
+          {session.givenPlat > 0 && (
+            <div className="rpt-session-item">
+              <span className="rpt-session-plat">{session.givenPlat.toLocaleString()}</span>
+              <PlatIcon size={12} />
+            </div>
+          )}
+          {session.givenItems.map((item, i) => (
+            <div key={i} className="rpt-session-item">
+              {item.qty > 1 && <span className="rpt-session-qty">{item.qty}×</span>}
+              <span>{item.name}</span>
+            </div>
+          ))}
+          {session.givenPlat === 0 && session.givenItems.length === 0 && (
+            <span className="rpt-session-empty">—</span>
+          )}
+        </div>
+        <div className="rpt-session-arrow">→</div>
+        <div className="rpt-session-side rpt-session-received">
+          <span className="rpt-session-side-label">Received</span>
+          {session.receivedPlat > 0 && (
+            <div className="rpt-session-item">
+              <span className="rpt-session-plat">{session.receivedPlat.toLocaleString()}</span>
+              <PlatIcon size={12} />
+            </div>
+          )}
+          {session.receivedItems.map((item, i) => (
+            <div key={i} className="rpt-session-item">
+              {item.qty > 1 && <span className="rpt-session-qty">{item.qty}×</span>}
+              <span>{item.name}</span>
+            </div>
+          ))}
+          {session.receivedPlat === 0 && session.receivedItems.length === 0 && (
+            <span className="rpt-session-empty">—</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function fmtK(n: number): string {
@@ -153,6 +284,7 @@ export default function Reports({ dateRange, onDateRangeChange }: Props) {
   const [loading, setLoading]       = useState(true);
   const [topItems, setTopItems]     = useState<WfmTopItem[]>([]);
   const [topLoading, setTopLoading] = useState(true);
+  const [view, setView]             = useState<"analytics" | "log">("analytics");
 
   useEffect(() => {
     invoke<Trade[]>("get_trades")
@@ -237,6 +369,8 @@ export default function Reports({ dateRange, onDateRangeChange }: Props) {
     })),
   [topItems]);
 
+  const sessions = useMemo(() => groupBySessions(filtered), [filtered]);
+
   const RANGES: { label: string; value: number | "all" }[] = [
     { label: "7d",  value: 7  },
     { label: "30d", value: 30 },
@@ -297,8 +431,16 @@ export default function Reports({ dateRange, onDateRangeChange }: Props) {
           )}
         </div>
 
-        {/* ── Date range ── */}
+        {/* ── Controls row (view toggle + date range) ── */}
         <div className="rpt-range-row">
+          <div className="rpt-view-toggle">
+            <button
+              className={`rpt-range-btn ${view === "analytics" ? "rpt-range-active" : ""}`}
+              onClick={() => setView("analytics")}>Analytics</button>
+            <button
+              className={`rpt-range-btn ${view === "log" ? "rpt-range-active" : ""}`}
+              onClick={() => setView("log")}>Log</button>
+          </div>
           <span className="rpt-range-label">Period:</span>
           {RANGES.map(r => (
             <button key={String(r.value)}
@@ -315,9 +457,17 @@ export default function Reports({ dateRange, onDateRangeChange }: Props) {
             <div className="rpt-empty-icon">📊</div>
             <div className="rpt-empty-title">No trade history yet</div>
             <div className="rpt-empty-desc">
-              Trade history is recorded from the Market tab when you log trades.<br />
-              Add trades in the Market → Trading section to see analytics here.
+              Trades are automatically recorded from in-game trade sessions.<br />
+              Complete a trade in-game and it will appear here.
             </div>
+          </div>
+        ) : view === "log" ? (
+          <div className="rpt-log">
+            {sessions.length === 0 ? (
+              <div className="rpt-empty">
+                <div className="rpt-empty-title">No trades in this period</div>
+              </div>
+            ) : sessions.map(s => <TradeCard key={s.sessionId} session={s} />)}
           </div>
         ) : <>
 
@@ -445,7 +595,7 @@ export default function Reports({ dateRange, onDateRangeChange }: Props) {
 
         </div>
 
-        </> /* end trades.length > 0 fragment */}
+        </> /* end analytics view */}
 
       </div>
     </div>

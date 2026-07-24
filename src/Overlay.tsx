@@ -505,6 +505,18 @@ export default function Overlay() {
       if (!newQty) return;
       quantRef.current = newQty;
 
+      // Self-heal: if catalog is still empty (lost the race with load_wfcd_data on startup),
+      // re-fetch now that the scanner has confirmed items are loaded.
+      if (Object.keys(catalogRef.current).length === 0) {
+        invoke<any[]>("get_all_items").then(items => {
+          if (items.length > 0) {
+            const byUnique: Record<string, any> = {};
+            for (const i of items) byUnique[i.unique_name] = i;
+            catalogRef.current = byUnique;
+          }
+        }).catch(() => {});
+      }
+
       setRewards(prev => prev.map(r => {
         if (!r.components || !r.set_name) return r;
 

@@ -542,11 +542,81 @@ fn wfcd_category_to_display(wfcd_cat: &str) -> &'static str {
     }
 }
 
+/// Fetch relic → reward mappings from WFCD Relics.json.
+/// Each entry is one specific refinement (Bronze/Silver/Gold/Platinum) with a
+/// uniqueName that matches the EE.log path exactly — no normalization needed.
+fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<String, Vec<RelicReward>> {
+    const URL: &str =
+        "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json";
+
+    let json: serde_json::Value = match ureq::get(URL)
+        .set("User-Agent", "FrameForge/1.0")
+        .call().ok().and_then(|r| r.into_json().ok())
+    {
+        Some(v) => v,
+        None => {
+            eprintln!("[relic_rewards] failed to fetch Relics.json");
+            return HashMap::new();
+        }
+    };
+
+    let relics = match json.as_array() {
+        Some(a) => a,
+        None => return HashMap::new(),
+    };
+
+    let mut result: HashMap<String, Vec<RelicReward>> = HashMap::new();
+
+    for relic in relics {
+        let relic_unique = match relic.get("uniqueName").and_then(|v| v.as_str()) {
+            Some(u) if u.contains("/Game/Projections/") => u.to_string(),
+            _ => continue,
+        };
+
+        let rewards_arr = match relic.get("rewards").and_then(|v| v.as_array()) {
+            Some(a) => a,
+            None => continue,
+        };
+
+        let mut reward_list: Vec<RelicReward> = rewards_arr.iter().filter_map(|r| {
+            // Relics.json structure: rewards[].item.name (not rewards[].name)
+            let item = r.get("item")?;
+            let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+            if name.is_empty() { return None; }
+            // item.uniqueName in Relics.json is the relic's own Bronze path, not the
+            // reward item path — leave it empty; prefilter uses name matching instead.
+            let unique_name = String::new();
+            let rarity_raw = r.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
+            let rarity = match rarity_raw.to_lowercase().as_str() {
+                "uncommon" => "Silver",
+                "rare"     => "Gold",
+                _          => "Bronze",
+            }.to_string();
+            let image_name = image_by_name.get(&name.to_lowercase()).cloned()
+                .or_else(|| {
+                    let no_bp = name.to_lowercase().replace(" blueprint", "");
+                    image_by_name.get(&no_bp).cloned()
+                });
+            Some(RelicReward { unique_name, name, rarity, image_name })
+        }).collect();
+
+        reward_list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
+        if !reward_list.is_empty() {
+            result.insert(relic_unique, reward_list);
+        }
+    }
+
+    result
+}
+
 fn fetch_from_wfcd() -> Result<FetchResult, String> {
     let mut items: Vec<WfcdItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut raw_craftable: Vec<(String, serde_json::Value)> = Vec::new();
-    let mut raw_relics: Vec<(String, serde_json::Value)> = Vec::new();
+    // relic_path → Vec<(item_unique, item_name, rarity)>
+    // Built by inverting each item's drops[] array (All.json stores item→relics).
+    // WFCD canonicalizes all refinements under the Bronze path — dedup at build time.
+    let mut raw_drop_entries: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
 
     // Single All.json request replaces 20 sequential per-category fetches.
     let all_json: serde_json::Value = ureq::get(
@@ -650,19 +720,28 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                 }
             }
 
-            // Collect relic reward data
-            if let Some(rewards_val) = item.get("rewards") {
-                let flat: Vec<serde_json::Value> = if let Some(arr) = rewards_val.as_array() {
-                    arr.clone()
-                } else if let Some(obj) = rewards_val.as_object() {
-                    obj.get("Intact")
-                        .or_else(|| obj.values().next())
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default()
-                } else { vec![] };
-                if !flat.is_empty() {
-                    raw_relics.push((unique_name.clone(), serde_json::Value::Array(flat)));
+            // Invert each item's drops[] to build relic_path → reward_items.
+            // All.json stores drops on the item side (item → relics), not on the relic side.
+            // WFCD uses the Bronze path as the canonical key for all refinements.
+            if let Some(drops_arr) = item.get("drops").and_then(|v| v.as_array()) {
+                for drop in drops_arr {
+                    let relic_path = match drop.get("uniqueName").and_then(|v| v.as_str()) {
+                        Some(p) if p.contains("/Game/Projections/") => p.to_string(),
+                        _ => continue,
+                    };
+                    let rarity_raw = drop.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
+                    let rarity = match rarity_raw.to_lowercase().as_str() {
+                        "uncommon" => "Silver",
+                        "rare"     => "Gold",
+                        _          => "Bronze",
+                    }.to_string();
+                    // Store as-is. raw_drop_entries is only used to build relic_drops
+                    // (component → relics) for RelicHelper. relic_rewards is built
+                    // separately from Relics.json which has all refinements explicitly.
+                    raw_drop_entries
+                        .entry(relic_path)
+                        .or_default()
+                        .push((unique_name.clone(), name.clone(), rarity));
                 }
             }
 
@@ -725,14 +804,16 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
                         if raw_comp_name.trim() == "Blueprint" || raw_comp_name.trim().is_empty() {
                             seen.remove(&cunique); continue;
                         }
-                        // Warframe (and companion/archwing) component blueprints drop from relics
-                        // and are displayed in-game with "Blueprint" in the name
-                        // (e.g. "Lavos Prime Neuroptics Blueprint").
-                        // WFCD stores the component as just "Neuroptics", so we append it here.
-                        // Weapon parts (category Primary/Secondary/Melee) intentionally excluded:
-                        // they appear in-game without "Blueprint" ("Braton Prime Stock", not "...Blueprint").
+                        // Warframe/Archwing component blueprints drop from relics and are
+                        // displayed in-game with "Blueprint" in the name (e.g. "Lavos Prime
+                        // Neuroptics Blueprint"). WFCD stores them as just "Neuroptics".
+                        // Sentinel/MOA companion parts under /Weapons/WeaponParts/ are physical
+                        // items (like weapon parts), NOT blueprints — Relics.json confirms this
+                        // by omitting "Blueprint" from names like "Nautilus Prime Carapace".
+                        // Only append "Blueprint" for /WarframeRecipes/ paths.
                         let comp_name = if comp_cat == "Blueprints"
-                            && (category == "Warframes" || category == "Companions" || category == "Archwing")
+                            && (category == "Warframes" || category == "Archwing"
+                                || (category == "Companions" && cunique.contains("/WarframeRecipes/")))
                             && !raw_comp_name.ends_with("Blueprint")
                         {
                             format!("{} Blueprint", raw_comp_name)
@@ -998,89 +1079,25 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         }
     }
 
-    // Build relic drop map: component unique_name → [relic unique_names that drop it]
-    // WFCD relic rewards list items by "itemName" (display name).
-    // We match against our catalog names to get unique_names.
-    let name_to_unique: HashMap<String, String> = items.iter()
-        .map(|i| (i.name.clone(), i.unique_name.clone()))
-        .collect();
-
-    let mut relic_drops: HashMap<String, Vec<String>> = HashMap::new();
-    for (relic_unique, rewards_val) in &raw_relics {
-        if let Some(rewards) = rewards_val.as_array() {
-            for reward in rewards {
-                // WFCD structure: reward.item.name  (not reward.itemName)
-                let item_name = reward
-                    .get("item").and_then(|v| v.get("name")).and_then(|v| v.as_str())
-                    .or_else(|| reward.get("itemName").and_then(|v| v.as_str()));
-                if let Some(name) = item_name {
-                    if let Some(comp_unique) = name_to_unique.get(name) {
-                        relic_drops.entry(comp_unique.clone()).or_default().push(relic_unique.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    // Image lookup maps for relic rewards
-    let image_by_unique: HashMap<String, String> = items.iter()
-        .filter_map(|i| i.image_name.as_ref().map(|img| (i.unique_name.clone(), img.clone())))
-        .collect();
-    // Name-based lookup (lowercase) for when unique_names differ between data sources
+    // Name-based image lookup passed to fetch_relics_rewards for icon enrichment.
     let image_by_name: HashMap<String, String> = items.iter()
         .filter_map(|i| i.image_name.as_ref().map(|img| (i.name.to_lowercase(), img.clone())))
         .collect();
 
-    // Build relic rewards map: relic unique_name → rewards sorted Bronze/Silver/Gold
-    let mut relic_rewards: HashMap<String, Vec<RelicReward>> = HashMap::new();
-    for (relic_unique, rewards_val) in &raw_relics {
-        if let Some(rewards) = rewards_val.as_array() {
-            let mut list: Vec<RelicReward> = rewards.iter().filter_map(|r| {
-                let item_unique = r.get("item")
-                    .and_then(|v| v.get("uniqueName"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("").trim().to_string();
-                if item_unique.is_empty() { return None; }
-                let item_name = r.get("item").and_then(|v| v.get("name")).and_then(|v| v.as_str())
-                    .or_else(|| r.get("itemName").and_then(|v| v.as_str()))
-                    .unwrap_or("Unknown").to_string();
-                let rarity_raw = r.get("rarity").and_then(|v| v.as_str()).unwrap_or("common").to_lowercase();
-                let rarity = match rarity_raw.as_str() {
-                    "uncommon" => "Silver",
-                    "rare"     => "Gold",
-                    _          => "Bronze",
-                }.to_string();
-                let image_name = r.get("item")
-                    .and_then(|v| v.get("imageName"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    // Try unique_name lookup in catalog
-                    .or_else(|| image_by_unique.get(&item_unique).cloned())
-                    // Try name lookup (lowercase) — handles path mismatches between data sources
-                    .or_else(|| image_by_name.get(&item_name.to_lowercase()).cloned())
-                    // Try name without "Blueprint" suffix
-                    .or_else(|| {
-                        let no_bp = item_name.to_lowercase().replace(" blueprint", "");
-                        image_by_name.get(&no_bp).cloned()
-                    })
-                    // For prime parts: fall back to parent prime item's image
-                    // e.g. "Yareli Prime Blueprint" → look up "Yareli Prime"
-                    .or_else(|| {
-                        if let Some(idx) = item_name.find(" Prime") {
-                            let prime_name = item_name[..idx + " Prime".len()].to_lowercase();
-                            image_by_name.get(&prime_name).cloned()
-                        } else {
-                            None
-                        }
-                    });
-                Some(RelicReward { unique_name: item_unique, name: item_name, rarity, image_name })
-            }).collect();
-            list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
-            if !list.is_empty() {
-                relic_rewards.insert(relic_unique.clone(), list);
+    // Build relic_drops (item → relics) from raw_drop_entries — used by RelicHelper.
+    let mut relic_drops: HashMap<String, Vec<String>> = HashMap::new();
+    for (relic_path, entries) in &raw_drop_entries {
+        let mut seen: HashSet<String> = HashSet::new();
+        for (item_unique, _, _) in entries {
+            if seen.insert(item_unique.clone()) {
+                relic_drops.entry(item_unique.clone()).or_default().push(relic_path.clone());
             }
         }
     }
+
+    // Build relic_rewards from Relics.json — each entry is one specific refinement
+    // (Bronze/Silver/Gold/Platinum) with its own uniqueName matching EE.log paths exactly.
+    let relic_rewards = fetch_relics_rewards(&image_by_name);
 
     // Build blueprint_names: blueprint_path → (display_name, ducats)
     // Lets the frontend create virtual catalog entries for component blueprints that

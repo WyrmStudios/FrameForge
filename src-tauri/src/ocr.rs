@@ -30,7 +30,7 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
     if let Some((pixels, w, cap_h, full_h)) = capture_printwindow() {
         let avg = avg_brightness(&pixels);
         if avg >= 20 {
-            let info = format!("PrintWindow  {}×{}px (top 75%, cap {}px)  avg_brightness={}", w, full_h, cap_h, avg);
+            let info = format!("PrintWindow  {}×{}px (top 80%, cap {}px)  avg_brightness={}", w, full_h, cap_h, avg);
             return Some((pixels, w, cap_h, full_h, info));
         }
         // Dark frame — Fullscreen Exclusive likely. Fall through to DXGI.
@@ -38,7 +38,7 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
         if let Some((px2, w2, cap_h2, full_h2)) = capture_dxgi(0.85) {
             let avg2 = avg_brightness(&px2);
             let info = format!(
-                "DXGI  {}×{}px (top 75%, cap {}px)  avg_brightness={} \
+                "DXGI  {}×{}px (top 80%, cap {}px)  avg_brightness={} \
                  (PrintWindow was dark: avg={})",
                 w2, full_h2, cap_h2, avg2, avg
             );
@@ -47,7 +47,7 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
         // Both paths failed — return the dark PrintWindow result so the caller
         // can classify it as dark-frame and log it properly.
         let info = format!(
-            "PrintWindow  {}×{}px (top 75%, cap {}px)  avg_brightness={} [DARK — DXGI also failed]",
+            "PrintWindow  {}×{}px (top 80%, cap {}px)  avg_brightness={} [DARK — DXGI also failed]",
             w, full_h, cap_h, avg
         );
         return Some((pixels, w, cap_h, full_h, info));
@@ -57,7 +57,7 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
     if let Some((pixels, w, cap_h, full_h)) = capture_dxgi(0.85) {
         let avg = avg_brightness(&pixels);
         let info = format!(
-            "DXGI  {}×{}px (top 75%, cap {}px)  avg_brightness={} (no Warframe window found)",
+            "DXGI  {}×{}px (top 80%, cap {}px)  avg_brightness={} (no Warframe window found)",
             w, full_h, cap_h, avg
         );
         return Some((pixels, w, cap_h, full_h, info));
@@ -94,7 +94,7 @@ fn capture_printwindow() -> Option<(Vec<u8>, u32, u32, u32)> {
         let full_h = (rect.bottom - rect.top) as u32;
         if full_w < 100 || full_h < 100 { return None; }
 
-        let cap_h = (full_h as f32 * 0.85) as u32;
+        let cap_h = (full_h as f32 * 0.80) as u32;
 
         let hdc_win = GetDC(hwnd);
         let hdc_mem = CreateCompatibleDC(hdc_win);
@@ -1319,23 +1319,15 @@ pub fn extract_reward_items_twophase(
     // If detection fails, fall back to X-gap grouping of OCR lines.
     let (bar_result, bar_diag) = find_rarity_bars(pixels, pix_w, pix_h);
 
-    let (card_centers, bar_y_frac): (Vec<f32>, f32) = match &bar_result {
+    let (card_centers, _bar_y_frac): (Vec<f32>, f32) = match &bar_result {
         Some((centers, by)) => (centers.clone(), *by),
         None => (vec![], 0.0),
     };
 
-    // Player names appear immediately below the rarity bars.  When bar_y is
-    // known, cut OCR text off at bar_y + 0.06 (6 % below the bar line) so
-    // player names never reach the column matcher.  Without bar data fall back
-    // to 0.78 — generous enough for typical layouts while still excluding most
-    // player-name rows.
-    let ocr_y_max: f32 = if bar_y_frac > 0.0 {
-        (bar_y_frac + 0.06).min(0.92)
-    } else {
-        // No bar detected — use a conservative cutoff.  On 1080p player
-        // names start at ~73% of cap_h; 0.72 keeps a small safety margin.
-        0.72
-    };
+    // Fixed cutoff near the bottom of the capture.
+    // is_player_name handles name filtering; the bar-based cutoff was unreliable
+    // (bar detection often placed bar_y too high, deleting valid item text).
+    let ocr_y_max: f32 = 0.95;
 
     // Returns true if `text` resembles a known player name (≥80% char similarity).
     // Handles typical OCR garbling: "Dragonivan65" → "Dragonivan650", trailing symbols, etc.
@@ -1828,13 +1820,23 @@ pub fn extract_reward_items_twophase(
 
 
 
-/// Captures the full composited desktop for diagnostics.
-/// Uses DXGI Desktop Duplication so the result includes all windows (including transparent overlays).
+/// Captures the full desktop for diagnostics so the FrameForge overlay is visible.
+/// Uses GDI BitBlt from the desktop DC — DWM composites all windows (including the
+/// WebView2 overlay) before BitBlt reads them, so the overlay appears in the BMP.
+/// DXGI captures GPU output before DWM overlay compositing and misses WebView2 windows.
 /// Returns (BGRA pixels, width, height) or None on failure.
 #[cfg(target_os = "windows")]
 pub fn capture_desktop_for_diag() -> Option<(Vec<u8>, u32, u32)> {
-    let (pixels, w, cap_h, _full_h) = capture_dxgi(1.0)?;
-    Some((pixels, w, cap_h))
+    if let Some((pixels, w, h)) = capture_screen_gdi_scaled(1, 1) {
+        if avg_brightness(&pixels) >= 5 {
+            return Some((pixels, w, h));
+        }
+    }
+    // Fallback: DXGI (fullscreen exclusive — overlay not visible there anyway).
+    if let Some((pixels, w, cap_h, _full_h)) = capture_dxgi(1.0) {
+        return Some((pixels, w, cap_h));
+    }
+    None
 }
 
 #[cfg(not(target_os = "windows"))]

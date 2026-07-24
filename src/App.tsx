@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef, memo, useContext, Component, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { listen, emitTo } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 // ── Riven overlay — module-level window management ────────────────────────────
@@ -497,6 +497,12 @@ const InvCard = memo(function InvCard({
   return true;
 });
 
+// Feature 3 — api.warframe.com/api/inventory.php
+// DE confirmed third-party tools are used "at your own risk" but could not clarify
+// whether accessing this undocumented endpoint specifically is permitted.
+// Set to false to re-enable once clearer guidance is received.
+const COMPANION_API_SUSPENDED = true;
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 // RelicAndRivenTab is kept but now just shows RelicHelper — Rivens moved to own tab
@@ -560,11 +566,10 @@ export default function App() {
   const [diagPath, setDiagPath] = useState<string | null>(null);
   const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
   const [diagFolderSize, setDiagFolderSize] = useState<number>(0);
-  const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
+  const [companionApiEnabled] = useState(false);
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
 const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [apiLogEnabled,  setApiLogEnabled]  = useState(false);
-  const [forceApiMsg,    setForceApiMsg]    = useState("");
   const [wfmLoggedIn, setWfmLoggedIn] = useState(false);
   const [wfmInvisibleOnStart,   setWfmInvisibleOnStart]   = useState(false);
   const [wfmInvisibleOnClose,   setWfmInvisibleOnClose]   = useState(false);
@@ -786,7 +791,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
       if (!json) return;
       try {
         const s = JSON.parse(json);
-        if (typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
+        // companionApiEnabled intentionally not loaded — feature suspended pending DE clarification
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled  === "boolean") setApiLogEnabled(s.apiLogEnabled);
@@ -1339,7 +1344,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
   // ── Auto-refresh API: 8 s while connecting, 30 s once connected ─────────
 
   useEffect(() => {
-    if (!companionApiEnabled) {
+    if (!companionApiEnabled || COMPANION_API_SUSPENDED) {
       setWfConnected(false);
       wfConnectedRef.current = false;
       return;
@@ -1472,10 +1477,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
   // the Win32 event loop cannot process messages while our code is executing.
   useEffect(() => {
     let overlayVisible = false;
-    let pendingItems: { items: string[]; positions: number[] } | null = null;
 
     const closeOverlay = async () => {
-      pendingItems = null;
       overlayVisible = false;
       await invoke("move_overlay_offscreen").catch(() => {});
     };
@@ -1499,7 +1502,6 @@ if (typeof s.autoDiagEnabled === "boolean") {
     };
 
     const unsubTrigger = listen<null>("relic-trigger", async () => {
-      pendingItems = null;
       const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
       if (!enabled) return;
       try {
@@ -1524,26 +1526,18 @@ if (typeof s.autoDiagEnabled === "boolean") {
       const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
       if (!enabled) return;
       invoke("log_relic_fe", { msg: `[APP] relic-rewards: ${rewards.items.length} items, overlayVisible=${overlayVisible}` }).catch(() => {});
-      if (overlayVisible) {
-        await emitTo("relic-overlay", "relic-rewards", rewards);
-      } else {
-        pendingItems = rewards;
+      // Overlay.tsx already receives this event directly from Rust's global emit.
+      // We only need to ensure the overlay window is on-screen; no forwarding needed
+      // (forwarding via emitTo caused an infinite feedback loop in Tauri 2).
+      if (!overlayVisible) {
         try {
           const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
           invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
-          const ok = await openOverlay(wx, wy, ww, wh, 0.54, 0.28);
-          if (ok && pendingItems) {
-            await emitTo("relic-overlay", "relic-rewards", pendingItems);
-            pendingItems = null;
-          }
-        } catch (e) {
-          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf-rect failed (${e}), using screen dims` }).catch(() => {});
+          await openOverlay(wx, wy, ww, wh, 0.54, 0.28);
+        } catch (err) {
+          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf-rect failed (${err}), using screen dims` }).catch(() => {});
           const sw = window.screen.width, sh = window.screen.height;
-          const ok = await openOverlay(0, 0, sw, sh, 0.54, 0.28);
-          if (ok && pendingItems) {
-            await emitTo("relic-overlay", "relic-rewards", pendingItems);
-            pendingItems = null;
-          }
+          await openOverlay(0, 0, sw, sh, 0.54, 0.28);
         }
       }
     });
@@ -1564,24 +1558,52 @@ if (typeof s.autoDiagEnabled === "boolean") {
   }, []);
 
   // ── In-game trade detection ───────────────────────────────────────────────
-  // Rust emits "trade-completed" from the EE.log monitor when it detects
-  // "The trade was successful!" — save directly to SQLite via add_trade.
+  // Rust emits "trade-completed" when "The trade was successful!" is detected in
+  // EE.log. One event covers ALL items from both sides of the trade session.
   useEffect(() => {
     const unlisten = listen<{
-      withPlayer: string; direction: string; itemName: string;
-      quantity: number; platinum: number; timestamp: string;
-    }>("trade-completed", (e) => {
+      sessionId: string;
+      withPlayer: string;
+      tradeType: "sale" | "purchase" | "trade";
+      offeredItems: { name: string; qty: number }[];
+      offeredPlat: number;
+      receivedItems: { name: string; qty: number }[];
+      receivedPlat: number;
+      timestamp: string;
+    }>("trade-completed", async (e) => {
       const p = e.payload;
-      invoke("add_trade", {
-        withPlayer: p.withPlayer,
-        direction:  p.direction,
-        itemName:   p.itemName,
-        itemUrl:    "",
-        quantity:   p.quantity,
-        platinum:   p.platinum,
-        source:     "in-game",
-        notes:      "",
-      }).catch(() => {});
+      const save = (dir: string, name: string, qty: number, plat: number) =>
+        invoke("add_trade", {
+          withPlayer: p.withPlayer,
+          direction:  dir,
+          itemName:   name,
+          itemUrl:    "",
+          quantity:   qty,
+          platinum:   plat,
+          source:     "in-game",
+          notes:      "",
+          sessionId:  p.sessionId,
+          tradeType:  p.tradeType,
+          timestamp:  p.timestamp,
+        }).catch(() => {});
+
+      if (p.tradeType === "sale") {
+        // Gave items, received platinum — put plat on the first row only
+        for (let i = 0; i < p.offeredItems.length; i++) {
+          const item = p.offeredItems[i];
+          await save("sold", item.name, item.qty, i === 0 ? p.receivedPlat : 0);
+        }
+      } else if (p.tradeType === "purchase") {
+        // Gave platinum, received items — put plat on the first row only
+        for (let i = 0; i < p.receivedItems.length; i++) {
+          const item = p.receivedItems[i];
+          await save("bought", item.name, item.qty, i === 0 ? p.offeredPlat : 0);
+        }
+      } else {
+        // Item-for-item trade
+        for (const item of p.offeredItems)  await save("traded-out", item.name, item.qty, 0);
+        for (const item of p.receivedItems) await save("traded-in",  item.name, item.qty, 0);
+      }
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
@@ -2002,63 +2024,23 @@ if (typeof s.autoDiagEnabled === "boolean") {
                   </div>
 
                   {/* Warframe API */}
-                  <div className="settings-section" style={{ borderColor: companionApiEnabled ? "rgba(240,192,64,.3)" : undefined }}>
+                  <div className="settings-section">
                     <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       Warframe API
                       <span style={{ fontSize: 10, background: "rgba(240,192,64,.15)", color: "#f0c040", border: "1px solid rgba(240,192,64,.35)", borderRadius: 3, padding: "1px 6px", fontWeight: 700 }}>
-                        UNOFFICIAL
+                        SUSPENDED
                       </span>
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, lineHeight: 1.5 }}>
-                      Connects to <code style={{ fontSize: 10 }}>api.warframe.com/api/inventory.php</code> for mod ranks and detailed inventory data. Not officially permitted for third-party tools. Enable at your own risk.
+                    <div style={{
+                      fontSize: 11, color: "var(--muted)", lineHeight: 1.6,
+                      background: "rgba(240,192,64,.06)", border: "1px solid rgba(240,192,64,.25)",
+                      borderRadius: 6, padding: "8px 10px",
+                    }}>
+                      <strong style={{ color: "#f0c040" }}>Temporarily unavailable.</strong>
+                      {" "}This feature connects to an undocumented DE endpoint (<code style={{ fontSize: 10 }}>api.warframe.com/api/inventory.php</code>).
+                      {" "}DE confirmed third-party tools run at your own risk but could not clarify whether this specific endpoint is permitted.
+                      {" "}The feature is disabled until we receive clearer guidance.
                     </div>
-                    <div className="settings-row">
-                      <div>
-                        <span className="settings-row-label">Enable</span>
-                        <span className="settings-row-desc">Adds mod ranks and detailed inventory data</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: companionApiEnabled ? "rgba(240,192,64,.15)" : undefined, borderColor: companionApiEnabled ? "#f0c040" : undefined, color: companionApiEnabled ? "#f0c040" : undefined }}
-                        onClick={() => setCompanionApiEnabled(v => !v)}
-                      >
-                        {companionApiEnabled ? "Enabled" : "Disabled"}
-                      </button>
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8, opacity: companionApiEnabled ? 1 : 0.4, pointerEvents: companionApiEnabled ? "auto" : "none" }}>
-                      <div>
-                        <span className="settings-row-label">Force API Call</span>
-                        <span className="settings-row-desc">Fetch immediately without waiting for the 5-minute refresh</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64 }}
-                        onClick={async () => {
-                          setForceApiMsg("Fetching…");
-                          try {
-                            let accountId = "", nonce = "", steamId = "";
-                            try {
-                              [accountId, nonce, steamId] = await invoke<[string, string, string]>("scan_warframe_credentials");
-                              manualCredsRef.current = { accountId, nonce };
-                            } catch {
-                              const mc = manualCredsRef.current;
-                              if (!mc) { setForceApiMsg("No credentials — connect first."); return; }
-                              accountId = mc.accountId; nonce = mc.nonce;
-                            }
-                            const data = await invoke<any>("fetch_warframe_inventory", { accountId, nonce, steamId });
-                            applyInventoryData(data);
-                            setWfConnected(true);
-                            wfConnectedRef.current = true;
-                            setForceApiMsg("Done.");
-                          } catch (e) { setForceApiMsg(`Error: ${e}`); }
-                        }}
-                      >
-                        Fetch Now
-                      </button>
-                    </div>
-                    {forceApiMsg && (
-                      <div className="settings-msg" style={{ marginTop: 4 }}>{forceApiMsg}</div>
-                    )}
                   </div>
 
                   {/* Account Login */}
@@ -2413,84 +2395,6 @@ if (typeof s.autoDiagEnabled === "boolean") {
                     </div>
                   </div>
 
-                  {/* Overlay Test */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Overlay Test</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', padding: '4px 0 8px' }}>
-                      Isolated window tests — no connection to the real relic overlay.
-                    </div>
-
-                    {/* Stage 1: show pre-declared test window */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <button className="btn-secondary" onClick={() => {
-                        invoke("show_test_overlay_window")
-                          .then(() => setOverlayStatus("✓ Stage 1: test window moved on-screen — should show green"))
-                          .catch(e => setOverlayStatus(`✗ Stage 1 error: ${e}`));
-                        setTimeout(() => setOverlayStatus(""), 8000);
-                      }}>Stage 1 — Show Test Window</button>
-                      <button className="btn-secondary" onClick={() => {
-                        invoke("hide_test_overlay_window")
-                          .then(() => setOverlayStatus("test window moved off-screen"))
-                          .catch(e => setOverlayStatus(`hide error: ${e}`));
-                        setTimeout(() => setOverlayStatus(""), 3000);
-                      }}>Hide Test Window</button>
-                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>Window is pre-loaded at app start (y=−3000). Should appear green immediately.</span>
-                    </div>
-
-                    {/* Stage 2: transparent window — proves transparent rendering works */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <button className="btn-secondary" onClick={() => {
-                        invoke("create_test_overlay_window", { transparent: true })
-                          .then(() => setOverlayStatus("stage 2: transparent test window created"))
-                          .catch(e => setOverlayStatus(`stage 2 error: ${e}`));
-                        setTimeout(() => setOverlayStatus(""), 6000);
-                      }}>Stage 2 — Transparent Window</button>
-                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>Green-tinted box with no title bar — should float over everything.</span>
-                    </div>
-
-                    {/* Real overlay test */}
-                    <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Real relic overlay (only use after Stage 1+2 pass):</div>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <button className="btn-secondary" onClick={async () => {
-                          await emitTo("relic-overlay", "relic-trigger", null).catch(() => {});
-                          try {
-                            const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
-                            const oy = Math.round(wy + wh * 0.60);
-                            const oh = Math.round(wh * 0.30);
-                            await invoke("show_overlay_window", { x: wx, y: oy, w: ww, h: oh });
-                            setOverlayStatus(`shown — wf(${wx},${wy} ${ww}×${wh}) → ov(${wx},${oy} ${ww}×${oh})`);
-                          } catch (e) {
-                            const sw = window.screen.width, sh = window.screen.height;
-                            const oy = Math.round(sh * 0.55), oh = Math.round(sh * 0.35);
-                            await invoke("show_overlay_window", { x: 0, y: oy, w: sw, h: oh }).catch(() => {});
-                            setOverlayStatus(`shown (no WF — ${e}) → ov(0,${oy} ${sw}×${oh})`);
-                          }
-                          setTimeout(() => setOverlayStatus(""), 8000);
-                        }}>Show Overlay</button>
-                        <button className="btn-secondary" onClick={() => {
-                          emitTo("relic-overlay", "relic-rewards", {
-                            items: [
-                              "/Lotus/Types/Recipes/Weapons/WeaponParts/BroncoPrimeBarrel",
-                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimeFangBlade",
-                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimePolearmBlade",
-                              "/Lotus/Types/Recipes/Weapons/WeaponParts/PrimeLightningGunStock",
-                            ],
-                            positions: [0.25, 0.38, 0.62, 0.75],
-                          }).catch(() => {});
-                          setOverlayStatus("test rewards sent");
-                          setTimeout(() => setOverlayStatus(""), 3000);
-                        }}>Send Test Rewards</button>
-                        <button className="btn-secondary" onClick={() => {
-                          // Direct Rust call — no routing through Overlay.tsx JS
-                          invoke("move_overlay_offscreen")
-                            .then(() => setOverlayStatus("dismissed"))
-                            .catch(e => setOverlayStatus(`dismiss error: ${e}`));
-                          setTimeout(() => setOverlayStatus(""), 4000);
-                        }}>Dismiss</button>
-                      </div>
-                    </div>
-                  </div>
 
                 </>}
 

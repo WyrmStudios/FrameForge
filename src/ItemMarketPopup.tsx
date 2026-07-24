@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./ItemMarketPopup.css";
 
@@ -139,8 +139,15 @@ function OrderRow({ o, type, displayName, onList }: {
 
 // ── Create order form ─────────────────────────────────────────────────────────
 
-function CreateOrderForm({ urlName, prefillPrice, prefillType, prefillModRank, onDone }: {
-  urlName: string; prefillPrice: number; prefillType: "sell" | "buy"; prefillModRank?: number; onDone: () => void;
+function CreateOrderForm({ urlName, itemId, prefillPrice, prefillType, modRank, modMaxRank, onModRankChange, onDone }: {
+  urlName: string;
+  itemId: string | null;
+  prefillPrice: number;
+  prefillType: "sell" | "buy";
+  modRank: number;
+  modMaxRank: number | null;
+  onModRankChange: (r: number) => void;
+  onDone: () => void;
 }) {
   const [orderType, setOrderType] = useState<"sell" | "buy">(prefillType);
   const [price, setPrice]         = useState(Math.round(prefillPrice));
@@ -149,22 +156,6 @@ function CreateOrderForm({ urlName, prefillPrice, prefillType, prefillModRank, o
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState("");
   const [success, setSuccess]     = useState(false);
-
-  // Cache item info on mount: needed for itemId and to detect mods (modMaxRank present).
-  const [itemId, setItemId]       = useState<string | null>(null);
-  const [modMaxRank, setModMaxRank] = useState<number | null>(null);
-  const [modRank, setModRank]       = useState(prefillModRank ?? 0);
-
-  useEffect(() => {
-    invoke<{ id?: string; modMaxRank?: number } | null>("wfm_get_item_info", { urlName })
-      .then(info => {
-        if (info?.id) setItemId(info.id);
-        if (info?.modMaxRank !== undefined && info.modMaxRank > 0) {
-          setModMaxRank(info.modMaxRank);
-        }
-      })
-      .catch(() => {});
-  }, [urlName]); // eslint-disable-line
 
   const submit = async () => {
     setLoading(true); setError("");
@@ -197,7 +188,7 @@ function CreateOrderForm({ urlName, prefillPrice, prefillType, prefillModRank, o
           <>
             <label>Rank</label>
             <input type="number" value={modRank} min={0} max={modMaxRank}
-              onChange={e => setModRank(Math.max(0, Math.min(modMaxRank, +e.target.value)))}
+              onChange={e => onModRankChange(Math.max(0, Math.min(modMaxRank, +e.target.value)))}
               className="imp-num-input imp-qty-input" title={`Mod rank (0–${modMaxRank})`} />
           </>
         )}
@@ -228,14 +219,43 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
   const [prefillType, setPrefillType]   = useState<"sell" | "buy">("sell");
   const [imgFailed, setImgFailed]       = useState(false);
 
+  // Mod rank state — lifted here so orders re-fetch when rank changes
+  const [modRankInput, setModRankInput] = useState(prefillModRank ?? 0);
+  const [modRank, setModRank]           = useState(prefillModRank ?? 0);
+  const [modMaxRank, setModMaxRank]     = useState<number | null>(null);
+  const [itemId, setItemId]             = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleModRankChange = (r: number) => {
+    setModRankInput(r);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setModRank(r), 350);
+  };
+
+  // Fetch item info once to determine modMaxRank and itemId
   useEffect(() => {
-    invoke<{ sell: WfmOrder[]; buy: WfmOrder[] }>("wfm_get_item_orders", { urlName })
-      .then(o => { setOrders(o); setLoadingO(false); })
-      .catch(e => { setOrdersError(String(e)); setLoadingO(false); });
+    invoke<{ id?: string; modMaxRank?: number } | null>("wfm_get_item_info", { urlName })
+      .then(info => {
+        if (info?.id) setItemId(info.id);
+        if (info?.modMaxRank !== undefined && info.modMaxRank > 0) setModMaxRank(info.modMaxRank);
+      })
+      .catch(() => {});
     invoke<StatPoint[]>("wfm_get_item_statistics", { urlName })
       .then(s => { setStats(Array.isArray(s) ? s : []); setLoadingS(false); })
       .catch(() => setLoadingS(false));
-  }, [urlName]);
+  }, [urlName]); // eslint-disable-line
+
+  // Re-fetch orders whenever the item or the active mod rank changes
+  useEffect(() => {
+    setLoadingO(true);
+    setOrdersError("");
+    invoke<{ sell: WfmOrder[]; buy: WfmOrder[] }>("wfm_get_item_orders", {
+      urlName,
+      modRank: modMaxRank !== null ? modRank : undefined,
+    })
+      .then(o => { setOrders(o); setLoadingO(false); })
+      .catch(e => { setOrdersError(String(e)); setLoadingO(false); });
+  }, [urlName, modRank, modMaxRank]); // eslint-disable-line
 
   const lowestSell  = orders?.sell[0]?.platinum;
   const highestBuy  = orders?.buy[0]?.platinum;
@@ -271,6 +291,19 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
 
         {/* ── Price chart ── */}
         {!loadingS && stats.length > 0 && <Sparkline data={stats} />}
+
+        {/* ── Rank selector (mods/arcanes only) ── */}
+        {modMaxRank !== null && (
+          <div className="imp-rank-row">
+            <span className="imp-rank-label">Showing rank</span>
+            <input
+              type="number" value={modRankInput} min={0} max={modMaxRank}
+              onChange={e => handleModRankChange(Math.max(0, Math.min(modMaxRank, +e.target.value)))}
+              className="imp-num-input imp-qty-input"
+            />
+            <span className="imp-rank-label">/ {modMaxRank}</span>
+          </div>
+        )}
 
         {/* ── Orders ── */}
         <div className="imp-orders-wrap">
@@ -336,8 +369,9 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
                 </button>
               </>
             ) : (
-              <CreateOrderForm urlName={urlName} prefillPrice={prefillPrice} prefillType={prefillType}
-                prefillModRank={prefillModRank} onDone={() => { setShowForm(false); }} />
+              <CreateOrderForm urlName={urlName} itemId={itemId} prefillPrice={prefillPrice} prefillType={prefillType}
+                modRank={modRankInput} modMaxRank={modMaxRank} onModRankChange={handleModRankChange}
+                onDone={() => { setShowForm(false); }} />
             )}
           </div>
         ) : (
