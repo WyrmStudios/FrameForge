@@ -717,7 +717,20 @@ fn word_found_in_set(
         if ocr_words.iter().any(|w| w.find(suffix).map_or(false, |p| p != 1)) { return true; }
     }
 
-    let max_dist = if catalog_word.len() >= 8 { 2 } else { 1 };
+    // Edit budget by word length. 4 chars is the shortest word this fuzzy-matches
+    // at all; below that the guard above has already returned. One edit in a 4-char
+    // word is a quarter of it, enough to land on a different real catalog word
+    // instead of a damaged read of this one: "limb" reaches "limbo", "gara" reaches
+    // "galatine", "khra" reaches "khora", "star" reaches "stars". Those short words
+    // are usually the only part of a reward name that identifies it, so a wrong hit
+    // scores a full catalog entry for an item that was never on screen.
+    let max_dist = if catalog_word.len() >= 8 {
+        2
+    } else if catalog_word.len() >= 5 {
+        1
+    } else {
+        0
+    };
     let wb = catalog_word.as_bytes();
     for ocr_w in ocr_words {
         // Full-word Levenshtein — reject pure prefix/suffix insertions (len_diff == dist && >= 2)
@@ -1884,6 +1897,37 @@ pub fn extract_reward_items_twophase(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ocr_words(words: &[&str]) -> std::collections::HashSet<String> {
+        words.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Both words in each pair are ones the catalog really contains, so a match
+    /// between them is always wrong: it credits a card to an item whose name was
+    /// never on screen.
+    #[test]
+    fn four_character_words_must_be_read_exactly() {
+        for (catalog_word, on_screen) in [
+            ("limb", "limbo"),
+            ("gara", "galatine"),
+            ("khra", "khora"),
+            ("star", "stars"),
+        ] {
+            assert!(
+                !word_found_in_set(catalog_word, &ocr_words(&[on_screen])),
+                "{catalog_word:?} must not match {on_screen:?}"
+            );
+        }
+    }
+
+    /// Only 4-char words are affected. Five and up keep their single edit, and a
+    /// truncated read still matches at any length through the prefix rule.
+    #[test]
+    fn longer_words_keep_their_edit_tolerance() {
+        assert!(word_found_in_set("blueprint", &ocr_words(&["bluepnnt"])));
+        assert!(word_found_in_set("tenora", &ocr_words(&["tenova"])));
+        assert!(word_found_in_set("limb", &ocr_words(&["lim"])));
+    }
 
     /// A bar set whose outermost pair spans the right distance can still be junk.
     /// Accepting one is worse than detecting no bars at all, because the fallback
