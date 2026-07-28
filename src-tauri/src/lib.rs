@@ -11,6 +11,12 @@ fn atomic_write(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
 }
+/// Truncate `s` to at most `n` characters, for log previews and error snippets.
+/// Byte slicing (`&s[..s.len().min(n)]`) panics when the cut lands inside a
+/// multi-byte character, which OCR output and HTTP error bodies both produce.
+fn truncate_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
 use tauri::{Emitter, Manager, State};
 
 mod console_login; // [console-login feature] remove this line to drop the feature
@@ -819,18 +825,18 @@ async fn warframe_login(email: String, password: String) -> Result<(String, Stri
                 let text = resp.into_string().unwrap_or_default();
                 let json: serde_json::Value = match serde_json::from_str(&text) {
                     Ok(v) => v,
-                    Err(_) => { errors.push(format!("{}: non-JSON: {}", url, &text[..text.len().min(200)])); continue; }
+                    Err(_) => { errors.push(format!("{}: non-JSON: {}", url, truncate_chars(&text, 200))); continue; }
                 };
                 let id    = json["id"].as_str().unwrap_or("").to_string();
                 let nonce = json["Nonce"].to_string().trim_matches('"').to_string();
                 if !id.is_empty() && nonce != "null" {
                     return Ok((id, nonce));
                 }
-                errors.push(format!("{}: rejected: {}", url, &text[..text.len().min(300)]));
+                errors.push(format!("{}: rejected: {}", url, truncate_chars(&text, 300)));
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let body = resp.into_string().unwrap_or_default();
-                errors.push(format!("{}: HTTP {}: {}", url, code, &body[..body.len().min(200)]));
+                errors.push(format!("{}: HTTP {}: {}", url, code, truncate_chars(&body, 200)));
             }
             Err(e) => { errors.push(format!("{}: {}", url, e)); }
         }
@@ -885,9 +891,9 @@ async fn fetch_warframe_inventory(account_id: String, nonce: String, steam_id: S
                 }
                 if status == 200 {
                     return serde_json::from_str(&text)
-                        .map_err(|e| format!("Parse failed: {} — body: {}", e, &text[..text.len().min(200)]));
+                        .map_err(|e| format!("Parse failed: {} — body: {}", e, truncate_chars(&text, 200)));
                 }
-                last_err = format!("HTTP {} from {}: {}", status, url, &text[..text.len().min(100)]);
+                last_err = format!("HTTP {} from {}: {}", status, url, truncate_chars(&text, 100));
             }
             Err(e) => { last_err = format!("Request to {} failed: {}", url, e); }
         }
@@ -1075,7 +1081,7 @@ fn fetch_csrf_from_site(jwt: &str) -> Option<String> {
     }
     eprintln!("[csrf] meta tag not found in HTML (len={}) — trying JWT payload fallback", html.len());
     // Log a snippet to see what we got (first 200 chars)
-    eprintln!("[csrf] HTML snippet: {}", &html[..html.len().min(200)]);
+    eprintln!("[csrf] HTML snippet: {}", truncate_chars(&html, 200));
     if let Some(t) = jwt_payload_field(jwt, "csrf_token") {
         eprintln!("[csrf] JWT payload csrf_token len={}", t.len());
         Some(t)
@@ -2957,7 +2963,7 @@ fn riven_screen_status() -> String {
     let status = if fits_in { "open" } else { "closed" };
     let _ = append_to_file(&riven_log, &format!(
         "[POLL {}] inventory=true fits_in={} ocr=\"{}\" → {}\n",
-        ts, fits_in, &preview[..preview.len().min(80)], status
+        ts, fits_in, truncate_chars(&preview, 80), status
     ));
     status.into()
 }
@@ -2998,7 +3004,7 @@ fn riven_screen_visible() -> bool {
 
     let _ = append_to_file(&riven_log, &format!(
         "[POLL {}] inventory=true fits_in={} ocr=\"{}\"\n",
-        ts, fits_in_visible, &right_preview[..right_preview.len().min(120)]
+        ts, fits_in_visible, truncate_chars(&right_preview, 120)
     ));
 
     fits_in_visible
@@ -8589,4 +8595,17 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_chars;
+
+    #[test]
+    fn truncate_chars_splits_on_characters_not_bytes() {
+        // "é" is two bytes, so a byte slice of 3 would land mid-character and panic.
+        assert_eq!(truncate_chars("éé", 3), "éé");
+        assert_eq!(truncate_chars("éé", 1), "é");
+        assert_eq!(truncate_chars("abc", 2), "ab");
+    }
 }
