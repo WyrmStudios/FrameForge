@@ -1184,6 +1184,20 @@ fn bar_centers_are_valid(centers: &[f32]) -> bool {
     for pair in centers.windows(2) {
         if pair[1] - pair[0] < 0.08 { return false; }
     }
+    // Cards sit on a fixed pitch, so the gaps between real bars are equal to within
+    // a pixel or two. The span check below only looks at the outermost pair, so a
+    // lopsided set gets through whenever its two ends happen to land the right
+    // distance apart. [0.204, 0.316, 0.655] spans 0.451 against the 0.46 expected
+    // of three cards, but its gaps differ threefold. The columns built from it put
+    // two cards' text into a single column and cross their component names.
+    if n >= 3 {
+        let gaps: Vec<f32> = centers.windows(2).map(|p| p[1] - p[0]).collect();
+        let mean = gaps.iter().sum::<f32>() / gaps.len() as f32;
+        // A third of the ~0.13 card pitch. Wide enough for the jitter of locating
+        // the small rarity arrows, and well under a card's width.
+        if gaps.iter().any(|g| (g - mean).abs() > 0.04) { return false; }
+    }
+
     let span = centers[n - 1] - centers[0];
     // Expected spans per card count (measured from real captures)
     let expected = match n {
@@ -1865,4 +1879,22 @@ pub fn extract_reward_items_twophase(
     _hint_squad_size: Option<usize>, _player_names: &[String],
 ) -> (bool, bool, Vec<String>, Vec<f32>, String) {
     (false, false, vec![], vec![], String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bar set whose outermost pair spans the right distance can still be junk.
+    /// Accepting one is worse than detecting no bars at all, because the fallback
+    /// layout at least puts each card's text in its own column.
+    #[test]
+    fn bar_centers_must_be_evenly_spaced() {
+        // Real detection from a three-card capture: spans 0.451 against the 0.46
+        // expected, but with gaps of 0.112 and 0.339.
+        assert!(!bar_centers_are_valid(&[0.204, 0.316, 0.655]));
+        // Evenly spaced sets still have to clear the span check.
+        assert!(bar_centers_are_valid(&[0.27, 0.50, 0.73]));
+        assert!(bar_centers_are_valid(&[0.24, 0.41, 0.59, 0.76]));
+    }
 }
