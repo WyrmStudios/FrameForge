@@ -418,16 +418,42 @@ fn enclosing_object_start(buf: &[u8], marker_off: usize) -> Option<usize> {
     None
 }
 
-/// Locate seed offsets for the FULL_ACCOUNT blob within `buf`.
-/// Returns `(marker_off, json_open)`:
-///   - `marker_off`: byte position of the first known start marker
-///   - `json_open`:  byte position of the outermost `{` enclosing the marker
-fn blob_seed_offsets(buf: &[u8]) -> (usize, usize) {
-    let marker_off = memmem::find(buf, START_MARKER)
-        .or_else(|| ALT_STARTS.iter().find_map(|a| memmem::find(buf, a)))
-        .unwrap_or(buf.len().saturating_sub(1));
-    let json_open = enclosing_object_start(buf, marker_off).unwrap_or(marker_off);
-    (marker_off, json_open)
+/// Where a stitched buffer's blob begins: `(marker_at, seed_at)`.
+///
+/// `marker_at` is the marker occurrence the seed is anchored to; `seed_at` is
+/// the brace enclosing it, or the marker itself when no occurrence has a
+/// brace that reads as an object head. See `enclosing_object_start` for why
+/// marker and brace are rarely the same offset.
+///
+/// With no primary marker anywhere the fallbacks keep both offsets in bounds,
+/// down to the buffer's last byte when nothing matches at all. Such a seed is
+/// junk and fails to parse, which is what the walk already does with a bad
+/// start.
+fn blob_seed_offsets(combined: &[u8]) -> (usize, usize) {
+    // The heap can hold a stale copy of the blob ahead of the live one: its
+    // marker survives but its opening brace was overwritten, so brace-matching
+    // backward from it lands on a stray `{` in binary garbage. A live seed is
+    // a JSON object head, so only accept a brace followed by a quote, and keep
+    // trying later marker occurrences until one qualifies.
+    let mut first_marker = None;
+    let mut search_from = 0;
+    while let Some(found) = memmem::find(&combined[search_from..], START_MARKER) {
+        let marker_at = search_from + found;
+        first_marker.get_or_insert(marker_at);
+        if let Some(open) = enclosing_object_start(combined, marker_at) {
+            if combined.get(open + 1) == Some(&b'"') {
+                return (marker_at, open);
+            }
+        }
+        search_from = marker_at + 1;
+    }
+    // Without a plausible brace anywhere, seed at the first marker: the
+    // parser can rebuild the object head from a marker-anchored seed.
+    let marker_at = first_marker
+        .or_else(|| ALT_STARTS.iter().find_map(|a| memmem::find(combined, a)))
+        .unwrap_or(combined.len().saturating_sub(1));
+    (marker_at, first_marker.unwrap_or_else(||
+        enclosing_object_start(combined, marker_at).unwrap_or(marker_at)))
 }
 
 /// Parse a FULL_ACCOUNT blob from raw memory bytes into structured inventory data.
@@ -1511,6 +1537,37 @@ mod seed_tests {
         let buf = b"x\"SubscribedToEmails\":1}";
         let (marker_off, json_open) = blob_seed_offsets(buf);
         assert_eq!(json_open, marker_off);
+    }
+
+    /// A freed copy of the blob can sit ahead of the live one with its marker
+    /// intact but its opening brace overwritten. Brace-matching backward from
+    /// that copy lands on a stray `{` in binary garbage ("key must be a string
+    /// at line 1 column 2"), so the stale occurrence has to be skipped in
+    /// favour of the live one.
+    #[test]
+    fn a_stale_headless_copy_is_skipped_for_the_live_blob() {
+        let mut combined = b"\x00{J>\x01\x02 garbage ".to_vec();
+        combined.extend_from_slice(br#""SubscribedToEmails":0,"RegularCredits":1,"#);
+        combined.extend_from_slice(b"\x03\x04 more garbage ");
+        let live_at = combined.len();
+        combined.extend_from_slice(br#"{"SubscribedToEmails":0,"RegularCredits":42}"#);
+
+        let (marker_at, seed_at) = blob_seed_offsets(&combined);
+        assert_eq!(seed_at, live_at, "seed is the live copy's opening brace");
+        assert!(marker_at > live_at, "the marker used is the live copy's");
+    }
+
+    /// With only the headless copy in the buffer, seeding at the marker lets
+    /// the parser rebuild the object head instead of parsing garbage.
+    #[test]
+    fn a_lone_headless_copy_seeds_at_its_marker() {
+        let mut combined = b"\x00{J>\x01\x02 garbage ".to_vec();
+        let marker = combined.len();
+        combined.extend_from_slice(br#""SubscribedToEmails":0,"RegularCredits":42,"#);
+
+        let (marker_at, seed_at) = blob_seed_offsets(&combined);
+        assert_eq!(marker_at, marker);
+        assert_eq!(seed_at, marker, "seed skips the garbage brace");
     }
 
     #[test]
