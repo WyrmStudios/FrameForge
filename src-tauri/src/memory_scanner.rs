@@ -535,6 +535,66 @@ fn find_blob_end(raw: &[u8]) -> Option<usize> {
     Some(after + brace + 1)
 }
 
+/// Offset of the `{` that encloses `marker_at`, matching braces backward.
+///
+/// The blob's opening brace is not the first `{"` in the buffer. The walk
+/// stitches whole mappings together, so other allocations and their own JSON
+/// are in there too, and seeding at the earliest `{"` produces a document that
+/// fails to parse on its first value.
+///
+/// `None` means no enclosing brace is in the buffer, so the opening lives in a
+/// mapping the walk could not stitch.
+///
+/// A `{` or `}` inside a JSON string value would skew the count. The blob is
+/// item paths and numbers, so this has not been observed; a seed it did skew
+/// would fail to parse and be dropped like any other bad seed.
+fn enclosing_object_start(data: &[u8], marker_at: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    // Clamped so any offset is safe to pass, not only the in-bounds one the
+    // scan's own marker search produces.
+    for offset in (0..marker_at.min(data.len())).rev() {
+        match data[offset] {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => return Some(offset),
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// First key of the FULL_ACCOUNT blob's own object, plus the fallbacks for the
+/// accounts and builds where it is absent or lands in a mapping the walk
+/// skipped. Both are unambiguous inventory fields, so combined with the
+/// mission-delta exclusion they are safe to seed from on their own.
+const START_MARKER: &[u8] = b"\"SubscribedToEmails\"";
+const ALT_STARTS: &[&[u8]] = &[
+    b"\"MiscItems\":[{\"ItemType\":\"/Lotus/",  // resources array with real items
+    b"\"Suits\":[{\"ItemType\":\"/Lotus/",       // warframes array with real items
+    b"\"RegularCredits\":",                       // present in every blob
+];
+
+/// Where a stitched buffer's blob begins: `(marker_at, seed_at)`.
+///
+/// `marker_at` is the first known inventory key in the buffer; `seed_at` is the
+/// brace enclosing it, which is where the scan is seeded. See
+/// `enclosing_object_start` for why the two are rarely the same offset.
+///
+/// With no marker anywhere, `marker_at` becomes the buffer's last byte so the
+/// caller's slice stays in bounds, and the backward match still runs from
+/// there, so an unbalanced `{` earlier in the buffer would be seeded from.
+/// Either way the seed is junk and fails to parse, which is what the walk
+/// already does with a bad start.
+fn blob_seed_offsets(combined: &[u8]) -> (usize, usize) {
+    let marker_at = combined
+        .windows(START_MARKER.len())
+        .position(|w| w == START_MARKER)
+        .or_else(|| ALT_STARTS.iter().find_map(|a|
+            combined.windows(a.len()).position(|w| w == *a)))
+        .unwrap_or(combined.len().saturating_sub(1));
+    (marker_at, enclosing_object_start(combined, marker_at).unwrap_or(marker_at))
+}
+
 /// Parse a FULL_ACCOUNT blob from raw memory bytes into structured inventory data.
 ///
 /// Compute the deterministic riven mod name from its buff stats.
@@ -620,7 +680,16 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     };
 
     let json: serde_json::Value = serde_json::from_slice(&json_bytes)
-        .map_err(|e| eprintln!("[blob-parse] JSON error: {}", e))
+        .map_err(|e| {
+            // A column number alone cannot distinguish a seed that starts in the
+            // wrong place from a blob that was cut short, and those want opposite
+            // fixes, so show what the document actually begins with.
+            let head: String = json_bytes.iter().take(48)
+                .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+                .collect();
+            eprintln!("[blob-parse] JSON error: {} ({} B starting \"{}\")",
+                e, json_bytes.len(), head);
+        })
         .ok()?;
 
     // Scalars
@@ -916,7 +985,6 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
     const PAGE_EXECUTE_WC:   u32 = 0x80;
     const EXEC_MASK: u32 = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_RW | PAGE_EXECUTE_WC;
 
-    const START_MARKER:  &[u8] = b"\"SubscribedToEmails\"";
     const MISSION_DELTA: &[u8] = b"\"InventoryChanges\":";
     const LOTUS_KEY:     &[u8] = b"/Lotus/";
     const ANCHORS: &[&[u8]] = &[
@@ -926,14 +994,6 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         b"\"LongGuns\":[",
         b"\"Melee\":[",
         b"\"Pistols\":[",
-    ];
-    // Secondary start triggers: unambiguous inventory fields that are present in every
-    // account's FULL_ACCOUNT blob even when SubscribedToEmails is absent or in a
-    // skipped memory region. Combined with !is_mission these are safe to use alone.
-    const ALT_STARTS: &[&[u8]] = &[
-        b"\"MiscItems\":[{\"ItemType\":\"/Lotus/",  // resources array with real items
-        b"\"Suits\":[{\"ItemType\":\"/Lotus/",       // warframes array with real items
-        b"\"RegularCredits\":",                       // credit balance — in every blob
     ];
 
     // ── Fast path: try the cached region from last successful scan ─────────────
@@ -1179,17 +1239,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             }
             combined.extend_from_slice(chunk);
 
-            // Find any known start marker within combined, then search backward for
-            // the first {"  — that is the outermost JSON object open.
-            let start_off = combined.windows(START_MARKER.len())
-                .position(|w| w == START_MARKER)
-                .or_else(|| ALT_STARTS.iter().find_map(|a|
-                    combined.windows(a.len()).position(|w| w == *a)))
-                .unwrap_or(combined.len().saturating_sub(1));
-            let json_open = combined[..start_off + 1]
-                .windows(2)
-                .position(|w| w == b"{\"")
-                .unwrap_or(start_off);
+            let (start_off, json_open) = blob_seed_offsets(&combined);
 
             // Absolute memory address of the seed start (for LAST_BLOB_REGION cache).
             let seed_addr = blob_start_addr + json_open;
@@ -1481,3 +1531,69 @@ fn find_warframe_pid() -> Option<u32> {
     }
 }
 
+
+// ─── Blob seed placement ─────────────────────────────────────────────────────
+//
+// The walk needs a live game process, but the buffer it hands to
+// `blob_seed_offsets` is just bytes, so the seed decision can be driven from a
+// synthetic stitch.
+#[cfg(test)]
+mod seed_tests {
+    use super::*;
+
+    /// A stitched buffer that reproduces the reported failure: a mapping ahead
+    /// of the blob carries a Lotus path, so it joins the prefix chain, and its
+    /// own `{"` is the earliest one in the buffer. Seeding there produced a
+    /// document that died on its first value ("expected value at line 1 column
+    /// 9") and lost the whole inventory.
+    #[test]
+    fn seed_lands_on_the_blob_not_on_earlier_json() {
+        let prefix = br#"{"Mods":garbage /Lotus/Weapons/Tenno/Rifle "#;
+        // Padded past the parser's 50 KB floor with whitespace, which is legal
+        // between JSON tokens and keeps the fixture readable.
+        let mut blob =
+            br#"{"SubscribedToEmails":true,"RegularCredits":42,"MiscItems":[{"ItemType":"/Lotus/Types/Items/x"}],"#
+                .to_vec();
+        blob.resize(60_000, b' ');
+        blob.extend_from_slice(br#""DeathSquadable":false}"#);
+
+        let mut combined = prefix.to_vec();
+        combined.extend_from_slice(&blob);
+
+        let (marker_at, seed_at) = blob_seed_offsets(&combined);
+        assert_eq!(seed_at, prefix.len(), "seed is the brace enclosing the marker");
+        assert!(marker_at > seed_at, "the marker sits inside the object that was seeded");
+
+        let inventory = parse_full_account_blob(&combined[seed_at..]);
+        assert_eq!(inventory.expect("blob parses from the seed").credits, 42);
+    }
+
+    #[test]
+    fn the_enclosing_brace_is_found_past_nested_objects() {
+        let data = br#"xx{"Suits":[{"a":{"b":1}},{"c":2}],"SubscribedToEmails""#;
+        let marker = data.windows(20)
+            .position(|w| w == b"\"SubscribedToEmails\"")
+            .expect("the marker is in the fixture");
+        assert_eq!(enclosing_object_start(data, marker), Some(2));
+    }
+
+    /// Every brace ahead of the marker closes again, so picking the first `{`
+    /// it passes would seed outside the blob.
+    #[test]
+    fn no_enclosing_brace_reports_none() {
+        let data = br#"{"a":{"b":1}} "SubscribedToEmails""#;
+        let marker = data.windows(20)
+            .position(|w| w == b"\"SubscribedToEmails\"")
+            .expect("the marker is in the fixture");
+        assert_eq!(enclosing_object_start(data, marker), None);
+    }
+
+    /// The caller slices with the offset, so it has to stay in bounds even when
+    /// there is nothing to seed from.
+    #[test]
+    fn a_buffer_without_any_marker_yields_an_in_bounds_seed() {
+        let data = b"no json here at all";
+        let (marker_at, seed_at) = blob_seed_offsets(data);
+        assert!(marker_at < data.len() && seed_at < data.len());
+    }
+}
