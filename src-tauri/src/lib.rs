@@ -2076,6 +2076,85 @@ fn parse_stat_groups(s: &str) -> Vec<Vec<String>> {
     all
 }
 
+/// Rejoin a riven card's OCR text into one line per stat.
+///
+/// A stat starts with `+<digit>`, `-<digit>` or `x<digit>`; the digit matters
+/// because the card's dividers arrive as bare signs. Long names wrap onto a
+/// second line ("+22.2% Magazine" / "Capacity"), so a following line is normally
+/// the tail of the stat above it.
+///
+/// The border, rank pips and element icons also arrive as short punctuation
+/// (`_`, `;`, `==`, `¢ Y`). Gluing those into a name breaks the lookup
+/// ("Magazine _ Capacity"), so a continuation has to read as a word: three or
+/// more letters, which also excludes the "MR11" rank label. Trailing debris is
+/// left alone, since the lookup matches on substrings.
+fn join_wrapped_stat_lines(text: &str) -> Vec<String> {
+    let mut joined: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    for line in text.lines() {
+        // Artwork bleed puts stray glyphs in front of a sign ("v & -34.3%
+        // Critical Chance"), hiding it so the stat joins upward and two are lost.
+        // Trim only a short prefix carrying no word of its own: "Re-1oad Speed"
+        // is a wrapped name, and "MR-1" would become a stat the card never had.
+        // Counted in chars, not bytes, since this is where multi-byte glyphs land.
+        let l = line.trim();
+        let l = match l.find(['+', '-', 'x', 'X']) {
+            Some(at) if at > 0
+                && l[..at].chars().count() <= 4
+                && !l[..at].ends_with(|c: char| c.is_alphanumeric())
+                && l[at + 1..].starts_with(|c: char| c.is_ascii_digit())
+                && l[..at].chars().filter(|c| c.is_alphabetic()).count() <= 2
+                => &l[at..],
+            _ => l,
+        };
+        if l.is_empty() { continue; }
+        let ll = l.to_lowercase();
+        // OCR sometimes misreads '+' as '•', '·', or similar bullet chars
+        let first_char = l.chars().next().unwrap_or(' ');
+        let is_ocr_plus = "•·○●◦".contains(first_char)
+            && l.len() > 1
+            && l.chars().nth(1).map_or(false, |c| c.is_ascii_digit());
+        // A sign alone is not a stat: dividers come through as bare "-" lines,
+        // which invented a negative stat on every card. Require a digit behind it.
+        let is_signed_value = (l.starts_with('+') || l.starts_with('-'))
+            && l[1..].trim_start().starts_with(|c: char| c.is_ascii_digit());
+        let is_stat_start = is_signed_value
+            || (ll.starts_with('x') && l.len() > 2 && l.chars().nth(1).map_or(false, |c| c.is_ascii_digit()))
+            || is_ocr_plus;
+        // "Damage to Grineer/Corpus/Infested" arrives unprefixed when the OCR
+        // drops the leading "x0.88" multiplier.
+        let is_orphan_stat = ll.starts_with("damage to grineer")
+            || ll.starts_with("damage to corpus")
+            || ll.starts_with("damage to infested");
+        // "kuva" comes off the weapon-name filter below but stays here: a reroll
+        // comparison screen stacks two cards, so the lower card's title follows
+        // the upper card's stats with nothing between, and a title reads as a word.
+        // TODO: only Kuva titles are caught. "Boltor Conci-" still glues, which
+        // needs a title recognised as a title rather than another word on a list.
+        let is_ui_noise = ll.contains("fits in") || ll.starts_with("mr ")
+            || ll.contains("inventory") || ll.contains("cycle")
+            || ll.contains("kuva") || ll.contains("remaining")
+            || ll.contains("show ranked") || ll.contains("cancel");
+        let reads_as_a_word = l.chars().filter(|c| c.is_alphabetic()).count() >= 3;
+        if is_stat_start {
+            if let Some(prev) = pending.take() { joined.push(prev); }
+            pending = Some(l.to_string());
+        } else if is_orphan_stat {
+            if let Some(prev) = pending.take() { joined.push(prev); }
+            joined.push(format!("+?% {}", l));
+        } else if is_ui_noise {
+            if let Some(prev) = pending.take() { joined.push(prev); }
+        } else if reads_as_a_word {
+            if let Some(ref mut prev) = pending {
+                prev.push(' ');
+                prev.push_str(l);
+            }
+        }
+    }
+    if let Some(prev) = pending { joined.push(prev); }
+    joined
+}
+
 /// Flat dedup list of all stats across all groups — kept for backwards compat where needed.
 fn parse_riven_stat_str(s: &str) -> Vec<String> {
     let mut result = Vec::new();
@@ -2517,8 +2596,11 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
                 .find_map(|l| {
                     let lt = l.trim().to_lowercase();
                     if lt.is_empty() { return None; }
-                    // Skip obvious UI noise
-                    if lt.contains("fits in") || lt.contains("cycle") || lt.contains("kuva")
+                    // Skip UI noise. "kuva" is deliberately absent: it prefixes a
+                    // whole weapon family, so skipping it lost the name of every
+                    // Kuva riven. "Remaining Kuva 102,773" is already caught by
+                    // "remaining" and the currency-value rules below.
+                    if lt.contains("fits in") || lt.contains("cycle")
                     || lt.contains("mr ") || lt.contains("inventory") || lt.contains("mods")
                     || lt.contains("remaining") || lt.contains("show ranked") || lt.contains("cancel")
                     || lt.starts_with('+') || lt.starts_with('-') || lt.starts_with('x')
@@ -2534,50 +2616,7 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         })
         .unwrap_or_default();
 
-    // Pre-process: join continuation lines onto their stat.
-    // Stat lines start with +, -, or x<digit>. Any other non-empty line that follows
-    // a stat line is treated as a wrapped continuation of that stat's name.
-    // Exception: UI text like "FITS IN", "MR N", "INVENTORY" is not a continuation.
-    let mut joined: Vec<String> = Vec::new();
-    {
-        let mut pending: Option<String> = None;
-        for line in parse_text.lines() {
-            let l = line.trim();
-            if l.is_empty() { continue; }
-            let ll = l.to_lowercase();
-            // OCR sometimes misreads '+' as '•', '·', or similar bullet chars
-            let first_char = l.chars().next().unwrap_or(' ');
-            let is_ocr_plus = "•·○●◦".contains(first_char)
-                && l.len() > 1
-                && l.chars().nth(1).map_or(false, |c| c.is_ascii_digit());
-            let is_stat_start = l.starts_with('+') || l.starts_with('-')
-                || (ll.starts_with('x') && l.len() > 2 && l.chars().nth(1).map_or(false, |c| c.is_ascii_digit()))
-                || is_ocr_plus;
-            // "Damage to Grineer/Corpus/Infested" can appear without prefix when OCR drops the
-            // leading "x0.88" multiplier value — treat as standalone stat with unknown value.
-            let is_orphan_stat = ll.starts_with("damage to grineer")
-                || ll.starts_with("damage to corpus")
-                || ll.starts_with("damage to infested");
-            let is_ui_noise = ll.contains("fits in") || ll.starts_with("mr ")
-                || ll.contains("inventory") || ll.contains("cycle")
-                || ll.contains("kuva") || ll.contains("remaining")
-                || ll.contains("show ranked") || ll.contains("cancel");
-            if is_stat_start {
-                if let Some(prev) = pending.take() { joined.push(prev); }
-                pending = Some(l.to_string());
-            } else if is_orphan_stat {
-                // OCR dropped the x-multiplier prefix — synthesise a stat line with unknown value
-                if let Some(prev) = pending.take() { joined.push(prev); }
-                joined.push(format!("+?% {}", l)); // value unknown but stat name preserved
-            } else if is_ui_noise {
-                if let Some(prev) = pending.take() { joined.push(prev); }
-            } else if let Some(ref mut prev) = pending {
-                prev.push(' ');
-                prev.push_str(l);
-            }
-        }
-        if let Some(prev) = pending { joined.push(prev); }
-    }
+    let joined = join_wrapped_stat_lines(parse_text);
 
     // Parse stat lines and collect rolled_stats (name + formatted value for display).
     let mut positives: Vec<String> = Vec::new();
@@ -2618,7 +2657,7 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         // Must explicitly check for '%' first — split('%').next() returns Some(whole_string)
         // even when no '%' is present, which would produce "+51 'Toxin%" for element stats.
         let pct_val = if stat_part.starts_with("?%") {
-            // Synthesised from orphan stat — OCR dropped the x-multiplier value
+            // Synthesised from an orphan stat whose x-multiplier the OCR dropped
             "x?".to_string()
         } else if stat_part.contains('%') {
             let n = stat_part.split('%').next().unwrap_or("").trim();
@@ -8589,4 +8628,163 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verbatim OCR for the right-hand card of a reroll comparison screen (Kuva
+    /// Bramma, 3840×2160), border and rank pips included as punctuation.
+    const KUVA_BRAMMA_CARD_OCR: &str = "\
+Kuva Bramma Lexi-
+==
+fevatin
+;
+-
++1.4 Punch Through
+;
++22.2% Magazine
+_
+Capacity
+-
+-
+\"
++23.6% Reload Speed ¢ Y
+MR11
+K Y
+S
+e
+";
+
+    #[test]
+    fn wrapped_stat_names_rejoin_without_the_card_border() {
+        let joined = join_wrapped_stat_lines(KUVA_BRAMMA_CARD_OCR);
+        assert_eq!(
+            joined,
+            vec![
+                "+1.4 Punch Through",
+                // Wrapped across two lines with a border fragment between the halves.
+                "+22.2% Magazine Capacity",
+                // Trailing "¢ Y" is part of the line, so it survives; "MR11" does not.
+                "+23.6% Reload Speed ¢ Y",
+            ]
+        );
+
+        // All three still resolve. Trailing debris is fine, debris *inside* a
+        // name ("Magazine _ Capacity") is not.
+        assert_eq!(ocr_stat_to_full_with_condition("Magazine Capacity"), "Magazine Size");
+        assert_eq!(ocr_stat_to_full_with_condition("Reload Speed ¢ Y"), "Reload Speed");
+        assert_eq!(ocr_stat_to_full_with_condition("Punch Through"), "Punch Through");
+    }
+
+    /// Both cards of a Kuva Nukor reroll screen. The left card's artwork puts
+    /// stray glyphs in front of a sign, and its "Magazine Capacity" wraps.
+    #[test]
+    fn stats_survive_glyphs_in_front_of_the_sign() {
+        let joined = join_wrapped_stat_lines("\
+Nukor Mantitin
+)
++30.9% Magazine
+Capacity
+x1.29 Damage to Corpus P
+v & -34.3% Critical Chance
+H
+O\\
+M
+");
+        assert_eq!(
+            joined,
+            vec![
+                "+30.9% Magazine Capacity",
+                "x1.29 Damage to Corpus P",
+                // Without the prefix trim this line joined onto the multiplier
+                // above it, losing both stats in one go.
+                "-34.3% Critical Chance",
+            ]
+        );
+
+        // The new roll, whose only oddity is the element icon read as "W".
+        let joined = join_wrapped_stat_lines("\
+\\ukor Crita-hexapha
++76.6% Critical Chance
+;
++43.3% Status Chance
++39.9% W Heat
+p
+-74.7% Damage
+g
+MR13
+X N,
+");
+        assert_eq!(
+            joined,
+            vec![
+                "+76.6% Critical Chance",
+                "+43.3% Status Chance",
+                "+39.9% W Heat",
+                "-74.7% Damage",
+            ]
+        );
+        // Constructed, from the multi-byte glyphs this OCR emits elsewhere on the
+        // card: four characters but six bytes, so a byte bound would leave it.
+        assert_eq!(
+            join_wrapped_stat_lines("x1.29 Damage to Corpus P\n¢ ¥ -34.3% Critical Chance\n"),
+            vec!["x1.29 Damage to Corpus P", "-34.3% Critical Chance"]
+        );
+
+        assert_eq!(ocr_stat_to_full_with_condition("W Heat"), "Heat");
+        assert_eq!(ocr_stat_to_full_with_condition("Damage to Corpus P"), "Damage to Corpus");
+    }
+
+    /// The trim that rescues a stat could also destroy one, so it is bounded from
+    /// both sides: reach the multiplier in either case, stop at anything wordlike.
+    #[test]
+    fn debris_trimming_stops_at_a_word_boundary() {
+        // The multiplier is matched case-insensitively elsewhere, so debris in
+        // front of a capital "X" has to be trimmed too.
+        assert_eq!(
+            join_wrapped_stat_lines("+50% Critical Chance\nv & X1.29 Damage to Corpus\n"),
+            vec!["+50% Critical Chance", "X1.29 Damage to Corpus"]
+        );
+
+        // A sign glued to a word is part of it: this is a name wrapping
+        // mid-hyphen, and trimming would leave "-1oad Speed".
+        assert_eq!(
+            join_wrapped_stat_lines("+50% Critical Chance\nRe-1oad Speed\n"),
+            vec!["+50% Critical Chance Re-1oad Speed"]
+        );
+
+        // The rank label would otherwise trim into "-1" and read as a curse.
+        assert_eq!(
+            join_wrapped_stat_lines("+50% Critical Chance\nMR-1\n"),
+            vec!["+50% Critical Chance"]
+        );
+    }
+
+    /// Titles must not glue onto a stat, and a negative stat is a real curse
+    /// rather than junk. The second title is the one that matters: it follows the
+    /// card above with no blank line, and is what the "kuva" noise rule holds back.
+    #[test]
+    fn stat_joining_keeps_curses_and_drops_the_mod_name() {
+        let joined = join_wrapped_stat_lines("\
+Kuva Bramma Conci-
+satitio
++50.3% Electricity
++57% Projectile Speed
++52.4% Multishot
+-25.4% Ammo Maximum
+Kuva Bramma Lexi-
+MR 11
+");
+        assert_eq!(
+            joined,
+            vec![
+                "+50.3% Electricity",
+                "+57% Projectile Speed",
+                "+52.4% Multishot",
+                "-25.4% Ammo Maximum",
+            ]
+        );
+    }
 }
