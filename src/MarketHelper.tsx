@@ -176,15 +176,17 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
           {!isComplete && <span className="mset-badge mset-parts">{ownedCount}/{parts.length}</span>}
           {hasDupes && <span className="mset-badge mset-dupes">+ Dupes</span>}
         </div>
+        {/* Prices are re-fetched periodically, so testing `loading` before the
+            value blanks a known price back to "…" on every refresh. */}
         <div className="market-set-price-box">
-          {setPriceLoading ? (
-            <span className="market-price-spin">…</span>
-          ) : setPrice?.sell_median ? (
+          {setPrice?.sell_median ? (
             <div className="market-set-price">
               <PlatIcon size={16} />
               <span className="market-price-big">{fmtPt(setPrice.sell_median)}</span>
               <span className="market-price-lbl">set</span>
             </div>
+          ) : setPriceLoading ? (
+            <span className="market-price-spin">…</span>
           ) : pricesFetched ? (
             <span className="market-price-na">—</span>
           ) : null}
@@ -208,7 +210,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
               <span className="mpart-sep">/</span>
               <PlatIcon size={12} />
               <span className="mpart-plat-val">
-                {part.loading ? "…" : part.sellMedian ? fmtPt(part.sellMedian) : "—"}
+                {part.sellMedian ? fmtPt(part.sellMedian) : part.loading ? "…" : "—"}
               </span>
               <span className="mpart-sep">/</span>
               <span className="mpart-name">{partLabel(part.item.name, setKey)}</span>
