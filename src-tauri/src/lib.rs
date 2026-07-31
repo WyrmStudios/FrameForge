@@ -1745,11 +1745,10 @@ async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>
 }
 
 /// Save the WFM access token to Windows Credential Manager (encrypted by the OS).
-/// Stored under "FrameForge_WFM" — username field = "token", password = JWT value.
+/// Stored under "FrameForge_WFM" — username field = the email, blob = the token.
 #[tauri::command]
 #[cfg(target_os = "windows")]
-fn wfm_save_credentials(email: String, password: String) -> Result<(), String> {
-    let _ = email; // kept for API compatibility; we save the JWT passed as password
+fn wfm_save_credentials(email: String, token: String) -> Result<(), String> {
     use windows_sys::Win32::Security::Credentials::{
         CredWriteW, CREDENTIALW, CRED_TYPE_GENERIC, CRED_PERSIST_LOCAL_MACHINE,
     };
@@ -1758,7 +1757,7 @@ fn wfm_save_credentials(email: String, password: String) -> Result<(), String> {
 
     let target: Vec<u16> = OsStr::new("FrameForge_WFM").encode_wide().chain(Some(0)).collect();
     let user:   Vec<u16> = OsStr::new(&email).encode_wide().chain(Some(0)).collect();
-    let pass_bytes = password.as_bytes();
+    let token_bytes = token.as_bytes();
 
     let cred = CREDENTIALW {
         Flags: 0,
@@ -1766,8 +1765,8 @@ fn wfm_save_credentials(email: String, password: String) -> Result<(), String> {
         TargetName: target.as_ptr() as *mut _,
         Comment: std::ptr::null_mut(),
         LastWritten: unsafe { std::mem::zeroed() },
-        CredentialBlobSize: pass_bytes.len() as u32,
-        CredentialBlob: pass_bytes.as_ptr() as *mut _,
+        CredentialBlobSize: token_bytes.len() as u32,
+        CredentialBlob: token_bytes.as_ptr() as *mut _,
         Persist: CRED_PERSIST_LOCAL_MACHINE,
         AttributeCount: 0,
         Attributes: std::ptr::null_mut(),
@@ -1802,19 +1801,22 @@ fn wfm_load_credentials() -> Result<Option<(String, String)>, String> {
             String::from_utf16_lossy(slice::from_raw_parts(ptr, len))
         }
     };
-    let password = unsafe {
+    let token = unsafe {
         if cred.CredentialBlob.is_null() || cred.CredentialBlobSize == 0 { String::new() } else {
             String::from_utf8_lossy(slice::from_raw_parts(cred.CredentialBlob, cred.CredentialBlobSize as usize)).to_string()
         }
     };
     unsafe { CredFree(cred_ptr as *mut _); }
-    Ok(Some((email, password)))
+    Ok(Some((email, token)))
 }
 
 /// Delete saved WFM credentials from Windows Credential Manager.
+///
+/// Async only so that every platform's delete has one shape for `wfm_logout` to
+/// await; `CredDeleteW` itself returns immediately and never prompts.
 #[tauri::command]
 #[cfg(target_os = "windows")]
-fn wfm_delete_credentials() -> Result<(), String> {
+async fn wfm_delete_credentials() -> Result<(), String> {
     use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
@@ -1830,9 +1832,11 @@ fn wfm_delete_credentials() -> Result<(), String> {
 /// appear not to have happened. The delete sits here rather than at the call
 /// site so every route to a logout inherits it.
 #[tauri::command]
-fn wfm_logout(state: State<AppState>) -> Result<(), String> {
+async fn wfm_logout(state: State<'_, AppState>) -> Result<(), String> {
+    // Binding the guard to a name would hold a std mutex across the await below
+    // and make the future non-Send.
     *state.wfm_session.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    wfm_delete_credentials()
+    wfm_delete_credentials().await
 }
 
 /// Return (username, status) for the current session, or None if not logged in.

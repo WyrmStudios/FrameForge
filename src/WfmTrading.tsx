@@ -123,7 +123,7 @@ function LoginPanel({ onLogin }: { onLogin: (u: string) => void }) {
       const username = await invoke<string>("wfm_login", { email, password });
       if (remember) {
         const tokenJson = await invoke<string | null>("wfm_get_jwt").catch(() => null);
-        if (tokenJson) invoke("wfm_save_credentials", { email, password: tokenJson }).catch(() => {});
+        if (tokenJson) invoke("wfm_save_credentials", { email, token: tokenJson }).catch(() => {});
       }
       onLogin(username);
     } catch (e) { setError(String(e)); setLoading(false); }
@@ -905,9 +905,12 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
         if (creds) {
           try {
             [resolvedUser] = await invoke<[string, string]>("wfm_set_jwt", { jwt: creds[1] });
-            // Re-save with any newly-fetched CSRF token so it persists across restarts
+            // Re-save with any newly-fetched CSRF token so it persists across
+            // restarts, under the same email it was stored with. Failing here
+            // is not worth reporting: nobody asked for it, and the token
+            // already on disk still works.
             const tokenJson = await invoke<string | null>("wfm_get_jwt").catch(() => null);
-            if (tokenJson) await invoke("wfm_save_credentials", { email: "token", password: tokenJson }).catch(() => {});
+            if (tokenJson) await invoke("wfm_save_credentials", { email: creds[0], token: tokenJson }).catch(() => {});
           } catch { /* token expired — show login form */ }
         }
       }
