@@ -1824,9 +1824,15 @@ fn wfm_delete_credentials() -> Result<(), String> {
 }
 
 /// Clear the stored WFM session.
+///
+/// A saved token outlives the in-memory session: the next launch restores it
+/// before the user sees anything, so a logout that only cleared memory would
+/// appear not to have happened. The delete sits here rather than at the call
+/// site so every route to a logout inherits it.
 #[tauri::command]
-fn wfm_logout(state: State<AppState>) {
+fn wfm_logout(state: State<AppState>) -> Result<(), String> {
     *state.wfm_session.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    wfm_delete_credentials()
 }
 
 /// Return (username, status) for the current session, or None if not logged in.
