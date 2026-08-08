@@ -6,10 +6,12 @@ use std::sync::{Arc, Mutex};
 
 /// Write `data` to `path` atomically: write to a `.tmp` sibling, then rename over the target.
 /// Prevents zero-byte corruption if the process or OS crashes mid-write.
-fn atomic_write(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 fn truncate_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
@@ -4210,20 +4212,41 @@ fn load_settings(state: State<AppState>) -> String {
     std::fs::read_to_string(&state.settings_path).unwrap_or_default()
 }
 
+// settings.json is written from several threads (the save_settings command,
+// window-event handlers on every move/resize). Every writer must go through
+// merge_settings; an unserialized or non-atomic write used to tear the file
+// and wipe all settings on the next merge.
+static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn read_settings_map(path: &std::path::Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let raw = std::fs::read_to_string(path).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(serde_json::Map::new());
+    }
+    match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(serde_json::Value::Object(m)) => Ok(m),
+        _ => Err(format!("{} exists but is not a valid JSON object; refusing to overwrite it", path.display())),
+    }
+}
+
+fn merge_settings(path: &std::path::Path, apply: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Result<(), String> {
+    // Poison recovery is safe: the lock guards the file, not the map, and a
+    // panicking closure bails before the write, leaving the file untouched.
+    let _guard = SETTINGS_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = read_settings_map(path)?;
+    apply(&mut map);
+    atomic_write(path, serde_json::Value::Object(map).to_string().as_bytes()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, state: State<AppState>, json: String) -> Result<(), String> {
     // Merge over existing file so geometry fields written by save_window_state are never erased
     let new_vals: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    let mut existing: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&state.settings_path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| if let serde_json::Value::Object(m) = v { Some(m) } else { None })
-        .unwrap_or_default();
-    if let serde_json::Value::Object(new_map) = new_vals {
-        for (k, v) in new_map { existing.insert(k, v); }
-    }
-    std::fs::write(&state.settings_path, serde_json::Value::Object(existing).to_string())
-        .map_err(|e| e.to_string())?;
+    merge_settings(&state.settings_path, |existing| {
+        if let serde_json::Value::Object(new_map) = new_vals {
+            for (k, v) in new_map { existing.insert(k, v); }
+        }
+    })?;
     app.emit("settings-updated", ()).ok();
     Ok(())
 }
@@ -8181,43 +8204,33 @@ fn save_window_state(window: &tauri::WebviewWindow, settings_path: &std::path::P
     let pos  = window.outer_position().ok();
     let size = window.outer_size().ok();
 
-    let mut map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(settings_path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| if let serde_json::Value::Object(m) = v { Some(m) } else { None })
-        .unwrap_or_default();
-
-    map.insert(format!("{}Maximized", prefix), maximized.into());
-    // Only overwrite position/size when not maximised/minimised.
-    // Also guard against the Windows minimized sentinel (-32000,-32000) and dummy size (160×28)
-    // which can slip through when is_minimized() is unreliable at CloseRequested time.
-    if !maximized && !minimized {
-        if let Some(p) = pos {
-            if p.x > -10_000 && p.y > -10_000 {
-                map.insert(format!("{}X", prefix), p.x.into());
-                map.insert(format!("{}Y", prefix), p.y.into());
+    let result = merge_settings(settings_path, |map| {
+        map.insert(format!("{}Maximized", prefix), maximized.into());
+        // Only overwrite position/size when not maximised/minimised.
+        // Also guard against the Windows minimized sentinel (-32000,-32000) and dummy size (160×28)
+        // which can slip through when is_minimized() is unreliable at CloseRequested time.
+        if !maximized && !minimized {
+            if let Some(p) = pos {
+                if p.x > -10_000 && p.y > -10_000 {
+                    map.insert(format!("{}X", prefix), p.x.into());
+                    map.insert(format!("{}Y", prefix), p.y.into());
+                }
+            }
+            if let Some(s) = size {
+                if s.width >= 100 && s.height >= 50 {
+                    map.insert(format!("{}Width",  prefix), (s.width  as i64).into());
+                    map.insert(format!("{}Height", prefix), (s.height as i64).into());
+                }
             }
         }
-        if let Some(s) = size {
-            if s.width >= 100 && s.height >= 50 {
-                map.insert(format!("{}Width",  prefix), (s.width  as i64).into());
-                map.insert(format!("{}Height", prefix), (s.height as i64).into());
-            }
-        }
+    });
+    if let Err(e) = result {
+        eprintln!("warning: not saving window state: {e}");
     }
-
-    let _ = std::fs::write(settings_path, serde_json::Value::Object(map).to_string());
 }
 
 fn restore_window_state(app: &tauri::AppHandle, window: &tauri::WebviewWindow, settings_path: &std::path::Path, prefix: &str, min_w: u32, min_h: u32) {
-    let json = match std::fs::read_to_string(settings_path) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let map = match serde_json::from_str::<serde_json::Value>(&json) {
-        Ok(serde_json::Value::Object(m)) => m,
-        _ => return,
-    };
+    let Ok(map) = read_settings_map(settings_path) else { return };
 
     let maximized = map.get(&format!("{}Maximized", prefix)).and_then(|v| v.as_bool()).unwrap_or(false);
     if maximized {
@@ -8670,6 +8683,96 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod settings_merge_tests {
+    use super::{merge_settings, read_settings_map};
+    use std::path::PathBuf;
+
+    /// Each test gets its own file so they can run in parallel.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("frameforge-settings-tests");
+        std::fs::create_dir_all(&dir).expect("temp dir is always writable");
+        let path = dir.join(format!("{name}.json"));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    /// A truncated settings.json (crash or app kill mid-write, e.g. during an
+    /// update) used to parse as "no settings", and the next merge rewrote the
+    /// file from an empty map, wiping tracked and favorites. A file that
+    /// exists but does not parse must be left exactly as it is.
+    #[test]
+    fn a_corrupt_settings_file_is_never_replaced() {
+        let path = scratch("corrupt");
+        let truncated = r#"{"tracked":["/Lotus/Weapons/Boar"],"favorites":["/Lo"#;
+        std::fs::write(&path, truncated).expect("scratch file is writable");
+
+        let result = merge_settings(&path, |map| {
+            map.insert("windowX".into(), 10.into());
+        });
+
+        assert!(result.is_err(), "merging over an unparseable file must refuse, not wipe");
+        let after = std::fs::read_to_string(&path).expect("file still exists");
+        assert_eq!(after, truncated, "the corrupt file must be preserved for recovery");
+    }
+
+    /// A missing or empty file is an ordinary first launch, not corruption.
+    #[test]
+    fn a_missing_or_empty_file_is_a_fresh_start() {
+        let path = scratch("fresh");
+        assert!(read_settings_map(&path).expect("missing file is fine").is_empty());
+        std::fs::write(&path, "").expect("scratch file is writable");
+        assert!(read_settings_map(&path).expect("empty file is fine").is_empty());
+        merge_settings(&path, |map| {
+            map.insert("tracked".into(), serde_json::json!(["a"]));
+        })
+        .expect("merging into a fresh file succeeds");
+    }
+
+    #[test]
+    fn merging_preserves_unrelated_keys() {
+        let path = scratch("preserve");
+        std::fs::write(&path, r#"{"tracked":["a"],"favorites":["b"]}"#).expect("scratch file is writable");
+        merge_settings(&path, |map| {
+            map.insert("windowX".into(), 42.into());
+        })
+        .expect("merge succeeds");
+        let map = read_settings_map(&path).expect("file parses");
+        assert_eq!(map["tracked"], serde_json::json!(["a"]));
+        assert_eq!(map["favorites"], serde_json::json!(["b"]));
+        assert_eq!(map["windowX"], serde_json::json!(42));
+    }
+
+    /// save_window_state fires on every window move while save_settings runs on
+    /// the command thread. Unserialized, one writer read the file mid-truncate
+    /// of the other and resurrected a stale or empty map.
+    #[test]
+    fn concurrent_merges_do_not_lose_keys() {
+        let path = scratch("concurrent");
+        std::fs::write(&path, r#"{"tracked":["a"]}"#).expect("scratch file is writable");
+        std::thread::scope(|s| {
+            for t in 0..8 {
+                let path = &path;
+                s.spawn(move || {
+                    for i in 0..25 {
+                        merge_settings(path, |map| {
+                            map.insert(format!("k{t}_{i}"), i.into());
+                        })
+                        .expect("merge never fails on a valid file");
+                    }
+                });
+            }
+        });
+        let map = read_settings_map(&path).expect("file parses after the storm");
+        assert_eq!(map["tracked"], serde_json::json!(["a"]));
+        for t in 0..8 {
+            for i in 0..25 {
+                assert!(map.contains_key(&format!("k{t}_{i}")), "lost k{t}_{i}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

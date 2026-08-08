@@ -268,9 +268,11 @@ function ModularWindowPage() {
   }, [catalog, quantities]);
   const [sectionOrder, setSectionOrder] = useState<string[]>(["tracking", "favorites", "timers", "fissures"]);
 
+  const popoutSettingsLoadedRef = useRef(false);
   useEffect(() => {
     invoke<string>("load_settings").then(json => {
-      if (!json) return;
+      // A missing file is a first launch and safe to write to.
+      if (!json) { popoutSettingsLoadedRef.current = true; return; }
       try {
         const s = JSON.parse(json);
         if (Array.isArray(s.tracked)) setTracked(s.tracked);
@@ -284,6 +286,9 @@ function ModularWindowPage() {
           setSectionOrder(order);
         }
       } catch {}
+      // Unblock saving even if the file failed to parse, since the backend
+      // refuses to overwrite a settings.json that is not a valid JSON object.
+      popoutSettingsLoadedRef.current = true;
     }).catch(() => {});
     invoke<CatalogItem[]>("get_all_items").then(setCatalog).catch(() => {});
     invoke<Record<string, number>>("get_current_quantities").then(setQuantities).catch(() => {});
@@ -314,6 +319,10 @@ function ModularWindowPage() {
   }, []);
 
   const saveModularSettings = useCallback((patch: object) => {
+    if (!popoutSettingsLoadedRef.current) {
+      console.error("save_settings skipped: settings not loaded yet in pop-out");
+      return;
+    }
     invoke("save_settings", { json: JSON.stringify(patch) }).catch((e) => {
       console.error("save_settings failed:", e);
     });
@@ -820,6 +829,13 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins };
 
   const saveAllSettings = useCallback(() => {
+    // Until the on-disk settings have been applied, settingsRef still holds
+    // the defaults (tracked/favorites empty). Saving the full object at that
+    // point would overwrite the user's file with those defaults, so refuse.
+    if (!settingsLoadedRef.current) {
+      console.error("save_settings skipped: settings not loaded yet, saving now would clobber the file");
+      return;
+    }
     invoke("save_settings", { json: JSON.stringify(settingsRef.current) }).catch((e) => {
       console.error("save_settings failed:", e);
     });
@@ -930,7 +946,8 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
 
     // Load user settings from file — survives reinstalls unlike localStorage
     invoke<string>("load_settings").then(json => {
-      if (!json) return;
+      // A missing file is a first launch: nothing to clobber, saving is safe.
+      if (!json) { settingsLoadedRef.current = true; return; }
       try {
         const s = JSON.parse(json);
         // companionApiEnabled intentionally not loaded — feature suspended pending DE clarification
@@ -981,8 +998,10 @@ if (typeof s.autoDiagEnabled === "boolean") {
         if (typeof s.wfmInvisibleOnClose === "boolean") { setWfmInvisibleOnClose(s.wfmInvisibleOnClose); wfmInvisibleOnCloseRef.current = s.wfmInvisibleOnClose; }
         if (typeof s.wfmAutoInvisible    === "boolean") setWfmAutoInvisible(s.wfmAutoInvisible);
         if (typeof s.wfmAutoInvisibleMins === "number") setWfmAutoInvisibleMins(s.wfmAutoInvisibleMins);
-        settingsLoadedRef.current = true;
       } catch {}
+      // Unblock saving even if the file failed to parse, since the backend
+      // refuses to overwrite a settings.json that is not a valid JSON object.
+      settingsLoadedRef.current = true;
     }).catch(() => {});
 
     invoke<string>("get_system_locale").then(loc => { if (loc) setSystemLocale(loc); }).catch(() => {});
