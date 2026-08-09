@@ -825,11 +825,35 @@ static LAST_BLOB_REGION: std::sync::atomic::AtomicU64 =
 // HashMaps/Vecs from scratch every cycle.
 static LAST_BLOB_DIGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+#[cfg(target_os = "windows")]
+enum CachedBlobScan {
+    Fresh(usize, BlobInventory),
+    Unchanged,
+}
+
+/// Set once the probe has reported that nothing changed, cleared as soon as
+/// anything does. Probes run every couple of seconds and nearly all of them
+/// find byte-identical JSON, so logging each one drowns out the rest of the
+/// log. Only the transition into that state is logged.
+static STEADY_STATE_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn steady_state_notice_due() -> bool {
+    !STEADY_STATE_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a previous scan left an address for the probe to re-read. Without
+/// one the probe can only ever miss, so the caller must walk instead.
+pub fn has_cached_blob() -> bool {
+    LAST_BLOB_REGION.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
 /// Clear the fast-path region cache. Call when Warframe's PID changes so the
 /// next scan doesn't probe a stale address from the previous process instance.
 pub fn reset_last_blob_region() {
     LAST_BLOB_REGION.store(0, std::sync::atomic::Ordering::Relaxed);
     LAST_BLOB_DIGEST.store(0, std::sync::atomic::Ordering::Relaxed);
+    STEADY_STATE_LOGGED.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Discard the digest baseline so the next candidate is parsed no matter what
@@ -866,7 +890,13 @@ fn blob_unchanged(json: &[u8]) -> bool {
     // reset_last_blob_region stores — that sentinel must always compare as
     // "changed" to force a re-parse after a PID change.
     let digest = hasher.finish() | 1;
-    LAST_BLOB_DIGEST.swap(digest, std::sync::atomic::Ordering::Relaxed) == digest
+    let unchanged = LAST_BLOB_DIGEST.swap(digest, std::sync::atomic::Ordering::Relaxed) == digest;
+    if !unchanged {
+        // Bytes moved, so the next settle into the steady state is worth
+        // saying out loud again.
+        STEADY_STATE_LOGGED.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    unchanged
 }
 
 /// Scans Warframe process memory for the FULL_ACCOUNT inventory blob and sends it
@@ -890,6 +920,113 @@ fn blob_unchanged(json: &[u8]) -> bool {
 ///      The walk always continues through all of memory — every blob start is found.
 ///   5. Drop any scan that grows past MAX_SCAN_BYTES without finding the end.
 ///
+// Shared by the cold walk and the cached-region fast path, so a region
+// rejected as a mission delta or a scan dropped for growing past the cap
+// means the same thing in either place.
+#[cfg(target_os = "windows")]
+const MAX_READ: usize = 64 * 1024 * 1024;
+#[cfg(target_os = "windows")]
+const MAX_SCAN: usize = 20 * 1024 * 1024;
+#[cfg(target_os = "windows")]
+const MISSION_DELTA: &[u8] = b"\"InventoryChanges\":";
+#[cfg(target_os = "windows")]
+const LOTUS_KEY: &[u8] = b"/Lotus/";
+#[cfg(target_os = "windows")]
+const ANCHORS: &[&[u8]] = &[
+    b"\"SubscribedToEmails\"",
+    b"\"MiscItems\":[",
+    b"\"Suits\":[",
+    b"\"LongGuns\":[",
+    b"\"Melee\":[",
+    b"\"Pistols\":[",
+];
+
+/// Re-read the blob straight from the address the last successful scan found
+/// it at, stitching forward through following regions until the JSON closes.
+///
+/// Returns `None` whenever anything looks different from last time, which puts
+/// the caller back on the full walk rather than reporting a stale inventory.
+#[cfg(target_os = "windows")]
+fn scan_windows_cached_blob(process: windows_sys::Win32::Foundation::HANDLE) -> Option<CachedBlobScan> {
+    use std::ffi::c_void;
+    use std::mem;
+    use windows_sys::Win32::System::{
+        Diagnostics::Debug::ReadProcessMemory,
+        Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS},
+    };
+
+    let cached_addr = LAST_BLOB_REGION.load(std::sync::atomic::Ordering::Relaxed) as usize;
+    if cached_addr == 0 {
+        return None;
+    }
+
+    let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
+    let ok = unsafe { VirtualQueryEx(process, cached_addr as *const c_void, &mut mbi,
+        mem::size_of::<MEMORY_BASIC_INFORMATION>()) } != 0;
+    if !ok || mbi.State != MEM_COMMIT
+        || mbi.Protect & PAGE_GUARD != 0
+        || mbi.Protect & PAGE_NOACCESS != 0
+    {
+        return None;
+    }
+
+    let read_cap = mbi.RegionSize.min(MAX_READ);
+    let mut buf = vec![0u8; read_cap];
+    let mut n = 0usize;
+    let read_ok = unsafe { ReadProcessMemory(process, cached_addr as *const c_void,
+        buf.as_mut_ptr() as *mut c_void, read_cap, &mut n) } != 0 && n >= 8;
+    if !read_ok {
+        return None;
+    }
+
+    buf.truncate(n);
+    let chunk = &buf[..];
+    let is_mission = memmem::find(chunk, MISSION_DELTA).is_some();
+    let has_anchor = ANCHORS.iter().any(|a| memmem::find(chunk, a).is_some());
+    let has_lotus  = memmem::find(chunk, LOTUS_KEY).is_some();
+    // cached_addr is the exact byte of the blob's outer {, so seed from byte 0.
+    // Accept regions that are blob data even when SubscribedToEmails is in a
+    // later region (field order varies by account).
+    if is_mission || !(has_anchor || has_lotus) || !chunk.starts_with(b"{\"") {
+        return None;
+    }
+
+    let mut stitched = buf;
+    let mut walk = cached_addr + n;
+    while stitched.len() < MAX_SCAN && find_blob_end(&stitched).is_none() {
+        let mut nmbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
+        if unsafe { VirtualQueryEx(process, walk as *const c_void, &mut nmbi,
+            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 { break; }
+        let nr = nmbi.BaseAddress as usize;
+        let ns = nmbi.RegionSize;
+        walk = nr + ns;
+        if nmbi.State != MEM_COMMIT
+            || nmbi.Protect & PAGE_GUARD != 0
+            || nmbi.Protect & PAGE_NOACCESS != 0
+            || ns == 0 { continue; }
+        let cap = ns.min(MAX_READ);
+        let mut nb = vec![0u8; cap];
+        let mut nn = 0usize;
+        if unsafe { ReadProcessMemory(process, nr as *const c_void,
+            nb.as_mut_ptr() as *mut c_void, cap, &mut nn) } == 0 { continue; }
+        stitched.extend_from_slice(&nb[..nn]);
+    }
+
+    if blob_unchanged(&stitched) {
+        if steady_state_notice_due() {
+            eprintln!("[blob] fast-path hit at 0x{cached_addr:012x}: unchanged since last scan, quiet until it changes");
+        }
+        return Some(CachedBlobScan::Unchanged);
+    }
+    match parse_full_account_blob(&stitched) {
+        Some(inventory) => Some(CachedBlobScan::Fresh(cached_addr, inventory)),
+        None => {
+            forget_blob_digest();
+            None
+        }
+    }
+}
+
 /// When `save=true` also writes the raw text to `blob_dir` for debugging.
 /// Returns the number of files written (always 0 when `save=false`).
 #[cfg(target_os = "windows")]
@@ -910,8 +1047,6 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
     if process == 0 { return 0; }
 
     const MIN_REGION:    usize = 64_000;   // skip regions smaller than 64 KB
-    const MAX_READ:      usize = 64  * 1024 * 1024;
-    const MAX_SCAN:      usize = 20  * 1024 * 1024;
     const MAX_BLOBS:     usize = 25;
 
     // Executable pages never contain heap data — safe to skip.
@@ -921,82 +1056,9 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
     const PAGE_EXECUTE_WC:   u32 = 0x80;
     const EXEC_MASK: u32 = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_RW | PAGE_EXECUTE_WC;
 
-    const MISSION_DELTA: &[u8] = b"\"InventoryChanges\":";
-    const LOTUS_KEY:     &[u8] = b"/Lotus/";
-    const ANCHORS: &[&[u8]] = &[
-        b"\"SubscribedToEmails\"",
-        b"\"MiscItems\":[",
-        b"\"Suits\":[",
-        b"\"LongGuns\":[",
-        b"\"Melee\":[",
-        b"\"Pistols\":[",
-    ];
-
-    // ── Fast path: try the cached region from last successful scan ─────────────
-    // If the blob is still at the same address, we skip the entire memory walk.
-    let cached_addr = LAST_BLOB_REGION.load(std::sync::atomic::Ordering::Relaxed) as usize;
-    if cached_addr != 0 && !save {
-        let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
-        let ok = unsafe { VirtualQueryEx(process, cached_addr as *const c_void, &mut mbi,
-            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } != 0;
-        if ok && mbi.State == MEM_COMMIT
-            && mbi.Protect & PAGE_GUARD == 0
-            && mbi.Protect & PAGE_NOACCESS == 0
-        {
-            let read_cap = mbi.RegionSize.min(MAX_READ);
-            let mut buf = vec![0u8; read_cap];
-            let mut n = 0usize;
-            let read_ok = unsafe { ReadProcessMemory(process, cached_addr as *const c_void,
-                buf.as_mut_ptr() as *mut c_void, read_cap, &mut n) } != 0 && n >= 8;
-            if read_ok {
-                let chunk = &buf[..n];
-                let is_mission = memmem::find(chunk, MISSION_DELTA).is_some();
-                let has_anchor = ANCHORS.iter().any(|a| memmem::find(chunk, a).is_some());
-                let has_lotus  = memmem::find(chunk, LOTUS_KEY).is_some();
-                // cached_addr is the exact byte of the blob's outer {, so seed from byte 0.
-                // Accept regions that are blob data even when SubscribedToEmails is in a
-                // later region (field order varies by account).
-                if !is_mission && (has_anchor || has_lotus) && chunk.starts_with(b"{\"") {
-                    let mut stitched = chunk.to_vec();
-                    let mut walk = cached_addr + n;
-                    while stitched.len() < MAX_SCAN && find_blob_end(&stitched).is_none() {
-                        let mut nmbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
-                        if unsafe { VirtualQueryEx(process, walk as *const c_void, &mut nmbi,
-                            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 { break; }
-                        let nr = nmbi.BaseAddress as usize;
-                        let ns = nmbi.RegionSize;
-                        walk = nr + ns;
-                        if nmbi.State != MEM_COMMIT
-                            || nmbi.Protect & PAGE_GUARD != 0
-                            || nmbi.Protect & PAGE_NOACCESS != 0
-                            || ns == 0 { continue; }
-                        let cap = ns.min(MAX_READ);
-                        let mut nb = vec![0u8; cap];
-                        let mut nn = 0usize;
-                        if unsafe { ReadProcessMemory(process, nr as *const c_void,
-                            nb.as_mut_ptr() as *mut c_void, cap, &mut nn) } == 0 { continue; }
-                        stitched.extend_from_slice(&nb[..nn]);
-                    }
-                    if blob_unchanged(&stitched) {
-                        eprintln!("[blob] fast-path hit at 0x{:012x}: unchanged since last scan — skipping parse", cached_addr);
-                        unsafe { CloseHandle(process); }
-                        return 0;
-                    }
-                    if let Some(inv) = parse_full_account_blob(&stitched) {
-                        eprintln!("[blob] fast-path hit at 0x{:012x}: {} unique, {} stackable",
-                            cached_addr, inv.unique_items.len(), inv.stackable_items.len());
-                        blob_tx.send(inv).ok();
-                        unsafe { CloseHandle(process); }
-                        return 0; // fast path never saves to disk
-                    }
-                    forget_blob_digest();
-                }
-            }
-        }
-        // Cache miss — fall through to full walk and update the cache when found
-        eprintln!("[blob] fast-path miss at 0x{:012x} — doing full walk", cached_addr);
-    }
-
+    // No fast path here on purpose: the monitor already ran that scan in
+    // `probe_tick` and escalated to this walk on the result, so repeating it
+    // would answer the same and skip the walk it asked for.
     struct ActiveScan {
         data: Vec<u8>,
         id: usize,
@@ -1249,6 +1311,334 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
 
 #[cfg(not(target_os = "windows"))]
 pub fn capture_all_blobs(_blob_dir: &std::path::Path, _ts: &str, _blob_tx: std::sync::mpsc::Sender<BlobInventory>, _save: bool) -> usize { 0 }
+
+// ─── Cheap probe ──────────────────────────────────────────────────────────────
+
+/// What a probe of the cached blob address concluded.
+///
+/// `Unchanged` and `Updated` are definitive answers obtained for a few
+/// megabytes of reads. `CacheMiss` is not: the game may have reallocated the
+/// blob because the inventory changed, or the address may be stale for some
+/// unrelated reason, and telling those apart costs a full region walk.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ScanOutcome {
+    Unchanged,
+    Updated,
+    CacheMiss,
+}
+
+/// Map a cached-region scan onto a probe outcome, sending any fresh inventory.
+#[cfg(target_os = "windows")]
+fn probe_outcome(
+    scan: Option<CachedBlobScan>,
+    blob_tx: &std::sync::mpsc::Sender<BlobInventory>,
+) -> ScanOutcome {
+    match scan {
+        Some(CachedBlobScan::Fresh(address, inventory)) => {
+            eprintln!("[blob] probe hit at 0x{address:012x}: {} unique, {} stackable",
+                inventory.unique_items.len(), inventory.stackable_items.len());
+            blob_tx.send(inventory).ok();
+            ScanOutcome::Updated
+        }
+        Some(CachedBlobScan::Unchanged) => ScanOutcome::Unchanged,
+        None => ScanOutcome::CacheMiss,
+    }
+}
+
+/// One monitor tick: re-read the blob from its remembered address, and check
+/// whether the game has logged an inventory sync since the last tick.
+///
+/// Never falls back to a full region walk. `capture_all_blobs` does that, which
+/// makes it unusable as a poll: probing at 1-2 Hz would mean walking memory at
+/// 1-2 Hz for as long as the cached address stays stale. Splitting the two lets
+/// the caller poll cheaply and decide for itself when a miss is worth the walk.
+///
+/// The marker is read first and every tick, because it is what tells the blob
+/// scan it has something to look at. The scan itself runs only when `force` or
+/// that marker says so; between syncs it can only ever conclude that nothing
+/// moved. `None` means it was not scanned this tick, which is not the same as
+/// a miss.
+#[cfg(target_os = "windows")]
+pub fn probe_tick(
+    pid: u32,
+    blob_tx: std::sync::mpsc::Sender<BlobInventory>,
+    force: bool,
+) -> (Option<ScanOutcome>, bool) {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, FALSE},
+        System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    };
+
+    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
+    if process == 0 {
+        return (None, false);
+    }
+    let sync = sync_marker_is_new(windows_newest_sync_timestamp(process));
+    let outcome = (force || sync)
+        .then(|| probe_outcome(scan_windows_cached_blob(process), &blob_tx));
+    unsafe { CloseHandle(process) };
+    (outcome, sync)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn probe_tick(
+    _pid: u32,
+    _blob_tx: std::sync::mpsc::Sender<BlobInventory>,
+    _force: bool,
+) -> (Option<ScanOutcome>, bool) {
+    (None, false)
+}
+
+// ─── Inventory-sync marker, read from memory rather than from EE.log ──────────
+//
+// Warframe composes its log lines in process memory long before they reach
+// EE.log: the game buffers writes and flushes in bursts, and sampling the live
+// client showed the newest in-memory line running 23 s ahead of the newest line
+// on disk. Tailing the file therefore reports an inventory sync at an unknown,
+// variable delay, and that delay lands on every capture gated behind it.
+//
+// The formatted lines are findable by content, so no pointer chain and no
+// per-build offsets are involved:
+//
+//   19761.848 Sys [Info]: OnInventoryResults completed in 339ms
+//
+// Only the log text holds ` Sys [Info]: ` preceded by a seconds-since-launch
+// timestamp, and once the buffer is found its address caches like
+// LAST_BLOB_REGION.
+
+/// The formatted marker. Shared with the EE.log tail in `start_log_watcher`
+/// rather than re-spelled: a mismatch between the two readers degrades to
+/// plain interval polling, which is hard to tell from working correctly.
+pub const INVENTORY_SYNC_MARKER: &str = "OnInventoryResults completed in";
+
+const SYNC_MARKER: &[u8] = INVENTORY_SYNC_MARKER.as_bytes();
+
+/// Present on every log line, so it identifies the buffer regardless of what
+/// the game happens to have logged recently.
+const LOG_LINE_MARKER: &[u8] = b" Sys [Info]: ";
+
+/// The candidate buffers are a few MB against several GB of readable mappings,
+/// so anything larger is some other allocation that happens to quote a log line.
+const MAX_LOG_REGION: usize = 16 * 1024 * 1024;
+
+static LAST_LOG_REGION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Probes still to skip before the cold search may run again.
+static LOG_SEARCH_BACKOFF: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the cold search is allowed to run on this probe. That search reads
+/// every non-executable region under [`MAX_LOG_REGION`], hundreds of MB.
+///
+/// Without this, a client whose log buffers cannot be located pays a walk-sized
+/// read on the monitor thread every couple of seconds for the whole session.
+/// Backing off costs only latency: the marker is an optimisation, and the
+/// EE.log tail reports the same syncs meanwhile.
+fn cold_log_search_due() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    LOG_SEARCH_BACKOFF
+        .fetch_update(Relaxed, Relaxed, |left| Some(left.saturating_sub(1)))
+        .is_ok_and(|left| left == 0)
+}
+
+/// Probes to sit out after a failed cold search, at the monitor's 2 s cadence.
+const LOG_SEARCH_BACKOFF_PROBES: u64 = 30;
+
+/// Game timestamp of the newest sync marker already reported, as `f64` bits.
+static LAST_SYNC_TIMESTAMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Forget the log buffer's address and the marker baseline. Call alongside
+/// [`reset_last_blob_region`] when the PID changes: the timestamps are seconds
+/// since *that* client launched, so a baseline from the previous process would
+/// swallow every marker the new one writes.
+pub fn reset_log_region() {
+    LAST_LOG_REGION.store(0, std::sync::atomic::Ordering::Relaxed);
+    LAST_SYNC_TIMESTAMP.store(0, std::sync::atomic::Ordering::Relaxed);
+    LOG_SEARCH_BACKOFF.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Seconds-since-launch stamp opening the line that `offset` falls inside, e.g.
+/// `19761.848` from `19761.848 Sys [Info]: …`.
+///
+/// Both buffers hold complete formatted lines but end them differently: the
+/// pending file-write buffer uses CRLF, the heap ring LF, so the search back
+/// to the line start stops at either.
+fn line_timestamp(chunk: &[u8], offset: usize) -> Option<f64> {
+    let start = chunk[..offset]
+        .iter()
+        .rposition(|&byte| byte == b'\n' || byte == b'\r')
+        .map_or(0, |index| index + 1);
+    // `offset` lands on the space opening ` Sys [Info]: ` for one caller and
+    // partway into the message for the other, so the stamp runs to whichever
+    // comes first: the next space, or the marker itself.
+    let line = &chunk[start..offset];
+    let end = line.iter().position(|&byte| byte == b' ').unwrap_or(line.len());
+    let stamp = std::str::from_utf8(&line[..end]).ok()?;
+    // Reject anything that is not the timestamp shape: a bare integer or a
+    // stray word would otherwise parse and then compare as a valid ordering.
+    let (seconds, millis) = stamp.split_once('.')?;
+    if seconds.is_empty()
+        || !seconds.bytes().all(|byte| byte.is_ascii_digit())
+        || millis.len() != 3
+        || !millis.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    stamp.parse().ok()
+}
+
+/// True when `chunk` holds formatted log lines rather than, say, the `.rdata`
+/// copy of the format string. The timestamp is what tells the two apart.
+fn looks_like_log_buffer(chunk: &[u8]) -> bool {
+    let mut from = 0;
+    // A handful of probes is enough: the log text is dense with these, so a
+    // buffer that fails several in a row is not it.
+    for _ in 0..8 {
+        let Some(hit) = memmem::find(&chunk[from..], LOG_LINE_MARKER) else { return false };
+        let offset = from + hit;
+        if line_timestamp(chunk, offset).is_some() {
+            return true;
+        }
+        from = offset + LOG_LINE_MARKER.len();
+    }
+    false
+}
+
+/// Newest game timestamp among the sync markers in `chunk`.
+///
+/// Every match is examined rather than just the last, because the heap ring
+/// wraps: the newest line is not necessarily the one at the highest address.
+fn newest_sync_timestamp(chunk: &[u8]) -> Option<f64> {
+    let mut newest: Option<f64> = None;
+    let mut from = 0;
+    while let Some(hit) = memmem::find(&chunk[from..], SYNC_MARKER) {
+        let offset = from + hit;
+        if let Some(stamp) = line_timestamp(chunk, offset) {
+            newest = Some(newest.map_or(stamp, |best: f64| best.max(stamp)));
+        }
+        from = offset + SYNC_MARKER.len();
+    }
+    newest
+}
+
+/// Fold a freshly-observed marker timestamp into the baseline, reporting
+/// whether it names a sync that has not been reported yet.
+///
+/// Any difference from the baseline counts, in both directions. The stamps are
+/// seconds since the client launched, so the only way they run backwards is a
+/// game restart, and the sync logged just after one is the login sync that
+/// populates the inventory.
+///
+/// The first observation counts too, rather than being spent establishing a
+/// baseline. A buffer that already holds markers at app start is reporting
+/// history, but reporting it costs nothing, because the first capture walks
+/// memory unconditionally and nothing reads the marker on that tick. Spending
+/// the first observation would instead swallow the login sync after every
+/// restart, since the PID change clears the baseline right before it arrives.
+fn sync_marker_is_new(newest: Option<f64>) -> bool {
+    let Some(newest) = newest else { return false };
+    let previous = f64::from_bits(LAST_SYNC_TIMESTAMP.swap(newest.to_bits(), std::sync::atomic::Ordering::Relaxed));
+    let is_new = newest != previous;
+    if is_new {
+        // Four in a 40-minute session, and the walk policy keys off them, so
+        // they are logged rather than left to be inferred from the walks.
+        eprintln!("[sync] inventory sync marker at {newest:.3}s");
+    }
+    is_new
+}
+
+/// Newest sync-marker timestamp currently in the game's log buffers, probing
+/// the remembered region first and searching for it again when that fails.
+#[cfg(target_os = "windows")]
+fn windows_newest_sync_timestamp(process: windows_sys::Win32::Foundation::HANDLE) -> Option<f64> {
+    use std::ffi::c_void;
+    use std::mem;
+    use windows_sys::Win32::System::{
+        Diagnostics::Debug::ReadProcessMemory,
+        Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS},
+    };
+
+    // Executable pages hold the `.rdata` copy of the format string, never a
+    // formatted line, so skipping them also skips the obvious false positive.
+    const EXEC_MASK: u32 = 0x10 | 0x20 | 0x40 | 0x80;
+
+    let mut buffer = Vec::new();
+    let read_region = |address: usize, size: usize, buffer: &mut Vec<u8>| -> Option<usize> {
+        buffer.resize(size.min(MAX_LOG_REGION), 0);
+        let mut read = 0usize;
+        let ok = unsafe { ReadProcessMemory(process, address as *const c_void,
+            buffer.as_mut_ptr() as *mut c_void, buffer.len(), &mut read) } != 0;
+        (ok && read > LOG_LINE_MARKER.len()).then_some(read)
+    };
+    let query = |address: usize| -> Option<MEMORY_BASIC_INFORMATION> {
+        let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
+        let ok = unsafe { VirtualQueryEx(process, address as *const c_void, &mut mbi,
+            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } != 0;
+        ok.then_some(mbi)
+    };
+    let readable = |mbi: &MEMORY_BASIC_INFORMATION| {
+        mbi.State == MEM_COMMIT
+            && mbi.Protect & PAGE_GUARD == 0
+            && mbi.Protect & PAGE_NOACCESS == 0
+            && mbi.Protect & EXEC_MASK == 0
+            && mbi.RegionSize > 0
+    };
+
+    let cached = LAST_LOG_REGION.load(std::sync::atomic::Ordering::Relaxed) as usize;
+    if cached != 0 {
+        if let Some(mbi) = query(cached).filter(readable).filter(|mbi| mbi.BaseAddress as usize == cached) {
+            if let Some(read) = read_region(cached, mbi.RegionSize, &mut buffer) {
+                if looks_like_log_buffer(&buffer[..read]) {
+                    return newest_sync_timestamp(&buffer[..read]);
+                }
+            }
+        }
+        // The region is gone or holds something else now; fall through and
+        // look again rather than reporting a silent nothing from here on.
+        LAST_LOG_REGION.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    if !cold_log_search_due() {
+        return None;
+    }
+
+    // Cold search. There are two copies of the log text: the pending
+    // file-write buffer and a heap ring of recent lines. Which one is
+    // further ahead depends on where the game is in its flush cycle, so both
+    // are read and the newer marker wins.
+    let mut newest: Option<f64> = None;
+    let mut found = 0;
+    let mut address = 0usize;
+    while let Some(mbi) = query(address) {
+        let base = mbi.BaseAddress as usize;
+        let size = mbi.RegionSize;
+        let Some(next) = base.checked_add(size).filter(|next| *next > address) else { break };
+        address = next;
+        if !readable(&mbi) || size > MAX_LOG_REGION {
+            continue;
+        }
+        let Some(read) = read_region(base, size, &mut buffer) else { continue };
+        let chunk = &buffer[..read];
+        if !looks_like_log_buffer(chunk) {
+            continue;
+        }
+        if found == 0 {
+            eprintln!("[sync] sync-marker buffer at 0x{base:012x} ({} KB)", read / 1000);
+            LAST_LOG_REGION.store(base as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(stamp) = newest_sync_timestamp(chunk) {
+            newest = Some(newest.map_or(stamp, |best: f64| best.max(stamp)));
+        }
+        found += 1;
+        if found == 2 {
+            break;
+        }
+    }
+    if found == 0 {
+        eprintln!("[sync] no in-memory log buffer found; sync markers come from the EE.log tail only");
+        LOG_SEARCH_BACKOFF.store(LOG_SEARCH_BACKOFF_PROBES, std::sync::atomic::Ordering::Relaxed);
+    }
+    newest
+}
 
 // ─── Continuous raw memory string dump ───────────────────────────────────────
 //
@@ -1607,7 +1997,7 @@ mod seed_tests {
 
 #[cfg(test)]
 mod blob_digest_tests {
-    use super::{blob_unchanged, forget_blob_digest, reset_last_blob_region};
+    use super::{blob_unchanged, forget_blob_digest, reset_last_blob_region, steady_state_notice_due};
 
     // LAST_BLOB_DIGEST is a process-global static shared with every other test
     // in this binary. Resetting first is not enough on its own: these cases run
@@ -1664,6 +2054,120 @@ mod blob_digest_tests {
         assert!(!blob_unchanged(&garbage), "first sighting reports changed");
         forget_blob_digest();
         assert!(!blob_unchanged(&garbage), "same bytes report changed again after a failed parse");
+    }
+
+    /// Nearly every probe finds identical bytes, so the notice cannot be a
+    /// per-probe line, otherwise it drowns out everything else in the log.
+    #[test]
+    fn the_steady_state_notice_fires_once_per_settle() {
+        let _guard = DIGEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_last_blob_region();
+
+        let blob = b"{\"SubscribedToEmails\":1,\"RegularCredits\":100}".to_vec();
+        assert!(!blob_unchanged(&blob), "first sighting reports changed");
+        assert!(blob_unchanged(&blob), "second sighting is the steady state");
+        assert!(steady_state_notice_due(), "entering the steady state logs once");
+        assert!(!steady_state_notice_due(), "staying in it does not log again");
+
+        let mut mutated = blob.clone();
+        mutated[0] = b'[';
+        assert!(!blob_unchanged(&mutated), "the bytes changed");
+        assert!(blob_unchanged(&mutated), "and settled again");
+        assert!(steady_state_notice_due(), "the next settle logs again");
+
+        reset_last_blob_region();
+        assert!(steady_state_notice_due(), "a new game process starts the cycle over");
+    }
+}
+
+#[cfg(test)]
+mod sync_marker_tests {
+    use super::{
+        cold_log_search_due, looks_like_log_buffer, newest_sync_timestamp, reset_log_region,
+        sync_marker_is_new, LOG_SEARCH_BACKOFF, LOG_SEARCH_BACKOFF_PROBES,
+    };
+
+    // LAST_SYNC_TIMESTAMP and LOG_SEARCH_BACKOFF are process-global, and
+    // reset_log_region clears both at once, so a test calling it races any
+    // other test mid-sequence. Every test here that resets takes this lock.
+    static LOG_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn a_failed_cold_search_sits_out_the_next_probes() {
+        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_log_region();
+        assert!(cold_log_search_due(), "the first search runs");
+
+        LOG_SEARCH_BACKOFF.store(LOG_SEARCH_BACKOFF_PROBES, std::sync::atomic::Ordering::Relaxed);
+        for probe in 0..LOG_SEARCH_BACKOFF_PROBES {
+            assert!(!cold_log_search_due(), "probe {probe} searched during the backoff");
+        }
+        assert!(cold_log_search_due(), "the search resumes once the backoff expires");
+
+        // A PID change clears it: the new client's buffers are worth looking for
+        // straight away.
+        LOG_SEARCH_BACKOFF.store(LOG_SEARCH_BACKOFF_PROBES, std::sync::atomic::Ordering::Relaxed);
+        reset_log_region();
+        assert!(cold_log_search_due());
+    }
+
+    /// The heap ring uses LF, the pending file-write buffer CRLF, and the
+    /// marker has to be found in either.
+    #[test]
+    fn marker_is_read_from_both_buffer_shapes() {
+        let ring = b"19760.121 Sys [Info]: SyncInventoryFromDB\n\
+                     19761.848 Sys [Info]: OnInventoryResults completed in 339ms\n";
+        assert_eq!(newest_sync_timestamp(ring), Some(19761.848));
+
+        let pending = b"19760.121 Sys [Info]: SyncInventoryFromDB\r\n\
+                        19761.848 Sys [Info]: OnInventoryResults completed in 339ms\r\n";
+        assert_eq!(newest_sync_timestamp(pending), Some(19761.848));
+    }
+
+    /// The ring wraps, so the newest line is not the one at the highest
+    /// address. Taking the last match would report an already-seen sync.
+    #[test]
+    fn newest_marker_wins_regardless_of_position() {
+        let wrapped = b"19999.500 Sys [Info]: OnInventoryResults completed in 41ms\n\
+                        11000.000 Sys [Info]: OnInventoryResults completed in 88ms\n";
+        assert_eq!(newest_sync_timestamp(wrapped), Some(19999.500));
+    }
+
+    /// `OnInventoryResults completed in` also exists as a read-only format
+    /// string, which carries no timestamp and must not be mistaken for a line
+    /// the game actually wrote.
+    #[test]
+    fn format_string_without_a_timestamp_is_not_a_marker() {
+        assert_eq!(newest_sync_timestamp(b"OnInventoryResults completed in %dms\0"), None);
+        assert!(!looks_like_log_buffer(b"Sys [Info]: %s\0 Sys [Info]: %s\0"));
+        assert!(looks_like_log_buffer(b"19761.848 Sys [Info]: Revive completed on KubrowPetAvatar14482\n"));
+    }
+
+    #[test]
+    fn baseline_reports_only_unseen_syncs() {
+        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_log_region();
+        assert!(sync_marker_is_new(Some(100.000)), "the first marker seen is not yet reported");
+        assert!(!sync_marker_is_new(Some(100.000)), "the same sync must not report twice");
+        assert!(sync_marker_is_new(Some(140.250)), "a later sync reports");
+        // Seconds since launch, so a stamp running backwards means the client
+        // restarted; ignoring it would swallow markers until the new session
+        // outran the old one.
+        assert!(sync_marker_is_new(Some(12.500)), "a restarted client reports again");
+        assert!(!sync_marker_is_new(None), "no marker in the buffer reports nothing");
+        reset_log_region();
+    }
+
+    /// The PID change that clears the baseline lands moments before the login
+    /// sync, which is the marker the gate is there to catch. Spending the
+    /// first observation on a baseline would drop it on every restart.
+    #[test]
+    fn login_sync_after_a_restart_is_reported() {
+        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_log_region();
+        assert!(sync_marker_is_new(Some(9821.400)), "a marker from the previous client");
+        reset_log_region();
+        assert!(sync_marker_is_new(Some(13.036)), "the new client's login sync must report");
     }
 }
 
