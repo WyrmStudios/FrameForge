@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use tracing::warn;
 use std::io::{Cursor, Read};
 
 #[derive(Clone, Debug)]
@@ -275,7 +276,7 @@ fn fetch_syndicate_store_catalog(items: &[WfcdItem]) -> HashMap<String, Vec<Synd
     {
         Some(v) => v,
         None => {
-            eprintln!("[syndicate] failed to fetch syndicates.json");
+            warn!("failed to fetch syndicates.json");
             return HashMap::new();
         }
     };
@@ -555,7 +556,7 @@ fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<Stri
     {
         Some(v) => v,
         None => {
-            eprintln!("[relic_rewards] failed to fetch Relics.json");
+            warn!("failed to fetch Relics.json");
             return HashMap::new();
         }
     };

@@ -1,5 +1,6 @@
 ﻿use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ModCount {
@@ -660,7 +661,7 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     // small false-positive fragment that matched the end marker by coincidence.
     const MIN_PARSE_BYTES: usize = 50_000;
     if end_pos < MIN_PARSE_BYTES {
-        eprintln!("[blob-parse] too small ({} B < {} B) — skipping", end_pos, MIN_PARSE_BYTES);
+        debug!(target: "frameforge::blob_parse", end_pos, min = MIN_PARSE_BYTES, "too small — skipping");
         return None;
     }
 
@@ -670,7 +671,7 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         .map_err(|e| {
             let head: String = json_bytes[..json_bytes.len().min(48)]
                 .iter().map(|&b| if b >= 0x20 && b < 0x7f { b as char } else { '.' }).collect();
-            eprintln!("[blob-parse] JSON error: {} | head: {:?}", e, head);
+            debug!(target: "frameforge::blob_parse", error = %e, head = ?head, "JSON error");
         })
         .ok()?;
 
@@ -1024,8 +1025,12 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
                         stitched.extend_from_slice(&nb[..nn]);
                     }
                     if let Some(inv) = parse_full_account_blob(&stitched) {
-                        eprintln!("[blob] fast-path hit at 0x{:012x}: {} unique, {} stackable",
-                            cached_addr, inv.unique_items.len(), inv.stackable_items.len());
+                        info!(
+                            addr = format_args!("0x{cached_addr:012x}"),
+                            unique = inv.unique_items.len(),
+                            stackable = inv.stackable_items.len(),
+                            "fast-path hit"
+                        );
                         blob_tx.send(inv).ok();
                         unsafe { CloseHandle(process); }
                         return 0; // fast path never saves to disk
@@ -1034,7 +1039,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             }
         }
         // Cache miss — fall through to full walk and update the cache when found
-        eprintln!("[blob] fast-path miss at 0x{:012x} — doing full walk", cached_addr);
+        debug!(addr = format_args!("0x{cached_addr:012x}"), "fast-path miss — doing full walk");
     }
 
     struct ActiveScan {
@@ -1133,7 +1138,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             scan.search_from = scan.data.len().saturating_sub(END_MARKER.len() - 1);
             scan.data.extend_from_slice(chunk);
             if scan.data.len() > MAX_SCAN {
-                eprintln!("[blob] scan#{} exceeded {} MB without end — dropped", scan.id, MAX_SCAN / 1024 / 1024);
+                warn!(scan_id = scan.id, max_mb = MAX_SCAN / 1024 / 1024, "scan exceeded size limit without end — dropped");
                 return false; // drop oversized scan
             }
             // Only search the newly-added window, not the full buffer.
@@ -1143,8 +1148,14 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             if has_end && find_blob_end(&scan.data).is_some() {
                 match parse_full_account_blob(&scan.data) {
                     Some(inv) => {
-                        eprintln!("[blob] scan#{} SUCCESS at 0x{:012x}: {} unique, {} stackable, {} mods",
-                            scan.id, region_addr, inv.unique_items.len(), inv.stackable_items.len(), inv.mods.len());
+                        info!(
+                            scan_id = scan.id,
+                            addr = format_args!("0x{region_addr:012x}"),
+                            unique = inv.unique_items.len(),
+                            stackable = inv.stackable_items.len(),
+                            mods = inv.mods.len(),
+                            "scan SUCCESS"
+                        );
                         // Cache the START region (not this region) so the fast path works next cycle.
                         LAST_BLOB_REGION.store(scan.start_region_addr as u64, std::sync::atomic::Ordering::Relaxed);
                         if save {
@@ -1158,7 +1169,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
                         found_result = true;
                     }
                     None => {
-                        eprintln!("[blob] scan#{} end marker found but JSON parse failed — dropped", scan.id);
+                        warn!(scan_id = scan.id, "end marker found but JSON parse failed — dropped");
                     }
                 }
                 false // remove completed (or failed) scan
@@ -1229,17 +1240,27 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
             next_scan_id += 1;
             starts_found += 1;
             let pre_bytes = combined.len() - n;
-            eprintln!(
-                "[blob] scan#{} started at 0x{:012x}+{} (json_open={} seed=0x{:012x} pre={}B)",
-                id, region_addr, start_off, json_open, seed_addr, pre_bytes
+            debug!(
+                scan_id = id,
+                addr = format_args!("0x{region_addr:012x}"),
+                start_off,
+                json_open,
+                seed = format_args!("0x{seed_addr:012x}"),
+                pre_bytes,
+                "scan started"
             );
             let seed = combined[json_open..].to_vec();
 
             if find_blob_end(&seed).is_some() {
                 match parse_full_account_blob(&seed) {
                     Some(inv) => {
-                        eprintln!("[blob] scan#{} immediate SUCCESS at 0x{:012x}: {} unique, {} stackable",
-                            id, region_addr, inv.unique_items.len(), inv.stackable_items.len());
+                        info!(
+                            scan_id = id,
+                            addr = format_args!("0x{region_addr:012x}"),
+                            unique = inv.unique_items.len(),
+                            stackable = inv.stackable_items.len(),
+                            "scan immediate SUCCESS"
+                        );
                         LAST_BLOB_REGION.store(seed_addr as u64, std::sync::atomic::Ordering::Relaxed);
                         if save {
                             let name = format!("Actual_inventory_FULL_ACCOUNT_{}_{:02}.txt", ts, saved + 1);
@@ -1251,7 +1272,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
                         found_result = true;
                     }
                     None => {
-                        eprintln!("[blob] scan#{} immediate end found but parse failed — dropping", id);
+                        warn!(scan_id = id, "immediate end found but parse failed — dropping");
                     }
                 }
             } else {
@@ -1260,17 +1281,20 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         }
     }
 
-    eprintln!(
-        "[blob-capture] done: read={} skipped={} starts={} saved={} bytes={}MB | \
-         vquery={:.0}ms read={:.0}ms search={:.0}ms",
-        regions_read, regions_skipped, starts_found, saved, bytes_read / 1_000_000,
-        t_vquery.as_secs_f64() * 1000.0,
-        t_read.as_secs_f64()   * 1000.0,
-        t_search.as_secs_f64() * 1000.0,
+    debug!(
+        target: "frameforge::blob_capture",
+        regions_read,
+        regions_skipped,
+        starts_found,
+        saved,
+        bytes_mb = bytes_read / 1_000_000,
+        vquery_ms = t_vquery.as_secs_f64() * 1000.0,
+        read_ms = t_read.as_secs_f64() * 1000.0,
+        search_ms = t_search.as_secs_f64() * 1000.0,
+        "capture done"
     );
     if starts_found == 0 {
-        eprintln!("[blob-capture] WARNING: no start-marker found — FULL_ACCOUNT not in memory \
-            (game in mission, on login screen, or Arsenal not open?)");
+        warn!(target: "frameforge::blob_capture", "no start-marker found — FULL_ACCOUNT not in memory (game in mission, on login screen, or Arsenal not open?)");
     }
     unsafe { CloseHandle(process); }
     saved

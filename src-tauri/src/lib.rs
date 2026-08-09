@@ -1,4 +1,5 @@
 ﻿use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1073,11 +1074,11 @@ fn fetch_csrf_from_site(jwt: &str) -> Option<String> {
         .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .call();
     let html = match resp {
-        Ok(r) => { eprintln!("[csrf] site fetch status=200"); r.into_string().ok()? }
+        Ok(r) => { debug!("site fetch status=200"); r.into_string().ok()? }
         Err(e) => {
-            eprintln!("[csrf] site fetch error: {} — trying JWT payload fallback", e);
+            warn!(error = %e, "site fetch failed, trying JWT payload fallback");
             if let Some(t) = jwt_payload_field(jwt, "csrf_token") {
-                eprintln!("[csrf] JWT payload csrf_token len={}", t.len());
+                debug!(len = t.len(), "JWT payload csrf_token");
                 return Some(t);
             }
             return None;
@@ -1090,16 +1091,16 @@ fn fetch_csrf_from_site(jwt: &str) -> Option<String> {
         if let Some(end_rel) = html[start..].find('"') {
             let token = html[start..start + end_rel].to_string();
             if !token.is_empty() {
-                eprintln!("[csrf] found meta token len={}", token.len());
+                debug!(len = token.len(), "found meta token");
                 return Some(token);
             }
         }
     }
-    eprintln!("[csrf] meta tag not found in HTML (len={}) — trying JWT payload fallback", html.len());
+    warn!(len = html.len(), "meta tag not found in HTML, trying JWT payload fallback");
     // Log a snippet to see what we got (first 200 chars)
-    eprintln!("[csrf] HTML snippet: {}", truncate_chars(&html, 200));
+    debug!(snippet = %truncate_chars(&html, 200), "HTML snippet");
     if let Some(t) = jwt_payload_field(jwt, "csrf_token") {
-        eprintln!("[csrf] JWT payload csrf_token len={}", t.len());
+        debug!(len = t.len(), "JWT payload csrf_token");
         Some(t)
     } else {
         None
@@ -1370,7 +1371,7 @@ fn wfm_receive_tokens(
     } else {
         fetch_csrf_from_site(&v1_jwt_val).unwrap_or_default()
     };
-    eprintln!("[csrf] captured csrf_token len={}", csrf.len());
+    info!(len = csrf.len(), "csrf_token captured");
     *state.wfm_session.lock().unwrap_or_else(|e| e.into_inner()) = Some(WfmSession {
         access_token, refresh_token, client_id, device_id, username: username.clone(), status,
         v1_jwt: v1_jwt_val,
@@ -1435,9 +1436,9 @@ fn wfm_set_jwt(state: State<AppState>, jwt: String) -> Result<(String, String), 
     let status   = json["data"]["status"].as_str().unwrap_or("offline").to_string();
     // If no saved CSRF token, fetch it from the site now
     if csrf_token.is_empty() && !v1_jwt.is_empty() {
-        eprintln!("[csrf] set_jwt: no saved token, fetching from site...");
+        debug!("set_jwt: no saved token, fetching from site");
         csrf_token = fetch_csrf_from_site(&v1_jwt).unwrap_or_default();
-        eprintln!("[csrf] set_jwt: csrf_token len={}", csrf_token.len());
+        debug!(len = csrf_token.len(), "set_jwt: csrf_token fetched");
     }
     *state.wfm_session.lock().unwrap_or_else(|e| e.into_inner()) = Some(WfmSession {
         access_token, refresh_token, client_id, device_id, username: username.clone(), status: status.clone(), v1_jwt, csrf_token,
@@ -2307,7 +2308,7 @@ fn load_riven_csv_from_url() -> Result<HashMap<String, RivenEntry>, String> {
             .and_then(|r| r.into_string().map_err(|e| e.to_string()))
         {
             Ok(csv) => { combined.extend(parse_riven_csv(&csv)); }
-            Err(e) => { eprintln!("[riven] Failed to load gid={}: {}", gid, e); }
+            Err(e) => { warn!(gid, error = %e, "failed to load riven sheet tab"); }
         }
     }
     if combined.is_empty() {
@@ -4319,7 +4320,7 @@ async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String, String> {
                         Err(e) => { let _ = writeln!(f, "--- pass {} error: {} ---", pass, e); }
                     }
                 }
-                Err(e) => { eprintln!("[raw_scan] open failed: {}", e); }
+                Err(e) => { warn!(error = %e, "raw_scan open failed"); }
             }
 
             // Sleep between passes so the user has time to navigate menus
@@ -4488,7 +4489,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     std::thread::spawn(move || {
         let conn = match rusqlite::Connection::open(&db_path) {
             Ok(c) => c,
-            Err(e) => { eprintln!("Monitor DB open failed: {}", e); return; }
+            Err(e) => { error!(error = %e, "monitor DB open failed"); return; }
         };
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
 
@@ -4785,7 +4786,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     blob.unique_items.len(), blob.stackable_items.len(),
                     blob.mods.len(), blob.flavour_items.len()
                 );
-                eprintln!("[monitor] blob applied: {}", detail);
+                info!(detail = %detail, "blob applied");
                 let _ = app.emit("blob-status", BlobStatusPayload {
                     stage: "done".into(),
                     detail,
@@ -4815,7 +4816,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                 cached_game_running = current_pid.is_some();
                 if current_pid != last_pid {
                     if current_pid.is_some() {
-                        eprintln!("[monitor] Warframe PID changed ({:?} → {:?}), clearing blob region cache", last_pid, current_pid);
+                        info!(?last_pid, ?current_pid, "Warframe PID changed, clearing blob region cache");
                         memory_scanner::reset_last_blob_region();
                     }
                     last_pid = current_pid;
@@ -4839,7 +4840,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         stage:  "scanning".into(),
                         detail: "Reading Warframe memory\u{2026}".into(),
                     });
-                    eprintln!("[monitor] blob capture starting (save={})", save);
+                    debug!(save, "blob capture starting");
                     std::thread::spawn(move || {
                         // Ensure the flag is cleared even if capture_all_blobs panics.
                         struct ClearOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
@@ -4848,7 +4849,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         }
                         let _guard = ClearOnDrop(active);
                         let count = memory_scanner::capture_all_blobs(&dir, &ts, tx, save);
-                        eprintln!("[monitor] blob capture finished (files_saved={} save_flag={} ts={})", count, save, ts);
+                        debug!(files_saved = count, save_flag = save, ts = %ts, "blob capture finished");
                     });
                 }
                 prev_game_running = true;
@@ -5520,7 +5521,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                         ts0, trigger_line, prefilter_log, filtered_cat.len()
                     ));
                     if let Err(e) = write_err {
-                        eprintln!("[FrameForge] session log write failed: {e}");
+                        warn!(error = %e, "session log write failed");
                     }
                     // Create one diagnostics folder for this entire run.
                     let run_diag_dir = diag_dir().join(
@@ -7365,7 +7366,7 @@ fn show_overlay_window(
     // off-screen. If it's still on about:blank, navigate to the overlay URL now.
     if let Ok(url) = win.url() {
         if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
-            eprintln!("[overlay] WebView2 deferred load detected (url={}) — navigating to overlay URL", url);
+            debug!(%url, "WebView2 deferred load detected, navigating to overlay URL");
             let overlay_url = if cfg!(debug_assertions) {
                 "http://localhost:1420/index.html?overlay"
             } else {
@@ -7411,18 +7412,18 @@ fn show_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
     // Log current URL and force navigation in case WebView2 deferred loading while off-screen
     match win.url() {
         Ok(url) => {
-            eprintln!("[OVERLAY-TEST] current url: {url}");
+            debug!(%url, "current url");
             // Only re-navigate if we're on blank (WebView2 never loaded the app URL)
             if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
-                eprintln!("[OVERLAY-TEST] was on about:blank — navigating to app URL");
+                debug!("was on about:blank, navigating to app URL");
                 if let Ok(nav_url) = tauri::Url::parse("http://localhost:1420/index.html?overlaytest") {
                     let _ = win.navigate(nav_url);
                 }
             }
         }
-        Err(e) => eprintln!("[OVERLAY-TEST] url() error: {e}"),
+        Err(e) => warn!(error = %e, "url() error"),
     }
-    eprintln!("[OVERLAY-TEST] show_test_overlay_window: moved to logical(400,300), alwaysOnTop=true");
+    debug!("show_test_overlay_window: moved to logical(400,300), alwaysOnTop=true");
     Ok(())
 }
 
@@ -7436,7 +7437,7 @@ fn hide_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
     let _ = win.set_position(tauri::Position::Physical(
         tauri::PhysicalPosition { x: 0, y: -3000 }
     ));
-    eprintln!("[OVERLAY-TEST] hide_test_overlay_window: moved offscreen");
+    debug!("hide_test_overlay_window: moved offscreen");
     Ok(())
 }
 
@@ -7560,7 +7561,7 @@ async fn prewarm_image_cache(state: tauri::State<'_, AppState>) -> Result<(), St
             .collect();
 
         if names.is_empty() { return; }
-        eprintln!("[img_cache] Prewarming {} images in background", names.len());
+        debug!(count = names.len(), "prewarming images in background");
 
         for chunk in names.chunks(8) {
             let handles: Vec<_> = chunk.iter().map(|name| {
@@ -7578,7 +7579,7 @@ async fn prewarm_image_cache(state: tauri::State<'_, AppState>) -> Result<(), St
             }).collect();
             for h in handles { let _ = h.join(); }
         }
-        eprintln!("[img_cache] Prewarm complete");
+        debug!("prewarm complete");
     }); // intentionally not awaited — fire and forget
 
     Ok(())
