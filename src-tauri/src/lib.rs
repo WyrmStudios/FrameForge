@@ -1024,6 +1024,21 @@ fn wfm_request(method: &str, path: &str, auth_header: &str) -> ureq::Request {
        .set("User-Agent", "FrameForge/2.1.0")
 }
 
+#[tracing::instrument(level = "debug", skip_all, fields(method = %method, path = %path))]
+fn wfm_call(method: &str, path: &str, auth_header: &str) -> Result<ureq::Response, ureq::Error> {
+    wfm_request(method, path, auth_header).call()
+}
+
+#[tracing::instrument(level = "debug", skip_all, fields(method = %method, path = %path))]
+fn wfm_send_json(
+    method: &str,
+    path: &str,
+    auth_header: &str,
+    body: impl serde::Serialize,
+) -> Result<ureq::Response, ureq::Error> {
+    wfm_request(method, path, auth_header).send_json(body)
+}
+
 /// Like wfm_request but authenticates via Cookie (JWT=...) instead of Authorization header.
 
 /// Decode the payload of a JWT (base64url, middle part) and extract a field by name.
@@ -1066,6 +1081,7 @@ fn base64_decode_url(s: &str) -> Option<Vec<u8>> {
 /// Fetch the CSRF token from warframe.market by loading the authenticated page.
 /// The meta tag `<meta name="csrf-token" content="...">` in the response HTML contains it.
 /// Falls back to the csrf_token embedded in the JWT payload if the page fetch fails.
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_csrf_from_site(jwt: &str) -> Option<String> {
     if jwt.is_empty() { return None; }
     let resp = ureq::get("https://warframe.market/")
@@ -1895,8 +1911,8 @@ fn session_v1_auth(state: &State<AppState>) -> Result<String, String> {
 fn wfm_get_orders(state: State<AppState>) -> Result<serde_json::Value, String> {
     let auth = session_auth(&state)?;
     wfm_wait();
-    let json: serde_json::Value = wfm_request("GET", "/v2/orders/my", &auth)
-        .call().map_err(|e| format!("Get orders: {}", e))?
+    let json: serde_json::Value = wfm_call("GET", "/v2/orders/my", &auth)
+        .map_err(|e| format!("Get orders: {}", e))?
         .into_json().map_err(|e| format!("Parse: {}", e))?;
     Ok(json["data"].clone())
 }
@@ -3351,8 +3367,8 @@ fn analyze_riven(weapon: String, positives: Vec<String>, negatives: Vec<String>)
 fn wfm_debug_dump(state: State<AppState>, path: String) -> Result<String, String> {
     let auth = session_auth(&state)?;
     wfm_wait();
-    let json: serde_json::Value = wfm_request("GET", &path, &auth)
-        .call().map_err(|e| format!("Dump: {}", e))?
+    let json: serde_json::Value = wfm_call("GET", &path, &auth)
+        .map_err(|e| format!("Dump: {}", e))?
         .into_json().map_err(|e| format!("Parse: {}", e))?;
     serde_json::to_string_pretty(&json).map_err(|e| e.to_string())
 }
@@ -3394,8 +3410,8 @@ fn wfm_get_item_info(state: State<AppState>, url_name: String) -> Result<serde_j
     let auth = state.wfm_session.lock().unwrap_or_else(|e| e.into_inner())
         .as_ref().map(|s| s.auth_header()).unwrap_or_default();
     wfm_wait();
-    let mut data = wfm_request("GET", &format!("/v2/items/{}", url_name), &auth)
-        .call().map_err(|e| format!("Item info: {}", e))?
+    let mut data = wfm_call("GET", &format!("/v2/items/{}", url_name), &auth)
+        .map_err(|e| format!("Item info: {}", e))?
         .into_json::<serde_json::Value>().map_err(|e| format!("Parse: {}", e))
         .map(|j| j["data"].clone())?;
 
@@ -3426,8 +3442,8 @@ fn wfm_create_order(state: State<AppState>, item_id: String, order_type: String,
         body["rank"] = serde_json::json!(rank);
     }
     wfm_wait();
-    wfm_request("POST", "/v2/order", &auth)
-        .send_string(&body.to_string()).map_err(|e| format!("Create order: {}", e))?
+    wfm_send_json("POST", "/v2/order", &auth, &body)
+        .map_err(|e| format!("Create order: {}", e))?
         .into_json::<serde_json::Value>().map_err(|e| format!("Parse: {}", e))
         .map(|j| j["data"].clone())
 }
@@ -3438,8 +3454,8 @@ fn wfm_update_order(state: State<AppState>, order_id: String, platinum: u32, qua
     let auth = session_auth(&state)?;
     let body = serde_json::json!({ "platinum": platinum, "quantity": quantity, "visible": visible });
     wfm_wait();
-    wfm_request("PATCH", &format!("/v2/order/{}", order_id), &auth)
-        .send_string(&body.to_string()).map_err(|e| format!("Update order: {}", e))?
+    wfm_send_json("PATCH", &format!("/v2/order/{}", order_id), &auth, &body)
+        .map_err(|e| format!("Update order: {}", e))?
         .into_json::<serde_json::Value>().map_err(|e| format!("Parse: {}", e))
         .map(|j| j["data"].clone())
 }
@@ -3449,8 +3465,8 @@ fn wfm_update_order(state: State<AppState>, order_id: String, platinum: u32, qua
 fn wfm_delete_order(state: State<AppState>, order_id: String) -> Result<(), String> {
     let auth = session_auth(&state)?;
     wfm_wait();
-    wfm_request("DELETE", &format!("/v2/order/{}", order_id), &auth)
-        .call().map_err(|e| format!("Delete order: {}", e))?;
+    wfm_call("DELETE", &format!("/v2/order/{}", order_id), &auth)
+        .map_err(|e| format!("Delete order: {}", e))?;
     Ok(())
 }
 
@@ -3498,8 +3514,8 @@ fn wfm_create_riven_auction(
     // WFM v1 requires buyout_price to be present in the payload (null = no buyout).
     payload["buyout_price"] = serde_json::json!(buyout_price);
     wfm_auction_wait();
-    let resp = wfm_request("POST", "/v1/auctions/create", &auth)
-        .send_json(payload)
+    let resp = wfm_send_json("POST", "/v1/auctions/create", &auth, payload)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => {
                 let body = r.into_string().unwrap_or_default();
@@ -3534,10 +3550,10 @@ async fn wfm_get_my_riven_auctions(state: tauri::State<'_, AppState>) -> Result<
     tauri::async_runtime::spawn_blocking(move || {
         // Phase 1: profile endpoint with Bearer auth — returns visible auctions.
         wfm_auction_wait();
-        let profile_resp: serde_json::Value = wfm_request(
+        let profile_resp: serde_json::Value = wfm_call(
             "GET", &format!("/v1/profile/{}/auctions", username), &v1_auth,
         )
-        .call()
+        
         .map_err(|e| format!("Fetch auctions: {}", e))?
         .into_json()
         .map_err(|e| format!("Parse auctions: {}", e))?;
@@ -3554,9 +3570,9 @@ async fn wfm_get_my_riven_auctions(state: tauri::State<'_, AppState>) -> Result<
         for id in &stored_ids {
             if seen_ids.contains(id) { continue; }
             wfm_auction_wait();
-            let entry: serde_json::Value = match wfm_request(
+            let entry: serde_json::Value = match wfm_call(
                 "GET", &format!("/v1/auctions/entry/{}", id), &v1_auth,
-            ).call() {
+            ) {
                 Ok(r) => match r.into_json() {
                     Ok(j) => j,
                     Err(_) => continue,
@@ -3601,8 +3617,8 @@ fn wfm_switch_riven_type(
 
     // Step 1: fetch full auction detail so we have all fields (attributes, polarity, etc.).
     wfm_auction_wait();
-    let entry: serde_json::Value = wfm_request("GET", &format!("/v1/auctions/entry/{}", auction_id), &auth)
-        .call()
+    let entry: serde_json::Value = wfm_call("GET", &format!("/v1/auctions/entry/{}", auction_id), &auth)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("Fetch auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
             other => format!("Fetch auction: {}", other),
@@ -3628,8 +3644,8 @@ fn wfm_switch_riven_type(
 
     // Step 2: close the old auction.
     wfm_auction_wait();
-    wfm_request("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
-        .call()
+    wfm_call("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("Delete auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
             other => format!("Delete auction: {}", other),
@@ -3649,8 +3665,8 @@ fn wfm_switch_riven_type(
     payload["buyout_price"] = serde_json::json!(buyout_price);
 
     wfm_auction_wait();
-    let resp = wfm_request("POST", "/v1/auctions/create", &auth)
-        .send_json(payload)
+    let resp = wfm_send_json("POST", "/v1/auctions/create", &auth, payload)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => format!("Create riven auction: HTTP {}: {}", code, r.into_string().unwrap_or_default()),
             other => format!("Create riven auction: {}", other),
@@ -3674,8 +3690,8 @@ fn wfm_switch_riven_type(
 fn wfm_delete_auction(state: State<AppState>, auction_id: String) -> Result<(), String> {
     let auth = session_v1_auth(&state)?;
     wfm_auction_wait();
-    wfm_request("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
-        .call()
+    wfm_call("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => {
                 let body = r.into_string().unwrap_or_default();
@@ -3696,8 +3712,8 @@ fn wfm_update_auction(state: State<AppState>, auction_id: String, starting_price
     let mut body = serde_json::json!({ "starting_price": starting_price, "visible": visible });
     body["buyout_price"] = buyout_price.map_or(serde_json::Value::Null, |v| serde_json::json!(v));
     wfm_auction_wait();
-    wfm_request("PUT", &format!("/v1/auctions/entry/{}", auction_id), &auth)
-        .send_json(body)
+    wfm_send_json("PUT", &format!("/v1/auctions/entry/{}", auction_id), &auth, body)
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => {
                 let body = r.into_string().unwrap_or_default();
@@ -3713,8 +3729,8 @@ fn wfm_update_auction(state: State<AppState>, auction_id: String, starting_price
 fn wfm_set_auction_visible(state: State<AppState>, auction_id: String, visible: bool) -> Result<(), String> {
     let auth = session_v1_auth(&state)?;
     wfm_auction_wait();
-    wfm_request("PUT", &format!("/v1/auctions/entry/{}", auction_id), &auth)
-        .send_json(serde_json::json!({ "visible": visible }))
+    wfm_send_json("PUT", &format!("/v1/auctions/entry/{}", auction_id), &auth, serde_json::json!({ "visible": visible }))
+        
         .map_err(|e| match e {
             ureq::Error::Status(code, r) => {
                 let body = r.into_string().unwrap_or_default();
@@ -3878,6 +3894,7 @@ fn trimmed_median_from_stats(arr: &[serde_json::Value]) -> Option<u32> {
     Some(median.round() as u32)
 }
 
+#[tracing::instrument(level = "debug", skip_all, fields(slug = %slug))]
 fn wfm_price_for_slug(slug: &str) -> Result<Option<u32>, String> {
     wfm_wait();
     let url = format!("https://api.warframe.market/v1/items/{}/statistics", slug);
@@ -7850,6 +7867,7 @@ const PRICING_BASE: &str = "https://raw.githubusercontent.com/WyrmStudios/FrameF
 /// Returns (by_name, by_slug):
 ///   by_name: item display name (lowercase) → median sell price  (for get_item_price)
 ///   by_slug: authoritative WFM slug         → median sell price  (for wfm_price_cache)
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_relics_run_data() -> (HashMap<String, u32>, HashMap<String, u32>) {
     // items.json gives the authoritative name → WFM slug mapping for every tradeable item.
     let name_to_slug: HashMap<String, String> = ureq::get(&format!("{}/items.json", PRICING_BASE))

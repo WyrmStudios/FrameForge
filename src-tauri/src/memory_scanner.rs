@@ -309,6 +309,7 @@ pub fn find_warframe_pid_pub() -> Option<u32> { None }
 // the actual JSON format for inventory items without any parsing assumptions.
 
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "info", skip_all, fields(max_hits = max_hits))]
 pub fn dump_inventory_regions(max_hits: usize) -> Vec<String> {
     use std::ffi::c_void;
     use std::mem;
@@ -654,6 +655,7 @@ pub fn extract_blob_json(raw: &[u8]) -> Option<Vec<u8>> {
 
 /// `raw` must span from the JSON opening `{` (or from `"SubscribedToEmails"`) through
 /// `"DeathSquadable":`. Returns `None` if neither start can be located or JSON is malformed.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     let end_pos = find_blob_end(raw)?;
 
@@ -940,6 +942,7 @@ pub fn reset_last_blob_region() {
 /// When `save=true` also writes the raw text to `blob_dir` for debugging.
 /// Returns the number of files written (always 0 when `save=false`).
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "debug", skip_all, fields(save = save))]
 pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::sync::mpsc::Sender<BlobInventory>, save: bool) -> usize {
     use std::ffi::c_void;
     use std::mem;

@@ -79,6 +79,7 @@ pub struct FetchResult {
 /// Fetch the complete list of relic reward display names from the Warframe Wiki's
 /// Module:Void Lua table via the MediaWiki API.
 /// Returns a set of lower-cased names like "xaku prime neuroptics blueprint".
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_wiki_reward_names() -> HashSet<String> {
     let mut names: HashSet<String> = HashSet::new();
 
@@ -213,6 +214,7 @@ struct ExportRecipe {
 
 /// Fetch ExportRecipes from warframe-public-export-plus (stable URL, pre-processed, always current).
 /// Returns a map from resultType (= what gets crafted) → ExportRecipe.
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
     // Try two URLs: the warframe-public-export-plus repo (pre-processed) and a fallback
     let urls = [
@@ -264,6 +266,7 @@ fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
 /// Fetch complete syndicate store catalog from warframe-drop-data/syndicates.json.
 /// This covers all vendor-purchased items: sigils, specters, health restores,
 /// weapon blueprints, augment mods — items that WFCD's `drops` field mostly omits.
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_syndicate_store_catalog(items: &[WfcdItem]) -> HashMap<String, Vec<SyndicateOffer>> {
     const URL: &str =
         "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
@@ -546,6 +549,7 @@ fn wfcd_category_to_display(wfcd_cat: &str) -> &'static str {
 /// Fetch relic → reward mappings from WFCD Relics.json.
 /// Each entry is one specific refinement (Bronze/Silver/Gold/Platinum) with a
 /// uniqueName that matches the EE.log path exactly — no normalization needed.
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<String, Vec<RelicReward>> {
     const URL: &str =
         "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json";
@@ -610,6 +614,7 @@ fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<Stri
     result
 }
 
+#[tracing::instrument(level = "debug", skip_all)]
 fn fetch_from_wfcd() -> Result<FetchResult, String> {
     let mut items: Vec<WfcdItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();

@@ -25,6 +25,7 @@ fn avg_brightness(pixels: &[u8]) -> u32 {
 /// from the very top of the frame (FPS counters, ping overlays, etc.) without cropping.
 /// capture_info describes which path was used and the pixel brightness, for session logging.
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "info", skip_all)]
 pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)> {
     // ── Path A: PrintWindow (Windowed / Borderless Windowed) ──────────────────
     if let Some((pixels, w, cap_h, full_h)) = capture_printwindow() {
@@ -68,6 +69,7 @@ pub fn capture_warframe_reward_area() -> Option<(Vec<u8>, u32, u32, u32, String)
 
 /// GDI PrintWindow capture — works for Windowed and Borderless Windowed.
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "debug", skip_all)]
 fn capture_printwindow() -> Option<(Vec<u8>, u32, u32, u32)> {
     use std::mem;
     use windows_sys::Win32::{
@@ -137,6 +139,7 @@ fn capture_printwindow() -> Option<(Vec<u8>, u32, u32, u32)> {
 /// Capture the Warframe window using PrintWindow and return raw BGRA pixels + dimensions.
 /// Single capture can be reused for multiple OCR regions via `ocr_pixels_rect`.
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "info", skip_all)]
 pub fn capture_warframe_pixels() -> Result<(Vec<u8>, u32, u32), String> {
     use std::mem;
     use windows_sys::Win32::{
@@ -396,6 +399,7 @@ fn capture_screen_gdi_scaled(num: u32, denom: u32) -> Option<(Vec<u8>, u32, u32)
 /// for any number of monitors, any primary/secondary arrangement, and any resolution.
 /// Falls back to the primary monitor if the Warframe window can't be found.
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "debug", skip_all)]
 fn capture_dxgi(cap_frac: f32) -> Option<(Vec<u8>, u32, u32, u32)> {
     use windows::core::Interface; // required for .cast() on COM types
     use windows::Win32::Graphics::{
@@ -572,6 +576,7 @@ pub fn to_bmp(pixels_bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
 /// Run Windows.Media.Ocr on a BMP. Returns (full_text, line_positions).
 /// line_positions: Vec<(line_text, x_frac)> — X centre per line from word bounding rects.
 #[cfg(target_os = "windows")]
+#[tracing::instrument(level = "info", skip_all)]
 pub fn run_windows_ocr(bmp: Vec<u8>, img_w: u32, img_h: u32) -> Result<(String, Vec<(String, f32, f32)>), String> {
     // Ensure COM is initialized for this thread. Tokio spawn_blocking threads
     // start without a COM apartment; WinRT calls fail or return empty silently.
