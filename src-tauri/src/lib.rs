@@ -18,6 +18,7 @@ use tauri::{Emitter, Manager, State};
 
 mod console_login; // [console-login feature] remove this line to drop the feature
 mod db;
+mod logging;
 mod memory_scanner;
 mod ocr;
 mod wfcd;
@@ -8428,6 +8429,8 @@ pub fn run() {
         })
         .setup(|app| {
             use tauri::Manager;
+
+            logging::init(app.handle());
 
             // Spin up a tiny local HTTP server that serves cached item images from disk.
             // This is more reliable than convertFileSrc (which needs assetProtocol scope).

@@ -28,6 +28,10 @@ tungstenite = { version = "0.26", features = ["native-tls"] }
 native-tls = "0.2"
 whirlpool = "0.10"
 lzma-rs = "0.3"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [profile.dev]
 opt-level = 1
