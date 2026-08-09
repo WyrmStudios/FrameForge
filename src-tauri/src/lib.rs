@@ -2107,6 +2107,35 @@ fn parse_stat_groups(s: &str) -> Vec<Vec<String>> {
     all
 }
 
+/// Whether `text` (already lowercased) carries the riven screen's "FITS IN"
+/// panel label. The label is small enough on a 4K frame that an engine can close
+/// the word gap and report "FITSIN", so both sides are compared with spaces
+/// removed.
+fn says_fits_in(text: &str) -> bool {
+    text.replace(' ', "").contains("fitsin")
+}
+
+/// Weapon-name candidates from the "FITS IN" panel's OCR, top to bottom.
+///
+/// The panel is mostly icon and border debris (single glyphs, punctuation)
+/// with the weapon name and the panel's own buttons as the only real words, so a
+/// candidate is a line of at least four letters that is not one of those
+/// buttons. The name sits below the "FITS IN" label and above "SHOW RANKED",
+/// which is why callers take the last candidate rather than the first.
+fn panel_weapon_candidates(panel: &str) -> Vec<String> {
+    panel
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| {
+            l.chars().filter(|c| c.is_alphabetic()).count() >= 4
+                && !says_fits_in(l)
+                && !l.contains("show ranked")
+                && !l.contains("close")
+                && !l.contains("cancel")
+        })
+        .collect()
+}
+
 /// Rejoin a riven card's OCR text into one line per stat.
 ///
 /// A stat starts with `+<digit>`, `-<digit>` or `x<digit>`; the digit matters
@@ -2473,6 +2502,7 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
 
     let mut text = String::new();
     let mut full_text_for_fallback = String::new();
+    let mut panel_for_weapon = String::new();
     let mut confirmed = false;
 
     for attempt in 0..MAX_ATTEMPTS {
@@ -2481,10 +2511,16 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         }
 
         let riven_log2 = riven_log.clone();
-        // One PrintWindow capture; two OCR passes from the same pixels:
+        // One PrintWindow capture; three OCR passes from the same pixels:
         //   • Full width (0–100%) for validation markers ("INVENTORY/MODS" + "FITS IN")
         //   • Card column only (20–65%) for stat parsing — excludes the right panel whose
         //     "FITS IN" / weapon label text can interfere with reading the card's bottom stats.
+        //   • The "FITS IN" panel (73–100%), which is the only place on the screen
+        //     that states the weapon outright. Same rect riven_screen_visible reads
+        //     the marker from, but carried to 95% of frame height rather than 80%:
+        //     the weapon name sits under the panel's icon at about 86%, below both
+        //     that bound and the full-frame pass's 82%, so nothing could read it.
+        //     Raw OCR, as in riven_screen_visible, because the panel is white on dark.
         let attempt_result = tokio::task::spawn_blocking(move || {
             let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
             let px = ocr::capture_warframe_pixels().map_err(|e| format!("Capture: {}", e))?;
@@ -2493,17 +2529,19 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
                 .unwrap_or_default();
             let card_text = ocr::ocr_pixels_rect(&pixels, w, h, 0.20, 0.65, 0.28, 0.82)
                 .unwrap_or_default();
+            let panel_text = ocr::ocr_pixels_rect_raw(&pixels, w, h, 0.73, 1.0, 0.30, 0.95)
+                .unwrap_or_default();
             let _ = append_to_file(&riven_log2, &format!(
-                "[STEP 2] OCR attempt {} — {}\n├─ Full text:\n{}\n└─ Card text:\n{}\n\n",
-                attempt + 1, ts, full_text, card_text
+                "[STEP 2] OCR attempt {} — {}\n├─ Full text:\n{}\n├─ Panel text:\n{}\n└─ Card text:\n{}\n\n",
+                attempt + 1, ts, full_text, panel_text, card_text
             ));
-            Ok::<_, String>((full_text, card_text))
+            Ok::<_, String>((full_text, panel_text, card_text))
         }).await.map_err(|e| format!("Task: {}", e))??;
 
-        let (full_text, card_text) = attempt_result;
+        let (full_text, panel_text, card_text) = attempt_result;
         let lower = full_text.to_lowercase();
         let has_header  = lower.contains("inventory") || lower.contains("mods");
-        let has_fits_in = lower.contains("fits in");
+        let has_fits_in = says_fits_in(&lower) || says_fits_in(&panel_text.to_lowercase());
 
         let _ = append_to_file(&riven_log, &format!(
             "[STEP 2] attempt {} — header={} fits_in={}\n",
@@ -2521,6 +2559,7 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         if (has_header && has_fits_in) || (has_header && comparison_likely) {
             text = card_text;
             full_text_for_fallback = full_text;
+            panel_for_weapon = panel_text;
             confirmed = true;
             if comparison_likely && !has_fits_in {
                 let _ = append_to_file(&riven_log, &format!(
@@ -2531,6 +2570,7 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         }
         text = card_text;
         full_text_for_fallback = full_text;
+        panel_for_weapon = panel_text;
     }
 
     if !confirmed {
@@ -2612,13 +2652,28 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
         None
     };
 
-    let weapon = lines.iter().enumerate()
-        .find(|(_, l)| l.to_lowercase().contains("fits in"))
-        .and_then(|(i, _)| lines.get(i + 1))
-        .and_then(|l| {
-            let lc = l.trim().to_lowercase();
-            find_in_db(&lc).or(Some(lc))
-        })
+    // The "FITS IN" panel is the only place the game states the weapon outright,
+    // and it states the real one: a Kuva Nukor riven is titled "Nukor Crita-
+    // hexapha" above the card, which resolves to the ordinary Nukor and its
+    // different disposition.
+    //
+    // The grading sheet is a curated list, not a weapon index. It carries
+    // "kuva bramma" but not "kuva nukor", so a panel name it does not know is
+    // still the right answer. Reporting it unmatched costs the roll analysis
+    // (`analyze_riven` returns nothing for an unknown weapon, which the UI
+    // already handles) and buys not silently grading a Kuva Nukor as the base
+    // Nukor it is titled after, on a different disposition.
+    let panel_candidates = panel_weapon_candidates(&panel_for_weapon);
+    let weapon = panel_candidates.iter()
+        .find_map(|l| find_in_db(l))
+        .or_else(|| panel_candidates.last().cloned())
+        .or_else(|| lines.iter().enumerate()
+            .find(|(_, l)| says_fits_in(&l.to_lowercase()))
+            .and_then(|(i, _)| lines.get(i + 1))
+            .and_then(|l| {
+                let lc = l.trim().to_lowercase();
+                find_in_db(&lc).or(Some(lc))
+            }))
         // Fallback: first non-stat, non-UI line is the mod name "WeaponName RivenId".
         // Only accept if it matches a weapon in the DB — avoids returning currency values
         // like "D '5,598" (Endo count) that pass the basic filter.
@@ -8809,6 +8864,35 @@ X N,
             join_wrapped_stat_lines("+50% Critical Chance\nMR-1\n"),
             vec!["+50% Critical Chance"]
         );
+    }
+
+    /// Verbatim panel OCR from three reroll screens. The weapon name has to
+    /// survive whether or not the grading sheet lists it: "kuva nukor" is not in
+    /// the sheet, and reporting the base Nukor in its place would grade the roll
+    /// against a different weapon's disposition.
+    #[test]
+    fn the_panel_yields_the_weapon_name_over_its_own_chrome() {
+        let nukor = "o\n=\n\\\n[\"\no\nIN\nﬁ ‘A l“')\n—\nKuva Nukor\n";
+        assert_eq!(panel_weapon_candidates(nukor).last().unwrap(), "kuva nukor");
+
+        let bramma = "-\nD\n)\nA\n~\n3\n¥\nFITSIN\ne\nKuva Bramma\nSHOW RANKED\n";
+        assert_eq!(panel_weapon_candidates(bramma).last().unwrap(), "kuva bramma");
+
+        // The single-card screen adds a CLOSE button below SHOW RANKED.
+        let single = "\\\nE_ 3\n-\n-~\nFITSIN\n@\nKuva Bramma\nSHOW RANKED\nCLOSE\n";
+        assert_eq!(panel_weapon_candidates(single).last().unwrap(), "kuva bramma");
+
+        // A panel that read as nothing but debris must not name a weapon.
+        assert!(panel_weapon_candidates("\\“ \\\n>~ ‘\n").is_empty());
+    }
+
+    /// The label is small enough that an engine can close the word gap.
+    #[test]
+    fn the_fits_in_marker_is_matched_without_its_space() {
+        assert!(says_fits_in("fitsin"));
+        assert!(says_fits_in("fits in"));
+        assert!(says_fits_in("e\nfitsin\nkuva bramma"));
+        assert!(!says_fits_in("inventory/mods"));
     }
 
     /// Titles must not glue onto a stat, and a negative stat is a real curse
