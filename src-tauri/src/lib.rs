@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use tracing::{debug, error, info, warn};
 
 /// Write `data` to `path` atomically: write to a `.tmp` sibling, then rename over the target.
 /// Prevents zero-byte corruption if the process or OS crashes mid-write.
@@ -28,10 +28,12 @@ mod ocr;
 // ── BEGIN ocrs fallback ─────────────────────────────────────────────────────
 mod ocr_fallback;
 // ── END ocrs fallback ───────────────────────────────────────────────────────
+mod resolver;
 mod wfcd;
 mod wfm;
 
-use db::{QuantityChange, SnapshotPoint, Trade, TrackedItem};
+use db::{QuantityChange, SnapshotPoint, TrackedItem, Trade};
+use resolver::ItemResolver;
 use wfcd::{RecipeComponent, SyndicateOffer, WfcdItem};
 use wfm::{to_wfm_slug, Wfm, WfmItem, WfmPrice, WfmRivenAttribute, WfmTopItem};
 
@@ -3589,7 +3591,11 @@ fn get_item_price(item_name: String, state: State<AppState>) -> Result<Option<u3
         let cache_path = &state.inventory_state_cache_path;
         let mut inv = load_inventory_state_cache(cache_path);
         let items = state.wfcd_items.lock().map_err(|e| e.to_string())?;
-        if let Some(item) = items.iter().find(|i| i.name == item_name) {
+        // Key the cache entry on the canonical unique_name, not the display string.
+        let unique = ItemResolver::from_items(&items)
+            .by_display(&item_name)
+            .map(|r| r.unique_name.clone());
+        if let Some(item) = unique.and_then(|u| items.iter().find(|i| i.unique_name == u)) {
             let cat = fix_category(&item.name, &item.item_type, &item.product_category, &item.category, &item.unique_name);
             let tradeable = item.ducats.is_some() || matches!(cat.as_str(), "Mods" | "Arcanes");
             if tradeable {
@@ -3649,20 +3655,25 @@ fn start_wfm_queue(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
     // Items are loaded once and the thread keeps this snapshot (items rarely change).
     let slug_map: HashMap<String, (String, bool)> = {
         let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
+        let resolver = ItemResolver::from_items(&items);
         let mut m = HashMap::new();
         for item in items.iter() {
-            let slug = to_wfm_slug(&item.name);
-            let cat = fix_category(&item.name, &item.item_type, &item.product_category, &item.category, &item.unique_name);
+            let cat = fix_category(
+                &item.name,
+                &item.item_type,
+                &item.product_category,
+                &item.category,
+                &item.unique_name,
+            );
             let tradeable = item.ducats.is_some() || matches!(cat.as_str(), "Mods" | "Arcanes");
-            if tradeable {
-                m.insert(slug.clone(), (item.unique_name.clone(), true));
-                // Register both blueprint and non-blueprint variants.
-                if slug.ends_with("_blueprint") {
-                    m.insert(slug[..slug.len() - "_blueprint".len()].to_string(),
-                             (item.unique_name.clone(), true));
-                } else {
-                    m.insert(format!("{}_blueprint", slug), (item.unique_name.clone(), true));
-                }
+            if !tradeable {
+                continue;
+            }
+            let Some(resolved) = resolver.by_unique(&item.unique_name) else {
+                continue;
+            };
+            for slug in resolver::slug_variants(&resolved.slug) {
+                m.insert(slug, (item.unique_name.clone(), true));
             }
         }
         m
@@ -3679,7 +3690,8 @@ fn start_wfm_queue(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
             let slug = {
                 let mut pq = priority_queue.lock().unwrap_or_else(|e| e.into_inner());
                 pq.pop_front()
-            }.or_else(|| {
+            }
+            .or_else(|| {
                 let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
                 q.pop_front()
             });
