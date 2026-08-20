@@ -1440,11 +1440,9 @@ pub fn extract_reward_items_twophase(
 
 /// Post-OCR reward matching: rarity bars → card columns → catalog match → fill.
 ///
-/// Split out from `extract_reward_items_twophase` so the pure text logic can be
-/// driven with recorded OCR lines, independent of the platform-specific capture
-/// and OCR path. `pixels` is still needed for the rarity-bar and card-icon
-/// probes; pass the captured frame, or an empty slice when replaying recorded
-/// lines (bar detection then returns no bars and the text path is exercised).
+/// `pixels` feeds the rarity-bar and card-icon probes. Pass the captured frame,
+/// or an empty slice when replaying recorded OCR lines (bar detection then
+/// finds no bars and the text path runs).
 fn match_reward_items(
     pixels: &[u8], pix_w: u32, pix_h: u32,
     raw_full: &str,
@@ -1801,21 +1799,14 @@ fn match_reward_items(
         .max(if bars_trusted { card_centers.len() } else { 0 })
         .max(1);
 
-    // The fill may only recover cards the OCR actually saw. Every real card
-    // leaves text in its column, so the number of columns that carried text is
-    // the ceiling on how many items can exist. estimated_cards can exceed it when
-    // a signal over-counts — a hovered card's description tooltip adds a stray
-    // "Prime" token, or item artwork trips a phantom rarity bar — and the fill was
-    // padding that surplus with a catalog item assembled from the other cards'
-    // shared "prime"/"chassis"/"blueprint" words (fuzzy matching even lets an
-    // absent model name like "trinity" register), inventing a reward for a column
-    // that showed nothing. Cap the fill at the columns with text; estimated_cards
-    // is left untouched so is_complete still waits for every card to be read
-    // across retries rather than locking on a partial frame.
+    // Every real card leaves text in its column, so columns with text cap the
+    // fill. estimated_cards can over-count (a tooltip's stray "Prime" token, a
+    // phantom rarity bar) and an uncapped fill invents a reward for an empty
+    // column. estimated_cards stays untouched so is_complete still waits for
+    // every card across retries.
     //
-    // Trade-off: a card whose text collapsed into a neighbour's column is no
-    // longer recovered by guessing from the whole frame. That is rare once the
-    // columns are spread apart, and a fabricated reward is the worse outcome.
+    // Known limit: a card whose text collapsed into a neighbour's column is not
+    // recovered.
     let fill_limit = estimated_cards.min(
         columns.iter().filter(|(t, _)| !build_word_set(t).is_empty()).count()
     );
@@ -2060,15 +2051,11 @@ mod tests {
         assert!(bar_centers_are_valid(&[0.24, 0.41, 0.59, 0.76]));
     }
 
-    /// Hovering a reward card makes the game render its description tooltip
-    /// ("A prime weapon-crafting component.") and repeat the card title in caps.
-    /// Those lines add stray "Prime" tokens that push the card-count estimate to
-    /// four on a three-card screen, and the full-frame fill then fabricates a
-    /// catalog item — a reward that was never on screen — to reach that count.
-    ///
-    /// The OCR lines below are the exact ones the live pipeline read from a
-    /// three-player run whose overlay showed a phantom "Trinity Prime Chassis
-    /// Blueprint" alongside the three real rewards.
+    /// A hovered card's tooltip and caps-repeated title add stray "Prime"
+    /// tokens. They push the card-count estimate to four on a three-card
+    /// screen, and an uncapped fill fabricates a fourth reward. The OCR lines
+    /// are from a live run that showed a phantom "Trinity Prime Chassis
+    /// Blueprint".
     #[test]
     fn a_hovered_card_tooltip_does_not_fabricate_a_fourth_reward() {
         let lines: &[(&str, f32, f32)] = &[
@@ -2103,10 +2090,8 @@ mod tests {
         // prime_count scans the whole-frame text, so raw_full must carry every token.
         let raw_full = lines.iter().map(|(t, _, _)| *t).collect::<Vec<_>>().join(" ");
 
-        // The three real rewards, plus the sibling and look-alike families that
-        // share their component words — enough for the full-frame fill to prefer a
-        // fabricated fourth (as the live catalog did). Each name doubles as its own
-        // key, matching the live catalog shape.
+        // The three real rewards plus look-alike families that share their
+        // component words, so the fill has a fabricated fourth to prefer.
         let catalog: Vec<(String, String)> = [
             "Lex Prime Barrel", "Lex Prime Blueprint", "Lex Prime Receiver",
             "Lavos Prime Blueprint", "Lavos Prime Chassis Blueprint",
@@ -2129,9 +2114,9 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
 
-        // A small black frame yields no rarity bars, so matching takes the same
-        // hardcoded-column path the live capture used after its (bunched) bars
-        // were rejected. The phantom is produced by the text fill, not the bars.
+        // A black frame yields no rarity bars, so matching takes the
+        // hardcoded-column path. The phantom comes from the text fill, not the
+        // bars.
         let pixels = vec![0u8; 8 * 8 * 4];
 
         let (_complete, _skip, items, _positions, diag) = match_reward_items(

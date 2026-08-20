@@ -22,6 +22,7 @@ use tauri::{Emitter, Manager, State};
 mod console_login; // [console-login feature] remove this line to drop the feature
 mod db;
 mod logging;
+mod mem_regions;
 mod memory_scanner;
 mod ocr;
 // ── BEGIN ocrs fallback ─────────────────────────────────────────────────────
@@ -113,8 +114,7 @@ pub struct AppState {
     /// When true, save the raw DE API response to api_logs/ on each fetch.
     pub api_log_enabled: Arc<AtomicBool>,
     pub api_log_dir: PathBuf,
-    /// The warframe.market client: session, rate limiters, and the slug → price
-    /// cache all live behind this one seam, shared (Arc) with the prefetch thread.
+    /// The warframe.market client, shared (Arc) with the prefetch thread.
     pub wfm: Arc<Wfm>,
     /// Slugs waiting for a price fetch (normal priority). Drained by the WFM queue thread.
     pub wfm_price_queue: Arc<Mutex<std::collections::VecDeque<String>>>,
@@ -1343,12 +1343,7 @@ async fn fetch_warframe_inventory(account_id: String, nonce: String, steam_id: S
     Err(last_err)
 }
 
-// ─── Warframe.market ──────────────────────────────────────────────────────────
-
 // ─── Warframe.market trading ──────────────────────────────────────────────────
-// The WFM client lives in `wfm.rs`; the command handlers below are thin adapters
-// over `state.wfm`. Session acquisition (this login webview) and keyring
-// persistence stay here at the Tauri boundary.
 
 /// Open warframe.market signin in an embedded WebView.
 /// Emits `wfm-login-window-closed` if the window is closed before auth completes.
@@ -1656,12 +1651,10 @@ struct WfmTopDiskCache {
 async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>, String> {
     const TOP_TTL: std::time::Duration = std::time::Duration::from_secs(3 * 3600);
 
-    // In-memory cache, fresh within the TTL — the client owns it.
     if let Some(items) = state.wfm.cached_top_items(TOP_TTL) {
         return Ok(items);
     }
 
-    // Disk cache — survives app restarts.
     let disk_cache_path = state.wfm_top_cache_path.clone();
     if let Ok(s) = std::fs::read_to_string(&disk_cache_path) {
         if let Ok(dc) = serde_json::from_str::<WfmTopDiskCache>(&s) {
@@ -2182,8 +2175,6 @@ fn get_weapon_dispositions(state: State<AppState>) -> HashMap<String, f32> {
 
 /// Guards against concurrent scans: only one get_wfm_top_items scan runs at a time.
 /// Concurrent callers wait (polling the cache) rather than starting a second scan.
-/// Scan orchestration is the command's concern; the cached result it produces
-/// lives in `Wfm`.
 static WFM_SCAN_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -3439,8 +3430,6 @@ fn record_new_auction_id(state: &State<AppState>, json: &serde_json::Value) {
 }
 
 /// Switch a riven auction between Auction and Direct Sale types.
-/// The close-and-recreate lives in `Wfm`; here we reconcile the stored auction
-/// ids — drop the closed one, record its replacement.
 #[tauri::command]
 fn wfm_switch_riven_type(
     state: State<AppState>,
@@ -3491,8 +3480,8 @@ fn fetch_wfm_items(state: State<AppState>) -> Result<Vec<WfmItem>, String> {
 /// removed — WFM is inconsistent about whether component blueprints include it.
 #[tauri::command]
 fn fetch_wfm_price(state: State<AppState>, url_name: String) -> Result<WfmPrice, String> {
-    // A lookup that errors and one that finds no listing both surface the same way
-    // to the UI — no price — so `price_with_fallback` collapsing both to None is fine.
+    // An error and a missing listing both show as "no price" in the UI, so both
+    // collapse to None.
     let sell_median = state.wfm.price_with_fallback(&url_name).map(|p| p as f64);
     Ok(WfmPrice { url_name, sell_median, buy_median: None })
 }

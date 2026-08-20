@@ -1,17 +1,9 @@
-// ==============================================================================
-// warframe.market client
-// ==============================================================================
-//
-// `Wfm` is the single seam to warframe.market. A caller names an endpoint and
-// gets a result; the rate limits, the Bearer-vs-`JWT` auth scheme, the CSRF
-// dance and the blueprint-slug retry quirk all live behind the interface rather
-// than in the ~40 command handlers that used to reach for them by hand.
-//
-// What stays *outside* this module, at the Tauri boundary: acquiring a session
-// (the login webview + injected token scrape needs an `AppHandle`), persisting
-// it to the OS keyring, the price-prefetch queue and its event emission, and the
-// multi-source pricing glue. Those speak to the OS or to the app; `Wfm` speaks
-// only WFM.
+//! warframe.market client.
+//!
+//! `Wfm` holds the session, the rate limiters, the Bearer-vs-`JWT` auth scheme,
+//! the CSRF token, and the blueprint-slug retry quirk. Session acquisition (the
+//! login webview needs an `AppHandle`), keyring persistence, the price-prefetch
+//! queue, and the multi-source pricing glue stay in `lib.rs`.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -22,9 +14,7 @@ use tracing::{debug, info, warn};
 const API_BASE: &str = "https://api.warframe.market";
 const USER_AGENT: &str = "FrameForge/3.2.0";
 
-// ==============================================================================
-// Wire types
-// ==============================================================================
+// ─── Wire types ───────────────────────────────────────────────────────────────
 
 /// The warframe.market login state — a token bundle, never the credentials that
 /// produced it. Held in memory only; the boundary persists it to the keyring.
@@ -91,14 +81,11 @@ pub struct WfmPrice {
     pub buy_median: Option<f64>,
 }
 
-// ==============================================================================
-// Rate limiter
-// ==============================================================================
-//
-// A sliding-window limiter. `try_acquire` records a slot or reports how long to
-// sleep; the caller sleeps *after* the lock is released so no request blocks
-// another while merely waiting its turn.
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
 
+// Sliding-window rate limiter. `try_acquire` records a slot or reports how
+// long to sleep. The caller sleeps after it releases the lock, so a waiting
+// request does not block the others.
 struct RateLimiter {
     times: VecDeque<Instant>,
     limit: usize,
@@ -131,9 +118,7 @@ impl RateLimiter {
     }
 }
 
-// ==============================================================================
-// The client
-// ==============================================================================
+// ─── The client ───────────────────────────────────────────────────────────────
 
 pub struct Wfm {
     session: Mutex<Option<WfmSession>>,
@@ -169,7 +154,6 @@ impl Wfm {
 
     // ── Rate limiting (internal) ──────────────────────────────────────────────
 
-    /// Block until the general 3/sec budget allows another request.
     fn wait(&self) {
         loop {
             let sleep_dur = self.limiter.lock().unwrap_or_else(|e| e.into_inner()).try_acquire();
@@ -311,17 +295,15 @@ impl Wfm {
             })
     }
 
-    /// Overwrite the in-memory status so `identity()` reflects a status change.
     fn set_cached_status(&self, status: String) {
         if let Some(s) = self.session.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             s.status = status;
         }
     }
 
-    /// GET /v2/me with a Bearer token and return the parsed body. The three
-    /// callers that validate a token *before* it lives in the session can't route
-    /// through `self.call` (which reads the token from the session), so they share
-    /// this instead. `err_ctx` prefixes the failure string each caller wants.
+    /// GET /v2/me with an explicit Bearer token, for validating a token before
+    /// it is in the session (`self.call` reads its token from the session).
+    /// `err_ctx` prefixes the failure string.
     fn me(&self, access_token: &str, err_ctx: &str) -> Result<serde_json::Value, String> {
         self.wait();
         ureq::get(&format!("{}/v2/me", API_BASE))
@@ -737,7 +719,6 @@ impl Wfm {
             .map(|j| j["data"].clone())
     }
 
-    /// Update an order's price, quantity, or visibility.
     pub fn update_order(
         &self,
         order_id: &str,
@@ -755,7 +736,6 @@ impl Wfm {
             .map(|j| j["data"].clone())
     }
 
-    /// Delete an order.
     pub fn delete_order(&self, order_id: &str) -> Result<(), String> {
         let auth = self.auth()?;
         self.wait();
@@ -860,7 +840,7 @@ impl Wfm {
     ) -> Result<serde_json::Value, String> {
         let auth = self.v1_auth()?;
 
-        // Fetch the full detail so every field (attributes, polarity, ...) carries over.
+        // Fetch the full entry so every field carries over to the replacement.
         self.auction_wait();
         let entry: serde_json::Value = self
             .call("GET", &format!("/v1/auctions/entry/{}", auction_id), &auth)
@@ -883,12 +863,10 @@ impl Wfm {
         let note = auction["note"].as_str().unwrap_or("").to_string();
         let minimal_reputation = auction["minimal_reputation"].as_u64().unwrap_or(0) as u32;
 
-        // Close the old auction.
         self.auction_wait();
         self.call("PUT", &format!("/v1/auctions/entry/{}/close", auction_id), &auth)
             .map_err(auction_error("Delete auction"))?;
 
-        // Create the replacement with the chosen type.
         let mut payload = serde_json::json!({
             "item":               item_payload,
             "starting_price":     starting_price,
@@ -933,7 +911,6 @@ impl Wfm {
         Ok(())
     }
 
-    /// Toggle an auction's visibility.
     pub fn set_auction_visible(&self, auction_id: &str, visible: bool) -> Result<(), String> {
         let auth = self.v1_auth()?;
         self.auction_wait();
@@ -1144,7 +1121,6 @@ impl Wfm {
         self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(slug);
     }
 
-    /// A clone of the whole slug → price cache.
     pub fn cached_prices(&self) -> std::collections::HashMap<String, Option<u32>> {
         self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -1167,9 +1143,7 @@ impl Wfm {
     }
 }
 
-// ==============================================================================
-// Pure helpers (no session, no network) — the tested core
-// ==============================================================================
+// ─── Pure helpers (no session, no network) ────────────────────────────────────
 
 /// Convert a display name to a warframe.market URL slug.
 /// E.g. "Ash Prime Neuroptics Blueprint" → "ash_prime_neuroptics_blueprint"
@@ -1211,7 +1185,7 @@ fn jwt_payload_field(jwt: &str, field: &str) -> Option<String> {
     json[field].as_str().map(|s| s.to_string())
 }
 
-/// Minimal base64url decoder (no external crate). Tolerates missing padding.
+/// Hand-rolled to avoid a base64 dependency. Tolerates missing padding.
 fn base64_decode_url(s: &str) -> Option<Vec<u8>> {
     let s = s.replace('-', "+").replace('_', "/");
     let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
@@ -1275,9 +1249,7 @@ fn auction_error(action: &'static str) -> impl Fn(ureq::Error) -> String {
     }
 }
 
-// ==============================================================================
-// Tests — the pure core, no network
-// ==============================================================================
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

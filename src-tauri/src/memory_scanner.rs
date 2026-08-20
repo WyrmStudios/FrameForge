@@ -852,13 +852,9 @@ pub fn reset_last_blob_region() {
 
 #[cfg(target_os = "windows")]
 const MAX_READ: usize = 64 * 1024 * 1024;
-#[cfg(target_os = "windows")]
 const MAX_SCAN: usize = 20 * 1024 * 1024;
-#[cfg(target_os = "windows")]
 const MISSION_DELTA: &[u8] = b"\"InventoryChanges\":";
-#[cfg(target_os = "windows")]
 const LOTUS_KEY: &[u8] = b"/Lotus/";
-#[cfg(target_os = "windows")]
 const ANCHORS: &[&[u8]] = &[
     b"\"SubscribedToEmails\"",
     b"\"MiscItems\":[",
@@ -894,97 +890,92 @@ const ANCHORS: &[&[u8]] = &[
 #[cfg(target_os = "windows")]
 #[tracing::instrument(level = "debug", skip_all, fields(save = save))]
 pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::sync::mpsc::Sender<BlobInventory>, save: bool) -> usize {
-    use std::ffi::c_void;
-    use std::mem;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, FALSE},
-        System::{
-            Diagnostics::Debug::ReadProcessMemory,
-            Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_IMAGE, PAGE_GUARD, PAGE_NOACCESS},
-            Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
-        },
-    };
+    const MIN_REGION: usize = 64_000;
 
     let pid = match find_warframe_pid_pub() { Some(p) => p, None => return 0 };
-    let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid) };
-    if process == 0 { return 0; }
-
-    const MIN_REGION:    usize = 64_000;   // skip regions smaller than 64 KB
-    const MAX_BLOBS:     usize = 25;
-
-    // Executable pages never contain heap data — safe to skip.
-    const PAGE_EXECUTE:      u32 = 0x10;
-    const PAGE_EXECUTE_READ: u32 = 0x20;
-    const PAGE_EXECUTE_RW:   u32 = 0x40;
-    const PAGE_EXECUTE_WC:   u32 = 0x80;
-    const EXEC_MASK: u32 = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_RW | PAGE_EXECUTE_WC;
-
-    // Fast path: try the cached region from last successful scan.
+    let mut src = match crate::mem_regions::WindowsRegionSource::open(pid, MIN_REGION, MAX_READ) {
+        Some(s) => s,
+        None => return 0,
+    };
+    // A debug capture wants every blob in memory, so it always takes the cold walk.
     let cached_addr = LAST_BLOB_REGION.load(std::sync::atomic::Ordering::Relaxed) as usize;
-    if cached_addr != 0 && !save {
-        let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
-        let ok = unsafe { VirtualQueryEx(process, cached_addr as *const c_void, &mut mbi,
-            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } != 0;
-        if ok && mbi.State == MEM_COMMIT
-            && mbi.Protect & PAGE_GUARD == 0
-            && mbi.Protect & PAGE_NOACCESS == 0
-        {
-            let read_cap = mbi.RegionSize.min(MAX_READ);
-            let mut buf = vec![0u8; read_cap];
-            let mut n = 0usize;
-            let read_ok = unsafe { ReadProcessMemory(process, cached_addr as *const c_void,
-                buf.as_mut_ptr() as *mut c_void, read_cap, &mut n) } != 0 && n >= 8;
-            if read_ok {
-                let chunk = &buf[..n];
-                let is_mission = memchr::memmem::find(chunk, MISSION_DELTA).is_some();
-                let has_anchor = ANCHORS.iter().any(|a| memchr::memmem::find(chunk, a).is_some());
-                let has_lotus  = memchr::memmem::find(chunk, LOTUS_KEY).is_some();
-                if !is_mission && (has_anchor || has_lotus) && chunk.starts_with(b"{\"") {
-                    let mut stitched = chunk.to_vec();
-                    let mut walk = cached_addr + n;
-                    while stitched.len() < MAX_SCAN && find_blob_end(&stitched).is_none() {
-                        let mut nmbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
-                        if unsafe { VirtualQueryEx(process, walk as *const c_void, &mut nmbi,
-                            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 { break; }
-                        let nr = nmbi.BaseAddress as usize;
-                        let ns = nmbi.RegionSize;
-                        walk = nr + ns;
-                        if nmbi.State != MEM_COMMIT
-                            || nmbi.Protect & PAGE_GUARD != 0
-                            || nmbi.Protect & PAGE_NOACCESS != 0
-                            || ns == 0 { continue; }
-                        let cap = ns.min(MAX_READ);
-                        let mut nb = vec![0u8; cap];
-                        let mut nn = 0usize;
-                        if unsafe { ReadProcessMemory(process, nr as *const c_void,
-                            nb.as_mut_ptr() as *mut c_void, cap, &mut nn) } == 0 { continue; }
-                        stitched.extend_from_slice(&nb[..nn]);
-                    }
-                    // Require the FULL_ACCOUNT start marker — mission-context blobs
-                    // at the cached address pass the anchor check but lack this field.
-                    if memchr::memmem::find(&stitched, START_MARKER).is_some() {
-                        if let Some(inv) = parse_full_account_blob(&stitched) {
-                            info!(addr = format_args!("0x{cached_addr:012x}"),
-                                unique = inv.unique_items.len(),
-                                stackable = inv.stackable_items.len(),
-                                "fast-path hit");
-                            blob_tx.send(inv).ok();
-                            unsafe { CloseHandle(process); }
-                            return 0;
-                        }
-                    }
+    if !save && cached_addr != 0 && try_cached_blob(&src, cached_addr, &blob_tx) {
+        return 0;
+    }
+    let saved = stitch_blobs(&mut src, blob_dir, ts, blob_tx, save);
+    let (regions_skipped, vquery_ms, read_ms) = src.stats();
+    debug!(
+        target: "frameforge::blob_capture",
+        regions_skipped, vquery_ms, read_ms,
+        "source stats"
+    );
+    saved
+}
+
+/// Re-read the region that produced the last successful scan and stitch forward
+/// from it. Returns true once that yields an inventory.
+///
+/// Warframe usually keeps the blob at the same address between scans, so the
+/// common case costs one probe instead of walking every region in the process.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only tests call this off-Windows
+fn try_cached_blob(
+    src: &dyn crate::mem_regions::RegionSource,
+    cached_addr: usize,
+    blob_tx: &std::sync::mpsc::Sender<BlobInventory>,
+) -> bool {
+    if let Some((mut walk, chunk)) = src.read_at(cached_addr) {
+        let is_mission = memchr::memmem::find(&chunk, MISSION_DELTA).is_some();
+        let has_anchor = ANCHORS.iter().any(|a| memchr::memmem::find(&chunk, a).is_some());
+        let has_lotus  = memchr::memmem::find(&chunk, LOTUS_KEY).is_some();
+        if chunk.len() >= 8 && !is_mission && (has_anchor || has_lotus) && chunk.starts_with(b"{\"") {
+            let mut stitched = chunk;
+            while stitched.len() < MAX_SCAN && find_blob_end(&stitched).is_none() {
+                let Some((next_addr, bytes)) = src.read_at(walk) else { break };
+                // An empty read means an unreadable hole, and the blob cannot
+                // span one. Stopping here also bounds the walk: the byte-length
+                // condition alone never advances across empty results.
+                if bytes.is_empty() { break }
+                walk = next_addr;
+                stitched.extend_from_slice(&bytes);
+            }
+            // Require the FULL_ACCOUNT start marker: mission-context blobs
+            // at the cached address pass the anchor check but lack this field.
+            if memchr::memmem::find(&stitched, START_MARKER).is_some() {
+                if let Some(inv) = parse_full_account_blob(&stitched) {
+                    info!(addr = format_args!("0x{cached_addr:012x}"),
+                        unique = inv.unique_items.len(),
+                        stackable = inv.stackable_items.len(),
+                        "fast-path hit");
+                    blob_tx.send(inv).ok();
+                    return true;
                 }
             }
         }
-        debug!(addr = format_args!("0x{cached_addr:012x}"), "fast-path miss — falling through to cold walk");
     }
+
+    debug!(addr = format_args!("0x{cached_addr:012x}"), "fast-path miss — falling through to cold walk");
+    false
+}
+
+/// Stitch FULL_ACCOUNT blobs out of a stream of memory regions.
+///
+/// `save=true` also writes the raw JSON to `blob_dir`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only tests call this off-Windows
+fn stitch_blobs(
+    src: &mut dyn crate::mem_regions::RegionSource,
+    blob_dir: &std::path::Path,
+    ts: &str,
+    blob_tx: std::sync::mpsc::Sender<BlobInventory>,
+    save: bool,
+) -> usize {
+    const MAX_BLOBS: usize = 25;
 
     struct ActiveScan {
         data: Vec<u8>,
         id: usize,
-        /// Base address of the region where this scan was seeded (JSON start).
-        /// Used to update LAST_BLOB_REGION correctly for multi-region blobs.
-        start_region_addr: usize,
+        /// Absolute address of the JSON opening brace this scan was seeded at
+        /// (mid-region, not a region base). Cached in LAST_BLOB_REGION on success.
+        seed_addr: usize,
         /// Minimum offset at which the end-marker search should start next append.
         /// Avoids rescanning already-checked data on every region append (O(n²) → O(n)).
         search_from: usize,
@@ -1000,13 +991,9 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
     let mut pre_buf: std::collections::VecDeque<PreChunk> = std::collections::VecDeque::new();
     const PRE_BUF_BYTES: usize = 8 * 1024 * 1024; // keep ≤8 MB of prefix history
 
-    let mut addr: usize = 0;
     let mut saved = 0usize;
-    let mut regions_skipped = 0usize;
     let mut regions_read    = 0usize;
     let mut starts_found    = 0usize;
-    let mut t_vquery = std::time::Duration::ZERO;
-    let mut t_read   = std::time::Duration::ZERO;
     let mut t_search = std::time::Duration::ZERO;
     let mut bytes_read: u64 = 0;
     // Once we have at least one successful parse we stop opening new scans.
@@ -1019,46 +1006,13 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         // Early exit: we have a result and no active scans left to finish.
         if found_result && scans.is_empty() && !save { break; }
 
-        let t0 = std::time::Instant::now();
-        let mut mbi = unsafe { mem::zeroed::<MEMORY_BASIC_INFORMATION>() };
-        if unsafe { VirtualQueryEx(process, addr as *const c_void, &mut mbi,
-            mem::size_of::<MEMORY_BASIC_INFORMATION>()) } == 0 { break; }
-        t_vquery += t0.elapsed();
-
-        let region_addr = mbi.BaseAddress as usize;
-        let region_size = mbi.RegionSize;
-        let next_addr   = region_addr.saturating_add(region_size);
-        if next_addr <= addr { break; }
-        addr = next_addr;
-
-        // ── Region filters ──────────────────────────────────────────────────
-        // Skip pages that can never hold heap JSON:
-        // • must be committed and readable
-        // • skip execute-only pages (code sections, JIT stubs)
-        // • skip PE image sections — those hold string constants in the exe/DLLs,
-        //   not live heap data; they false-trigger the Lotus anchor check and
-        //   cost ~40 s scanning 20 MB+ without ever finding the blob end
-        // • skip anything smaller than MIN_REGION
-        if mbi.State   != MEM_COMMIT
-            || mbi.Protect &  PAGE_GUARD    != 0
-            || mbi.Protect &  PAGE_NOACCESS != 0
-            || mbi.Protect &  EXEC_MASK     != 0
-            || mbi.Type    == MEM_IMAGE
-            || region_size  < MIN_REGION
-        { regions_skipped += 1; continue; }
-
-        let read_cap = region_size.min(MAX_READ);
-
-        let t1 = std::time::Instant::now();
-        let mut buf = vec![0u8; read_cap];
-        let mut n = 0usize;
-        if unsafe { ReadProcessMemory(process, region_addr as *const c_void,
-            buf.as_mut_ptr() as *mut c_void, read_cap, &mut n) } == 0 || n < 8 {
-            regions_skipped += 1; continue;
-        }
-        t_read += t1.elapsed();
+        let (region_addr, buf) = match src.next_region() {
+            Some(r) => r,
+            None => break,
+        };
+        let n = buf.len();
         bytes_read += n as u64;
-        let chunk = &buf[..n];
+        let chunk = &buf[..];
         regions_read += 1;
 
         // ── Step 1: append this chunk to every active scan and check for completion ──
@@ -1085,13 +1039,13 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
                     Some(inv) => {
                         info!(
                             scan_id = scan.id,
-                            addr = format_args!("0x{region_addr:012x}"),
+                            addr = format_args!("0x{:012x}", scan.seed_addr),
                             unique = inv.unique_items.len(),
                             stackable = inv.stackable_items.len(),
                             mods = inv.mods.len(),
                             "scan SUCCESS"
                         );
-                        LAST_BLOB_REGION.store(scan.start_region_addr as u64, std::sync::atomic::Ordering::Relaxed);
+                        LAST_BLOB_REGION.store(scan.seed_addr as u64, std::sync::atomic::Ordering::Relaxed);
                         if save {
                             let name = format!("Actual_inventory_FULL_ACCOUNT_{}_{:02}.txt", ts, saved + 1);
                             let path = blob_dir.join(&name);
@@ -1130,12 +1084,20 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
         // contiguous pre-buffer regions so that the backward {"  search finds the true
         // outermost JSON opening rather than a nested {"$oid":…} inside the blob.
         if !has_start && !is_mission && (has_anchor || has_lotus) {
-            while pre_buf.iter().map(|p| p.data.len()).sum::<usize>() + n > PRE_BUF_BYTES
+            // A chunk larger than the cap would be retained whole (eviction only
+            // drops earlier entries): keep just its tail, the part contiguous
+            // with the region that follows.
+            let keep = n.min(PRE_BUF_BYTES);
+            while pre_buf.iter().map(|p| p.data.len()).sum::<usize>() + keep > PRE_BUF_BYTES
                 && !pre_buf.is_empty()
             {
                 pre_buf.pop_front();
             }
-            pre_buf.push_back(PreChunk { addr: region_addr, end_addr: region_addr + n, data: chunk.to_vec() });
+            pre_buf.push_back(PreChunk {
+                addr: region_addr + (n - keep),
+                end_addr: region_addr + n,
+                data: chunk[n - keep..].to_vec(),
+            });
         }
 
         if qualifies {
@@ -1211,7 +1173,7 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
                     }
                 }
             } else {
-                scans.push(ActiveScan { data: seed, id, start_region_addr: seed_addr, search_from: 0 });
+                scans.push(ActiveScan { data: seed, id, seed_addr, search_from: 0 });
             }
         }
     }
@@ -1219,19 +1181,15 @@ pub fn capture_all_blobs(blob_dir: &std::path::Path, ts: &str, blob_tx: std::syn
     debug!(
         target: "frameforge::blob_capture",
         regions_read,
-        regions_skipped,
         starts_found,
         saved,
         bytes_mb = bytes_read / 1_000_000,
-        vquery_ms = t_vquery.as_secs_f64() * 1000.0,
-        read_ms = t_read.as_secs_f64() * 1000.0,
         search_ms = t_search.as_secs_f64() * 1000.0,
         "capture done"
     );
     if starts_found == 0 {
         warn!(target: "frameforge::blob_capture", "no start-marker found — FULL_ACCOUNT not in memory (game in mission, on login screen, or Arsenal not open?)");
     }
-    unsafe { CloseHandle(process); }
     saved
 }
 
@@ -1705,5 +1663,106 @@ mod credential_scan_tests {
     fn steam_id_none_on_no_match() {
         let buf = b"steamId=short";
         assert_eq!(scan_steam_id(buf), None);
+    }
+}
+
+#[cfg(test)]
+mod stitch_engine_tests {
+    use super::*;
+    use crate::mem_regions::RecordedRegions;
+
+    /// Build a minimal but valid FULL_ACCOUNT blob: every section in
+    /// `parse_full_account_blob`'s REQUIRED_SECTIONS list, plus filler to push
+    /// it past the parser's 50 KB floor.
+    fn synthetic_blob(credits: i64) -> Vec<u8> {
+        let pad = "A".repeat(60_000);
+        format!(
+            concat!(
+                "{{\"SubscribedToEmails\":0,\"RegularCredits\":{credits},\"FusionPoints\":5,",
+                "\"PremiumCredits\":10,\"PlayerLevel\":3,",
+                "\"MiscItems\":[],\"XPInfo\":[],",
+                "\"Suits\":[{{\"ItemType\":\"/Lotus/Powersuits/Excalibur/Excalibur\",\"XP\":0}}],",
+                "\"Pad\":\"{pad}\",\"DeathSquadable\":false}}"
+            ),
+            credits = credits,
+            pad = pad,
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn stitches_a_blob_split_across_two_regions() {
+        let blob = synthetic_blob(100);
+        // Cut inside the filler so the start marker + Lotus anchor land in the
+        // first region and the end marker only arrives with the second.
+        let split = 30_000;
+        assert!(!blob[..split].windows(b"\"DeathSquadable\":".len())
+            .any(|w| w == b"\"DeathSquadable\":"), "end marker must fall in the second region");
+
+        let regions = vec![
+            (0x1000_usize, blob[..split].to_vec()),
+            (0x1000 + split, blob[split..].to_vec()),
+        ];
+        let mut src = RecordedRegions::new(regions);
+
+        let (tx, rx) = std::sync::mpsc::channel::<BlobInventory>();
+        stitch_blobs(&mut src, std::path::Path::new(""), "test", tx, false);
+
+        let inv = rx.try_recv().expect("engine should deliver one stitched inventory");
+        assert_eq!(inv.credits, 100);
+        assert_eq!(inv.mastery_level, 3);
+        assert!(
+            inv.unique_items.iter().any(|u| u.item_type.ends_with("/Excalibur")),
+            "the warframe from the first region survives the stitch: {:?}",
+            inv.unique_items,
+        );
+    }
+
+    /// A whole blob in one region hits the immediate-parse (`seed_ends`) path.
+    #[test]
+    fn parses_a_single_region_blob() {
+        let blob = synthetic_blob(200);
+        let mut src = RecordedRegions::new(vec![(0x2000, blob)]);
+        let (tx, rx) = std::sync::mpsc::channel::<BlobInventory>();
+        stitch_blobs(&mut src, std::path::Path::new(""), "test", tx, false);
+        let inv = rx.try_recv().expect("single-region blob should parse");
+        assert_eq!(inv.credits, 200);
+    }
+
+    /// A blob missing a REQUIRED_SECTIONS entry must be rejected, not sent:
+    /// it would wipe the displayed inventory with a partial mid-write copy.
+    #[test]
+    fn rejects_a_blob_missing_a_required_section() {
+        let blob = String::from_utf8(synthetic_blob(400))
+            .expect("synthetic blob is ASCII")
+            .replace("\"MiscItems\":[],", "");
+        let mut src = RecordedRegions::new(vec![(0x3000, blob.into_bytes())]);
+        let (tx, rx) = std::sync::mpsc::channel::<BlobInventory>();
+        stitch_blobs(&mut src, std::path::Path::new(""), "test", tx, false);
+        assert!(rx.try_recv().is_err(), "incomplete blob must not be delivered");
+    }
+
+    /// The fast path probes a cached mid-region address: the returned bytes
+    /// must start at that address (the blob's `{"`), not at the region base,
+    /// and stitching must continue into the following region.
+    #[test]
+    fn fast_path_hits_a_cached_mid_region_blob() {
+        let blob = synthetic_blob(300);
+        let prefix = 0x500;
+        let split = 30_000;
+        let mut first = vec![b'x'; prefix];
+        first.extend_from_slice(&blob[..split]);
+        let src = RecordedRegions::new(vec![
+            (0x1000, first),
+            (0x1000 + prefix + split, blob[split..].to_vec()),
+        ]);
+
+        let (tx, rx) = std::sync::mpsc::channel::<BlobInventory>();
+        assert!(
+            try_cached_blob(&src, 0x1000 + prefix, &tx),
+            "cached mid-region address should hit the fast path"
+        );
+        let inv = rx.try_recv().expect("fast path should deliver the inventory");
+        assert_eq!(inv.credits, 300);
     }
 }
