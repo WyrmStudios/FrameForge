@@ -730,6 +730,7 @@ export default function App() {
   const [diagPath, setDiagPath] = useState<string | null>(null);
   const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
   const [diagFolderSize, setDiagFolderSize] = useState<number>(0);
+  const [overlayLogCopied, setOverlayLogCopied] = useState(false);
   const [companionApiEnabled] = useState(false);
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
 const [blobLogEnabled, setBlobLogEnabled] = useState(false);
@@ -2708,7 +2709,16 @@ if (typeof s.autoDiagEnabled === "boolean") {
                         try { alert(await invoke<string>("get_overlay_session_log")); }
                         catch (e) { alert(`Error: ${e}`); }
                       }}>View</button>
-                      <div />{/* Clear placeholder */}
+                      <button className="btn-secondary" onClick={async () => {
+                        try {
+                          const log = await invoke<string>("get_overlay_session_log");
+                          navigator.clipboard.writeText(log).then(() => {
+                            setOverlayLogCopied(true);
+                            setTimeout(() => setOverlayLogCopied(false), 1500);
+                          }).catch(() => {});
+                        }
+                        catch (e) { alert(`Error: ${e}`); }
+                      }}>{overlayLogCopied ? "✓ Copied" : "Copy"}</button>
 
                       {/* Auto-capture */}
                       <div className="settings-row-info">
