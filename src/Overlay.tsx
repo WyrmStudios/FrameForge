@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
+import { overlayScale } from "./uiScale";
 import "./Overlay.css";
 
 export type PickPriority = "completion" | "plat" | "ducat" | "setPlat";
@@ -153,6 +154,22 @@ function DucatIcon({ size = 14 }: { size?: number }) {
   return <img src="/ducats.webp" alt="d" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, verticalAlign: "middle" }} />;
 }
 
+// ─── Column layout ────────────────────────────────────────────────────────────
+// Fixed column layout symmetric around screen center.
+// Column spacing ≈ 12.7 % of screen width (measured from game at multiple resolutions).
+export const COL_SPACING_FRAC = 0.127;
+
+// For N cards, columns map to the game's actual slot positions:
+//   N=1: center; N=2: cols 2&3 (±0.5s); N=3: cols 1, 2.5, 4 (±1.5s and 0);
+//   N=4: cols 1-4 (±0.5s and ±1.5s).
+export function columnCenters(layoutW: number, n: number): number[] {
+  const s = layoutW * COL_SPACING_FRAC, c = layoutW / 2;
+  if (n === 1) return [c];
+  if (n === 2) return [c - 0.5 * s, c + 0.5 * s];
+  if (n === 3) return [c - s, c, c + s];
+  return [c - 1.5 * s, c - 0.5 * s, c + 0.5 * s, c + 1.5 * s];
+}
+
 // ─── Pick arrow ───────────────────────────────────────────────────────────────
 function PickArrow({ slotX, winW }: { slotX: number; winW: number }) {
   const cx = Math.round(winW * slotX);
@@ -233,7 +250,11 @@ export default function Overlay() {
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   // winW = the overlay window's own pixel width, which equals the Warframe client
   // width (App.tsx creates the window with width: ww). No URL param needed.
-  const winW     = window.innerWidth || 1920;
+  //
+  // Divide by the scale because the cards sit inside #root, which is 1/scale of
+  // the window width and then scaled back up. The scale applies twice to any
+  // coordinate measured against the window itself.
+  const winW     = (window.innerWidth || 1920) / overlayScale();
   // priority comes from localStorage (shared origin with main window).
   const priority = (localStorage.getItem("ff-overlay-priority") ?? "completion") as PickPriority;
 
@@ -563,21 +584,9 @@ export default function Overlay() {
   const bestIdx = bestPickIndex(rewards, priority);
 
   const n  = rewards.length;
-  // Fixed column layout symmetric around screen center.
-  // Column spacing ≈ 12.7 % of screen width (measured from game at multiple resolutions).
-  // For N cards, columns map to the game's actual slot positions:
-  //   N=1: center; N=2: cols 2&3 (±0.5s); N=3: cols 1, 2.5, 4 (±1.5s and 0);
-  //   N=4: cols 1-4 (±0.5s and ±1.5s).
-  const colSpacing    = winW * 0.127;
-  const screenCenter  = winW / 2;
-  const cardW = Math.max(80, Math.round(colSpacing - 10));
-  const colCenters: number[] = (() => {
-    const s = colSpacing, c = screenCenter;
-    if (n === 1) return [c];
-    if (n === 2) return [c - 0.5 * s, c + 0.5 * s];
-    if (n === 3) return [c - s, c, c + s];
-    return [c - 1.5 * s, c - 0.5 * s, c + 0.5 * s, c + 1.5 * s];
-  })();
+  const screenCenter = winW / 2;
+  const colCenters   = columnCenters(winW, n);
+  const cardW = Math.max(80, Math.round(winW * COL_SPACING_FRAC - 10));
   const cardLeft = (idx: number) => Math.round((colCenters[idx] ?? screenCenter) - cardW / 2);
 
   return (

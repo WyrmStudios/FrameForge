@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { applyScale, overlayScale } from "./uiScale";
 
 // ── Riven overlay — module-level window management ────────────────────────────
 // Stored OUTSIDE React so StrictMode remounts don't destroy/recreate the window.
@@ -11,6 +12,16 @@ let _rivenRollCount = 0;
 let _rivenLastTriggerMs = 0;
 let _rivenManualTrigger: (() => void) | null = null;
 export function checkRivenNow() { _rivenManualTrigger?.(); }
+
+async function resizeRivenForScale() {
+  const win = _rivenWin;
+  if (!win) return;
+  try {
+    const factor = await win.scaleFactor();
+    const cur = (await win.innerSize()).toLogical(factor);
+    await win.setSize(new LogicalSize(Math.round(300 * overlayScale()), cur.height));
+  } catch {}
+}
 
 function rivenWinHide(reason = "rivenWinHide") {
   const win = _rivenWin;
@@ -41,7 +52,7 @@ async function ensureRivenWindow(wx: number, wy: number, wh: number): Promise<{ 
       alwaysOnTop: true, skipTaskbar: true,
       resizable: false, focus: false,
       x: wx + 10, y: wy + Math.round(wh * 0.20),
-      width: 300, height: Math.round(wh * 0.60),
+      width: Math.round(300 * overlayScale()), height: Math.round(wh * 0.60),
     });
     _rivenWin.once("tauri://destroyed", () => { _rivenWin = null; });
     return { win: _rivenWin, fresh: true };
@@ -50,7 +61,7 @@ async function ensureRivenWindow(wx: number, wy: number, wh: number): Promise<{ 
     return null;
   }
 }
-import { getCurrentWindow, availableMonitors } from "@tauri-apps/api/window";
+import { getCurrentWindow, availableMonitors, LogicalSize } from "@tauri-apps/api/window";
 
 import { ImgCacheDirContext } from "./ImgCacheDir";
 import Foundry, { FoundryFilters, FOUNDRY_FILTERS_DEFAULT } from "./Foundry";
@@ -81,6 +92,12 @@ const IS_MODULAR       = _params.has("modular")      || _hash === "#modular"    
 const IS_RIVEN_OVERLAY      = _params.has("rivenoverlay")      || _hash === "#rivenoverlay"      || _winLabel === "riven-overlay";
 const IS_RELIC_PICK_OVERLAY = _params.has("relicpickoverlay") || _hash === "#relicpickoverlay" || _winLabel === "relic-pick-overlay";
 const IS_OVERLAY_TEST       = _params.has("overlaytest")       || _hash === "#overlaytest"       || _winLabel === "overlay-test";
+const IS_ANY_OVERLAY = IS_OVERLAY || IS_MODULAR || IS_RIVEN_OVERLAY || IS_RELIC_PICK_OVERLAY;
+
+// Overlay windows return from the router before any hook can run, which rules
+// out applying the scale from an effect.
+applyScale(IS_ANY_OVERLAY);
+listen("settings-updated", () => applyScale(IS_ANY_OVERLAY));
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
   constructor(props: any) { super(props); this.state = { err: null }; }
@@ -1250,6 +1267,9 @@ if (typeof s.autoDiagEnabled === "boolean") {
             setModularSectionOrder(s.modularSectionOrder);
         } catch {}
       }).catch(() => {});
+      // The app creates the riven window once and caches it, so a scale change
+      // must resize it in place. Its height follows the game window, not the scale.
+      resizeRivenForScale();
     });
     return () => { unlisten.then(fn => fn()); };
   }, []); // eslint-disable-line
@@ -1776,8 +1796,13 @@ if (typeof s.autoDiagEnabled === "boolean") {
       wx: number, wy: number, ww: number, wh: number,
       yFrac: number, hFrac: number,
     ): Promise<boolean> => {
-      const stripY = wy + Math.round(wh * yFrac);
-      const stripH = Math.round(wh * hFrac);
+      // The strip's top edge aligns with the reward row in the game, so the scale
+      // may only extend the strip downwards. Moving that edge would break the
+      // alignment. The space below it is the limit, and past that the content is
+      // clipped.
+      const offsetY = Math.round(wh * yFrac);
+      const stripH  = Math.min(Math.round(wh * hFrac * overlayScale()), wh - offsetY);
+      const stripY  = wy + offsetY;
       try {
         await invoke("show_overlay_window", { x: wx, y: stripY, w: ww, h: stripH });
         overlayVisible = true;
