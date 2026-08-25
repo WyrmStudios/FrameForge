@@ -31,10 +31,22 @@ pub fn set_root_override(root: PathBuf) -> Result<(), PathBuf> {
 /// Downloaded catalogues, price snapshots, item images, OCR models: anything
 /// that can be fetched again.
 pub fn cache_dir() -> PathBuf {
-    ensure(match ROOT_OVERRIDE.get() {
+    let dir = ensure(match ROOT_OVERRIDE.get() {
         Some(root) => root.join("cache"),
         None => base(dirs::cache_dir()),
-    })
+    });
+    // Tells backup and sync tools to skip the directory
+    // (https://bford.info/cachedir/).
+    let tag = dir.join("CACHEDIR.TAG");
+    if !tag.exists() {
+        let _ = fs::write(
+            &tag,
+            "Signature: 8a477f597d28d172789f06886806bc55\n\
+             # This file is a cache directory tag created by FrameForge.\n\
+             # For information about cache directory tags see https://bford.info/cachedir/\n",
+        );
+    }
+    dir
 }
 
 /// settings.json.
