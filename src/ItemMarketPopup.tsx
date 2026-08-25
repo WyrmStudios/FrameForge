@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useImgLadder, cdnUrl } from "./ImgCacheDir";
 import "./ItemMarketPopup.css";
 
 async function invokeWfm<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -217,7 +218,7 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
   const [showForm, setShowForm] = useState(false);
   const [prefillPrice, setPrefillPrice] = useState(0);
   const [prefillType, setPrefillType]   = useState<"sell" | "buy">("sell");
-  const [imgFailed, setImgFailed]       = useState(false);
+  const thumb = useImgLadder([cdnUrl(imageName)]);
 
   // Mod rank state — lifted here so orders re-fetch when rank changes
   const [modRankInput, setModRankInput] = useState(prefillModRank ?? 0);
@@ -276,9 +277,8 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
         {/* ── Header ── */}
         <div className="imp-header">
           <div className="imp-item-identity">
-            {imageName && !imgFailed
-              ? <img className="imp-thumb" src={`https://cdn.warframestat.us/img/${imageName}`}
-                  alt="" onError={() => setImgFailed(true)} />
+            {thumb.src
+              ? <img key={thumb.src} className="imp-thumb" src={thumb.src} alt="" onError={thumb.onError} />
               : <div className="imp-thumb-placeholder">P</div>
             }
             <div className="imp-title-group">

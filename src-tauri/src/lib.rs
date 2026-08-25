@@ -5,20 +5,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Write `data` to `path` atomically: write to a `.tmp` sibling, then rename over the target.
-/// Prevents zero-byte corruption if the process or OS crashes mid-write.
-fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
-}
 fn truncate_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 use tauri::{Emitter, Manager, State};
 
+mod cache;
 mod console_login; // [console-login feature] remove this line to drop the feature
 mod db;
 mod logging;
@@ -28,10 +20,13 @@ mod ocr;
 // ── BEGIN ocrs fallback ─────────────────────────────────────────────────────
 mod ocr_fallback;
 // ── END ocrs fallback ───────────────────────────────────────────────────────
+mod paths;
+mod refresh;
 mod resolver;
 mod wfcd;
 mod wfm;
 
+use cache::atomic_write;
 use db::{QuantityChange, SnapshotPoint, TrackedItem, Trade};
 use resolver::ItemResolver;
 use wfcd::{RecipeComponent, SyndicateOffer, WfcdItem};
@@ -73,10 +68,6 @@ pub struct CorrectionEntry {
 
 pub struct AppState {
     pub db_path: PathBuf,
-    pub items_cache_path: PathBuf,
-    pub recipes_cache_path: PathBuf,
-    pub relic_drops_cache_path: PathBuf,
-    pub relic_rewards_cache_path: PathBuf,
     pub quantities_cache_path: PathBuf,
     pub inventory_state_cache_path: PathBuf,
     pub settings_path: PathBuf,
@@ -125,11 +116,8 @@ pub struct AppState {
     pub wfm_priority_queue: Arc<Mutex<std::collections::VecDeque<String>>>,
     /// Set to true once the WFM queue drain thread has been started.
     pub wfm_queue_started: Arc<AtomicBool>,
-    /// Path to the persisted top-WFM-items cache (survives restarts).
-    pub wfm_top_cache_path: PathBuf,
     /// syndicate name → purchasable items (all known syndicates)
     pub syndicate_catalog: Mutex<HashMap<String, Vec<SyndicateOffer>>>,
-    pub syndicate_catalog_path: PathBuf,
     /// IDs of riven auctions created via FrameForge — persisted so hidden auctions survive restarts.
     pub auction_ids: Mutex<Vec<String>>,
     pub auction_ids_path: PathBuf,
@@ -154,7 +142,6 @@ pub struct AppState {
     pub pending_relic_rewards: Mutex<Option<serde_json::Value>>,
     /// relics.run daily bulk price cache: item display name (lowercase) → median sell price.
     pub relics_run_prices: Mutex<HashMap<String, u32>>,
-    pub relics_run_prices_cache_path: PathBuf,
     /// Raw worldstate + Steam news from the last upstream fetch, with the time it
     /// was taken. Every window polls worldstate on its own timer, so without this
     /// two open windows mean two fetch pairs a minute against DE and Steam.
@@ -164,7 +151,7 @@ pub struct AppState {
     pub worldstate_cache: Mutex<Option<(std::time::Instant, Arc<serde_json::Value>, Arc<serde_json::Value>)>>,
     /// When true, unmatched inventory paths are written to the Unmatched Paths debug folder.
     pub debug_cat_enabled: Arc<AtomicBool>,
-    /// Subfolders under %LOCALAPPDATA%\warframe-companion\Debugging\
+    /// Subfolders of `Debugging/` in the state directory.
     pub auto_capture_dir: PathBuf,
     pub manual_capture_dir: PathBuf,
     pub memory_probe_path: PathBuf,
@@ -741,43 +728,69 @@ fn get_item_list_status(state: State<AppState>) -> serde_json::Value {
     })
 }
 
+/// Name of the on-disk catalogue. The `-v1` is the payload's schema version: a
+/// change of shape means a miss rather than a bad deserialization.
+const CATALOGUE_CACHE: &str = "catalogue-v1.json";
+
+/// Game updates land far more slowly than once a day, and a conditional GET
+/// makes an unchanged catalogue nearly free anyway.
+const CATALOGUE_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Corrections that live in the code rather than the payload. They are
+/// reapplied on every load, so a new build never needs the cache cleared.
+fn patch_catalogue_items(items: Vec<WfcdItem>) -> Vec<WfcdItem> {
+    dedup_known_aliases(
+        items
+            .into_iter()
+            .map(|mut i| {
+                i.name = patch_item_name(&i.unique_name, &i.name);
+                i.category = patch_item_category(&i.name, &i.category, &i.unique_name);
+                i
+            })
+            .collect(),
+    )
+}
+
 #[tauri::command]
-async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
-    let result = tauri::async_runtime::spawn_blocking(wfcd::fetch_items)
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e)?;
+async fn fetch_item_list(state: State<'_, AppState>, force: Option<bool>) -> Result<usize, String> {
+    let force = force.unwrap_or(false);
+    let ttl = if force { std::time::Duration::ZERO } else { CATALOGUE_TTL };
+    let (result, source, warning) = tauri::async_runtime::spawn_blocking(move || {
+        cache::get_or_refresh(CATALOGUE_CACHE, ttl, |etag| wfcd::fetch_items(etag, force))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
+    let result = result.ok_or_else(|| warning.unwrap_or_else(|| "catalogue unavailable".into()))?;
+    // A fresh cache is the same payload `run()` already seeded the state with;
+    // re-patching ~30k items and rewriting the inventory cache would be a no-op.
+    if source == cache::Source::Fresh {
+        return Ok(result.items.len());
+    }
+    Ok(apply_catalogue(&state, result))
+}
+
+/// Background-refresh entry point. `force` ignores both the cached copy's age
+/// and its ETags, so the sources have to answer with a body.
+pub(crate) fn refresh_catalogue(app: &tauri::AppHandle, force: bool) -> Result<(), String> {
+    let ttl = if force { std::time::Duration::ZERO } else { CATALOGUE_TTL };
+    let (result, source, warning) =
+        cache::get_or_refresh(CATALOGUE_CACHE, ttl, |etag| wfcd::fetch_items(etag, force));
+    match result {
+        // The state already holds a fresh cache's payload (seeded by `run()` or
+        // by whichever refresh stored it), so only new data is worth applying.
+        Some(_) if warning.is_none() && source == cache::Source::Fresh => Ok(()),
+        Some(result) if warning.is_none() => {
+            apply_catalogue(&app.state::<AppState>(), result);
+            Ok(())
+        }
+        _ => Err(warning.unwrap_or_else(|| "catalogue unavailable".into())),
+    }
+}
+
+fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> usize {
     let count = result.items.len();
-
-    // Persist items cache
-    if let Ok(json) = serde_json::to_string(&result.items.iter().map(|i| serde_json::json!({
-        "unique_name": i.unique_name, "name": i.name, "category": i.category,
-        "item_type": i.item_type, "product_category": i.product_category,
-        "image_name": i.image_name, "vaulted": i.vaulted, "ducats": i.ducats,
-        "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation,
-        "fusion_limit": i.fusion_limit, "max_level_cap": i.max_level_cap
-    })).collect::<Vec<_>>()) {
-        let _ = std::fs::write(&state.items_cache_path, json);
-    }
-
-    // Persist recipes cache
-    if let Ok(json) = serde_json::to_string(&result.recipes) {
-        let _ = std::fs::write(&state.recipes_cache_path, json);
-    }
-
-    let patched_items: Vec<WfcdItem> = result.items.into_iter().map(|mut i| {
-        i.name = patch_item_name(&i.unique_name, &i.name);
-        i.category = patch_item_category(&i.name, &i.category, &i.unique_name);
-        i
-    }).collect();
-    if let Ok(json) = serde_json::to_string(&result.relic_drops) {
-        let _ = std::fs::write(&state.relic_drops_cache_path, json);
-    }
-    if let Ok(json) = serde_json::to_string(&result.relic_rewards) {
-        let _ = std::fs::write(&state.relic_rewards_cache_path, json);
-    }
-    let deduped = dedup_known_aliases(patched_items);
+    let deduped = patch_catalogue_items(result.items);
 
     // Write mod_max_rank into inventory_state_cache.json for every mod/arcane so it is
     // available at startup without requiring wfcd_items to be loaded first.
@@ -810,24 +823,21 @@ async fn fetch_item_list(state: State<'_, AppState>) -> Result<usize, String> {
         }
     }
 
-    *state.wfcd_items.lock().map_err(|e| e.to_string())? = deduped;
-    *state.recipes.lock().map_err(|e| e.to_string())? = result.recipes;
-    *state.relic_drops.lock().map_err(|e| e.to_string())? = result.relic_drops;
-    *state.relic_rewards.lock().map_err(|e| e.to_string())? = result.relic_rewards;
-    *state.blueprint_to_result.lock().map_err(|e| e.to_string())? = result.blueprint_names;
+    *state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner()) = deduped;
+    *state.recipes.lock().unwrap_or_else(|e| e.into_inner()) = result.recipes;
+    *state.relic_drops.lock().unwrap_or_else(|e| e.into_inner()) = result.relic_drops;
+    *state.relic_rewards.lock().unwrap_or_else(|e| e.into_inner()) = result.relic_rewards;
+    *state.blueprint_to_result.lock().unwrap_or_else(|e| e.into_inner()) = result.blueprint_names;
     if !result.weapon_dispositions.is_empty() {
-        *state.weapon_dispositions.lock().map_err(|e| e.to_string())? = result.weapon_dispositions;
+        *state.weapon_dispositions.lock().unwrap_or_else(|e| e.into_inner()) = result.weapon_dispositions;
     }
     if !result.wiki_reward_names.is_empty() {
-        *state.wiki_reward_names.lock().map_err(|e| e.to_string())? = result.wiki_reward_names;
+        *state.wiki_reward_names.lock().unwrap_or_else(|e| e.into_inner()) = result.wiki_reward_names;
     }
     if !result.syndicate_catalog.is_empty() {
-        if let Ok(json) = serde_json::to_string(&result.syndicate_catalog) {
-            let _ = std::fs::write(&state.syndicate_catalog_path, json);
-        }
-        *state.syndicate_catalog.lock().map_err(|e| e.to_string())? = result.syndicate_catalog;
+        *state.syndicate_catalog.lock().unwrap_or_else(|e| e.into_inner()) = result.syndicate_catalog;
     }
-    Ok(count)
+    count
 }
 
 // ─── Foundry / Recipes ────────────────────────────────────────────────────────
@@ -1290,8 +1300,7 @@ fn save_api_inventory(
 async fn warframe_login(email: String, password: String) -> Result<(String, String), String> {
     use whirlpool::{Whirlpool, Digest};
     let hash = format!("{:x}", Whirlpool::digest(password.as_bytes()));
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let now = cache::now_unix();
 
     // Try multiple endpoint + body format variants.
     // mobile=true prevents clobbering an active game session.
@@ -1701,54 +1710,42 @@ fn wfm_get_item_statistics(state: State<AppState>, url_name: String) -> Result<s
 
 // ── Top WFM items by 7-day trade volume ───────────────────────────────────────
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct WfmTopDiskCache {
-    saved_at: u64,          // Unix seconds
-    items: Vec<WfmTopItem>,
-}
+const WFM_TOP_CACHE: &str = "wfm-top-v1.json";
+const WFM_TOP_TTL: std::time::Duration = std::time::Duration::from_secs(3 * 3600);
+
+/// Arcane name, WFM slug and image, as handed to a scan.
+type ArcaneCandidate = (String, String, Option<String>);
 
 /// Return the top 10 most-traded items on warframe.market by 7-day total value.
 /// Queries Prime Sets and Arcanes from the local WFCD catalog (already loaded).
 /// Results are cached for 3 hours so repeated tab opens are instant.
 #[tauri::command]
 async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>, String> {
-    const TOP_TTL: std::time::Duration = std::time::Duration::from_secs(3 * 3600);
-
     // In-memory cache, fresh within the TTL — the client owns it.
-    if let Some(items) = state.wfm.cached_top_items(TOP_TTL) {
+    if let Some(items) = state.wfm.cached_top_items(WFM_TOP_TTL) {
         return Ok(items);
     }
 
-    // Disk cache — survives app restarts.
-    let disk_cache_path = state.wfm_top_cache_path.clone();
-    if let Ok(s) = std::fs::read_to_string(&disk_cache_path) {
-        if let Ok(dc) = serde_json::from_str::<WfmTopDiskCache>(&s) {
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-            if now_secs.saturating_sub(dc.saved_at) < TOP_TTL.as_secs() && !dc.items.is_empty() {
-                state.wfm.set_top_items(dc.items.clone());
-                return Ok(dc.items);
-            }
+    // The disk cache survives app restarts. An empty list is a scan that found
+    // nothing, which is never worth serving.
+    let now_secs = cache::now_unix();
+    let disk = cache::load::<Vec<WfmTopItem>>(WFM_TOP_CACHE).filter(|c| !c.data.is_empty());
+    if let Some(cached) = &disk {
+        if now_secs.saturating_sub(cached.retrieved_at_unix) < WFM_TOP_TTL.as_secs() {
+            state.wfm.set_top_items(cached.data.clone());
+            cache::set_status(WFM_TOP_CACHE, cache::CacheStatus {
+                source:       cache::Source::Fresh,
+                last_updated: Some(cached.retrieved_at_unix),
+                warning:      None,
+            });
+            return Ok(cached.data.clone());
         }
-    }
-
-    // Only one scan at a time. If another is already running, wait for it to populate
-    // the cache rather than starting a second 90-second scan that would compete for the
-    // rate-limiter budget and double the total time.
-    if WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-        for _ in 0..120u32 {  // poll every 5 s, max 10 minutes
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            if let Some(items) = state.wfm.cached_top_items(TOP_TTL) {
-                return Ok(items);
-            }
-        }
-        return Err("WFM top items scan timed out".to_string());
     }
 
     // Collect arcane candidates from WFCD without holding the lock across await points.
-    // Prime Sets come from WFM's own item list (fetched inside spawn_blocking below) so
-    // that we get canonical slugs — WFCD doesn't have set-level entries.
-    let arcane_candidates: Vec<(String, String, Option<String>)> = {
+    // Prime Sets come from WFM's own item list (fetched inside the scan) so that we get
+    // canonical slugs; WFCD doesn't have set-level entries.
+    let arcane_candidates: Vec<ArcaneCandidate> = {
         let items = state.wfcd_items.lock().map_err(|e| e.to_string())?;
         items.iter()
             .filter(|i| i.category == "Arcanes")
@@ -1756,57 +1753,154 @@ async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>
             .collect()
     };
 
+    // Only one scan at a time: a second one would compete for the same rate-limiter
+    // budget and take twice as long for both.
+    let claimed_scan =
+        WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok();
+
+    // An expired copy beats an empty tab for the minute and a half a scan takes,
+    // so hand it over and rescan behind it.
+    if let Some(cached) = disk {
+        if claimed_scan {
+            let wfm = state.wfm.clone();
+            std::thread::spawn(move || {
+                // Release the scan slot even on a panic, or every later scan
+                // is blocked for the rest of the session.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    finish_wfm_top_scan(&wfm, scan_wfm_top_items(&wfm, &arcane_candidates));
+                }));
+                WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
+            });
+        }
+        cache::set_status(WFM_TOP_CACHE, cache::CacheStatus {
+            source:       cache::Source::Stale,
+            last_updated: Some(cached.retrieved_at_unix),
+            warning:      Some("warframe.market top items are being rescanned".to_string()),
+        });
+        return Ok(cached.data);
+    }
+
+    // Nothing to show, so the caller has to wait for a scan either way.
+    if !claimed_scan {
+        for _ in 0..120u32 {  // poll every 5 s, max 10 minutes
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if let Some(items) = state.wfm.cached_top_items(WFM_TOP_TTL) {
+                return Ok(items);
+            }
+        }
+        return Err("WFM top items scan timed out".to_string());
+    }
+
     // Run blocking ureq calls on the thread pool — keeps the async runtime free
     let wfm = state.wfm.clone();
-    let scan_result = tokio::task::spawn_blocking(move || {
-        let prime_sets = wfm.prime_sets();
-        let mut out: Vec<WfmTopItem> = Vec::new();
-
-        for (name, url_name) in &prime_sets {
-            if let Some((price, daily_vol)) = wfm.stats_7day(url_name) {
-                out.push(WfmTopItem {
-                    name:           name.clone(),
-                    url_name:       url_name.clone(),
-                    image_name:     None,
-                    unit_price:     price,
-                    daily_volume:   daily_vol,
-                    total_value_7d: (price as f64 * daily_vol * 7.0) as u64,
-                });
-            }
-        }
-
-        for (name, slug, image_name) in &arcane_candidates {
-            if let Some((price, daily_vol)) = wfm.stats_7day(slug) {
-                out.push(WfmTopItem {
-                    name:           name.clone(),
-                    url_name:       slug.clone(),
-                    image_name:     image_name.clone(),
-                    unit_price:     price,
-                    daily_volume:   daily_vol,
-                    total_value_7d: (price as f64 * daily_vol * 7.0) as u64,
-                });
-            }
-        }
-
-        out.sort_by(|a, b| b.total_value_7d.cmp(&a.total_value_7d));
-        out.truncate(10);
-        out
-    }).await;
+    let scan_result =
+        tokio::task::spawn_blocking(move || scan_wfm_top_items(&wfm, &arcane_candidates)).await;
 
     // Release the scan slot before propagating any error
     WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
 
     let results = scan_result.map_err(|e| e.to_string())?;
+    finish_wfm_top_scan(&state.wfm, results.clone());
+    Ok(results)
+}
 
-    // Write to disk so the results survive an app restart
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-    if let Ok(json) = serde_json::to_string(&WfmTopDiskCache { saved_at: now_secs, items: results.clone() }) {
-        let _ = std::fs::write(&disk_cache_path, json);
+/// Background-refresh entry point. A scan walks the whole WFM item list under a
+/// rate limiter and takes minutes. It runs on its own thread rather than
+/// holding up every other refresh. The schedule, not a backoff, retries it.
+pub(crate) fn refresh_wfm_top(app: &tauri::AppHandle, force: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if !force && state.wfm.cached_top_items(WFM_TOP_TTL).is_none() {
+        // A restart empties the in-memory copy while the disk one is still
+        // good; adopting it is what keeps a launch from scanning.
+        let now_secs = cache::now_unix();
+        if let Some(cached) = cache::load::<Vec<WfmTopItem>>(WFM_TOP_CACHE)
+            .filter(|c| !c.data.is_empty()
+                && now_secs.saturating_sub(c.retrieved_at_unix) < WFM_TOP_TTL.as_secs())
+        {
+            state.wfm.set_top_items(cached.data);
+        }
+    }
+    if !force && state.wfm.cached_top_items(WFM_TOP_TTL).is_some() {
+        return Ok(());
+    }
+    if WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Ok(());
+    }
+    let arcane_candidates: Vec<ArcaneCandidate> = {
+        let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
+        items.iter()
+            .filter(|i| i.category == "Arcanes")
+            .map(|i| (i.name.clone(), to_wfm_slug(&i.name), i.image_name.clone()))
+            .collect()
+    };
+    let wfm = state.wfm.clone();
+    std::thread::spawn(move || {
+        // Release the scan slot even on a panic, or every later scan is
+        // blocked for the rest of the session.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            finish_wfm_top_scan(&wfm, scan_wfm_top_items(&wfm, &arcane_candidates));
+        }));
+        WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
+    });
+    Ok(())
+}
+
+fn scan_wfm_top_items(wfm: &Wfm, arcane_candidates: &[ArcaneCandidate]) -> Vec<WfmTopItem> {
+    let prime_sets = wfm.prime_sets();
+    let mut out: Vec<WfmTopItem> = Vec::new();
+
+    for (name, url_name) in &prime_sets {
+        if let Some((price, daily_vol)) = wfm.stats_7day(url_name) {
+            out.push(WfmTopItem {
+                name:           name.clone(),
+                url_name:       url_name.clone(),
+                image_name:     None,
+                unit_price:     price,
+                daily_volume:   daily_vol,
+                total_value_7d: (price as f64 * daily_vol * 7.0) as u64,
+            });
+        }
     }
 
-    state.wfm.set_top_items(results.clone());
-    Ok(results)
+    for (name, slug, image_name) in arcane_candidates {
+        if let Some((price, daily_vol)) = wfm.stats_7day(slug) {
+            out.push(WfmTopItem {
+                name:           name.clone(),
+                url_name:       slug.clone(),
+                image_name:     image_name.clone(),
+                unit_price:     price,
+                daily_volume:   daily_vol,
+                total_value_7d: (price as f64 * daily_vol * 7.0) as u64,
+            });
+        }
+    }
+
+    out.sort_by(|a, b| b.total_value_7d.cmp(&a.total_value_7d));
+    out.truncate(10);
+    out
+}
+
+fn finish_wfm_top_scan(wfm: &Wfm, results: Vec<WfmTopItem>) {
+    // A scan that priced nothing means warframe.market was unreachable, not that
+    // nothing trades. Both readers skip an empty list anyway, so storing one only
+    // throws away the copy that still has items in it.
+    if results.is_empty() {
+        cache::set_status(WFM_TOP_CACHE, cache::CacheStatus {
+            source:       cache::Source::Stale,
+            last_updated: cache::load::<Vec<WfmTopItem>>(WFM_TOP_CACHE).map(|c| c.retrieved_at_unix),
+            warning:      Some("warframe.market top items: scan returned nothing".into()),
+        });
+        return;
+    }
+    if let Err(e) = cache::store(WFM_TOP_CACHE, None, &results) {
+        tracing::warn!("cannot write WFM top items cache: {e}");
+    }
+    cache::set_status(WFM_TOP_CACHE, cache::CacheStatus {
+        source:       cache::Source::Refreshed,
+        last_updated: Some(cache::now_unix()),
+        warning:      None,
+    });
+    wfm.set_top_items(results);
 }
 
 /// Save the WFM access token to Windows Credential Manager (encrypted by the OS).
@@ -2228,8 +2322,10 @@ pub struct RivenAnalysis {
     pub alternatives: Vec<AlternativeResult>, // one per "or" path
 }
 
-static RIVEN_DB: std::sync::OnceLock<std::sync::Mutex<HashMap<String, RivenEntry>>> =
-    std::sync::OnceLock::new();
+/// `None` until the first successful load fills it. A failed load leaves it
+/// unset, so the next lookup fetches again.
+static RIVEN_DB: std::sync::RwLock<Option<HashMap<String, RivenEntry>>> =
+    std::sync::RwLock::new(None);
 
 /// Returns a map of weapon unique_name → riven disposition (omegaAttenuation).
 /// Data comes from All.json (fetched during item load) — no extra HTTP request.
@@ -2254,10 +2350,63 @@ static RIVEN_FLAG_VA: std::sync::OnceLock<std::sync::Mutex<Option<(u32, Option<u
 static RIVEN_WATCHER_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-fn get_riven_db() -> &'static std::sync::Mutex<HashMap<String, RivenEntry>> {
-    RIVEN_DB.get_or_init(|| {
-        std::sync::Mutex::new(load_riven_csv_from_url().unwrap_or_default())
-    })
+const RIVEN_DB_CACHE: &str = "riven-db-v1.json";
+
+/// The community sheet is edited by hand and rarely more than once a day.
+const RIVEN_DB_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Run `f` against the riven database, loading it first if this is the first
+/// lookup of the session.
+fn with_riven_db<R>(f: impl FnOnce(&HashMap<String, RivenEntry>) -> R) -> R {
+    {
+        let guard = RIVEN_DB.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(db) = guard.as_ref() {
+            return f(db);
+        }
+    }
+
+    // Two first-lookups racing here both fetch; the loser's result is dropped.
+    // Take the write lock across the fetch if that ever matters.
+    let (fresh, _, warning) = fetch_riven_db(false);
+    if let Some(w) = warning {
+        warn!("{w}");
+    }
+    let mut guard = RIVEN_DB.write().unwrap_or_else(|e| e.into_inner());
+    // A failed load must not be latched: leaving the slot empty is what makes
+    // the next lookup fetch again instead of serving nothing for the rest of
+    // the session. A concurrent load that won the race is likewise kept.
+    if guard.is_none() && !fresh.is_empty() {
+        *guard = Some(fresh);
+    }
+    match guard.as_ref() {
+        Some(db) => f(db),
+        None => f(&HashMap::new()),
+    }
+}
+
+/// Walk the cache ladder for the riven database: a fresh copy on disk, else the
+/// sheet, else the stale copy, else nothing. `force` skips the first rung.
+fn fetch_riven_db(force: bool) -> (HashMap<String, RivenEntry>, cache::Source, Option<String>) {
+    let ttl = if force { std::time::Duration::ZERO } else { RIVEN_DB_TTL };
+    let (data, source, warning) = cache::get_or_refresh(RIVEN_DB_CACHE, ttl, |_etag| {
+        // Google's CSV export carries no usable validator, so every refresh
+        // pulls all five tabs.
+        load_riven_csv_from_url().map(|db| cache::Fetched::New(db, None))
+    });
+    (data.unwrap_or_default(), source, warning)
+}
+
+/// Background-refresh entry point. A refetch that came back empty leaves the
+/// database that is already loaded in place.
+pub(crate) fn refresh_riven_db_task(_app: &tauri::AppHandle, force: bool) -> Result<(), String> {
+    let (fresh, _, warning) = fetch_riven_db(force);
+    if !fresh.is_empty() {
+        *RIVEN_DB.write().unwrap_or_else(|e| e.into_inner()) = Some(fresh);
+    }
+    match warning {
+        Some(w) => Err(w),
+        None => Ok(()),
+    }
 }
 
 const RIVEN_SHEET_ID: &str = "1zbaeJBuBn44cbVKzJins_E3hTDpnmvOk8heYN-G8yy8";
@@ -2427,7 +2576,7 @@ fn parse_original_stats(text: Option<&str>) -> Vec<serde_json::Value> {
 /// Returns (weapon_name, positives, negatives).
 #[tauri::command]
 async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
-    let riven_log = std::env::temp_dir().join("frameforge_riven_session.txt");
+    let riven_log = paths::state_dir().join("frameforge_riven_session.txt");
     let ts1 = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
 
     let _ = append_to_file(&riven_log, &format!(
@@ -2577,16 +2726,16 @@ async fn ocr_riven_screen() -> Result<serde_json::Value, String> {
     // Helper: try to match a candidate string against the riven DB, trying word-prefix
     // substrings from longest to shortest (handles "Dual Cleavers Cronitron" → "dual cleavers").
     let find_in_db = |candidate: &str| -> Option<String> {
-        let db = get_riven_db().lock().unwrap_or_else(|e| e.into_inner());
-        let words: Vec<&str> = candidate.split_whitespace().collect();
-        // Try 4-word prefix, then 3, 2, 1
-        for len in (1..=words.len().min(4)).rev() {
-            let prefix = words[..len].join(" ");
-            if db.contains_key(&prefix) {
-                return Some(prefix);
+        with_riven_db(|db| {
+            let words: Vec<&str> = candidate.split_whitespace().collect();
+            for len in (1..=words.len().min(4)).rev() {
+                let prefix = words[..len].join(" ");
+                if db.contains_key(&prefix) {
+                    return Some(prefix);
+                }
             }
-        }
-        None
+            None
+        })
     };
 
     // The "FITS IN" panel is the only place the game states the weapon outright,
@@ -2913,7 +3062,7 @@ fn start_log_watcher(app: tauri::AppHandle) -> Result<(), String> {
                 });
                 if riven_active {
                     last_riven_fire = None;
-                    let riven_log = std::env::temp_dir().join("frameforge_riven_session.txt");
+                    let riven_log = paths::state_dir().join("frameforge_riven_session.txt");
                     let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
                     let _ = append_to_file(&riven_log, &format!(
                         "[STEP 4] CLOSE (DiegeticArtifactCards HudVis 0) — {}\n\n", ts
@@ -2933,7 +3082,7 @@ fn start_log_watcher(app: tauri::AppHandle) -> Result<(), String> {
                 });
                 if riven_active {
                     last_riven_fire = None;
-                    let riven_log = std::env::temp_dir().join("frameforge_riven_session.txt");
+                    let riven_log = paths::state_dir().join("frameforge_riven_session.txt");
                     let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
                     let _ = append_to_file(&riven_log, &format!(
                         "[STEP 4] CLOSE (VolumetricFog render target = orbiter loaded) — {}\n\n", ts
@@ -3034,7 +3183,7 @@ fn start_log_watcher(app: tauri::AppHandle) -> Result<(), String> {
 ///  "unknown" = inventory header not visible (alt-tabbed, or left inventory entirely)
 #[tauri::command]
 fn riven_screen_status() -> String {
-    let riven_log = std::env::temp_dir().join("frameforge_riven_session.txt");
+    let riven_log = paths::state_dir().join("frameforge_riven_session.txt");
     let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
 
     let Ok((pixels, w, h)) = ocr::capture_warframe_pixels() else {
@@ -3075,7 +3224,7 @@ fn riven_screen_status() -> String {
 /// AND "FITS IN" is gone — so alt-tabbing away doesn't trigger a false close.
 #[tauri::command]
 fn riven_screen_visible() -> bool {
-    let riven_log = std::env::temp_dir().join("frameforge_riven_session.txt");
+    let riven_log = paths::state_dir().join("frameforge_riven_session.txt");
     let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
 
     let Ok((pixels, w, h)) = ocr::capture_warframe_pixels() else {
@@ -3225,7 +3374,7 @@ fn start_riven_memory_watcher(app: tauri::AppHandle) {
 /// Write an error into the riven session log (called from TypeScript when OCR command fails).
 #[tauri::command]
 fn ocr_riven_log_error(error: String) {
-    let path = std::env::temp_dir().join("frameforge_riven_session.txt");
+    let path = paths::state_dir().join("frameforge_riven_session.txt");
     let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
     let _ = append_to_file(&path, &format!(
         "[STEP 2] OCR COMMAND FAILED — {}\n└─ Error: {}\n\n", ts, error
@@ -3274,8 +3423,7 @@ fn rename_saved_riven_roll(state: tauri::State<'_, AppState>, id: String, label:
 /// Return all weapon names that have riven data.
 #[tauri::command]
 fn get_riven_weapons() -> Vec<String> {
-    let db = get_riven_db().lock().unwrap_or_else(|e| e.into_inner());
-    let mut weapons: Vec<String> = db.keys().cloned().collect();
+    let mut weapons: Vec<String> = with_riven_db(|db| db.keys().cloned().collect());
     weapons.sort();
     weapons
 }
@@ -3283,9 +3431,16 @@ fn get_riven_weapons() -> Vec<String> {
 /// Reload the riven database from the Google Sheet.
 #[tauri::command]
 fn reload_riven_database() -> Result<usize, String> {
-    let fresh = load_riven_csv_from_url()?;
+    let (fresh, source, warning) = fetch_riven_db(true);
     let count = fresh.len();
-    *get_riven_db().lock().unwrap_or_else(|e| e.into_inner()) = fresh;
+    if count > 0 {
+        *RIVEN_DB.write().unwrap_or_else(|e| e.into_inner()) = Some(fresh);
+    }
+    // The user asked for the current sheet, so a stale copy is not an answer
+    // even though it is still worth showing.
+    if source != cache::Source::Refreshed {
+        return Err(warning.unwrap_or_else(|| "Failed to load riven database.".to_string()));
+    }
     Ok(count)
 }
 
@@ -3293,9 +3448,8 @@ fn reload_riven_database() -> Result<usize, String> {
 /// positives / negatives are full stat names (e.g. "Critical Damage", "Zoom").
 #[tauri::command]
 fn analyze_riven(weapon: String, positives: Vec<String>, negatives: Vec<String>) -> Option<RivenAnalysis> {
-    let db = get_riven_db().lock().unwrap_or_else(|e| e.into_inner());
     let key = weapon.to_lowercase();
-    let entry = db.get(&key)?;
+    let entry = with_riven_db(|db| db.get(&key).cloned())?;
 
     let normalize = |s: &str| s.to_lowercase();
 
@@ -3549,9 +3703,7 @@ fn fetch_wfm_items(state: State<AppState>) -> Result<Vec<WfmItem>, String> {
 /// removed — WFM is inconsistent about whether component blueprints include it.
 #[tauri::command]
 fn fetch_wfm_price(state: State<AppState>, url_name: String) -> Result<WfmPrice, String> {
-    // A lookup that errors and one that finds no listing both surface the same way
-    // to the UI — no price — so `price_with_fallback` collapsing both to None is fine.
-    let sell_median = state.wfm.price_with_fallback(&url_name).map(|p| p as f64);
+    let sell_median = state.wfm.price_with_fallback(&url_name)?.map(|p| p as f64);
     Ok(WfmPrice { url_name, sell_median, buy_median: None })
 }
 
@@ -3579,10 +3731,13 @@ fn get_item_price(item_name: String, state: State<AppState>) -> Result<Option<u3
     // display names, where a prime component's name carries "Blueprint" but WFM lists
     // it without the suffix. A non-blueprint name must NOT fall back to a _blueprint
     // slug, or a frame would be priced as its blueprint.
-    let price = state.wfm.price_for_slug(&slug)?.or_else(|| {
-        slug.strip_suffix("_blueprint")
-            .and_then(|base| state.wfm.price_for_slug(base).unwrap_or(None))
-    });
+    let price = match state.wfm.price_for_slug(&slug)? {
+        Some(p) => Some(p),
+        None => match slug.strip_suffix("_blueprint") {
+            Some(base) => state.wfm.price_for_slug(base)?,
+            None => None,
+        },
+    };
     state.wfm.cache_price(slug, price);
 
     // Persist WFM price into the inventory cache file so it survives restarts.
@@ -3707,7 +3862,15 @@ fn start_wfm_queue(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
             if wfm.is_price_cached(&slug) { continue; }
 
             // Fetch — the rate limiter inside enforces the 3 req/sec limit.
-            let price = wfm.price_with_fallback(&slug);
+            // A failed lookup is dropped rather than cached: the slug carries no
+            // verdict yet, and the next request for it re-queues.
+            let price = match wfm.price_with_fallback(&slug) {
+                Ok(price) => price,
+                Err(e) => {
+                    tracing::debug!("wfm price queue: {e}");
+                    continue;
+                }
+            };
             let tradeable = price.is_some();
 
             // Update in-memory cache.
@@ -4038,6 +4201,8 @@ async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String, String> {
     Ok("started".to_string())
 }
 
+/// Resets the scanned inventory only. The downloaded caches are untouched.
+/// The refresh button is what re-fetches those.
 #[tauri::command]
 fn clear_cache(state: State<AppState>) -> Result<(), String> {
     // Clear change log from DB
@@ -5073,8 +5238,8 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         .map(|(u, n)| (u.clone(), n.clone()))
         .collect();
 
-    let debug_path      = std::env::temp_dir().join("frameforge_reward_debug.txt");
-    let last_found_path = std::env::temp_dir().join("frameforge_last_reward.txt");
+    let debug_path      = paths::state_dir().join("frameforge_reward_debug.txt");
+    let last_found_path = paths::state_dir().join("frameforge_last_reward.txt");
 
     // ── EE.log watcher ────────────────────────────────────────────────────────
     // Warframe writes "Script [Info]: Got rewards" to EE.log the moment the
@@ -5112,7 +5277,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     let ee_ocr_app   = reward_app.clone();
     let ee_catalog   = std::sync::Arc::clone(&catalog_pairs);
     let ee_last_path = last_found_path.clone();
-    let session_log_path = std::env::temp_dir().join("frameforge_overlay_session.txt");
+    let session_log_path = paths::state_dir().join("frameforge_overlay_session.txt");
     let ee_auto_capture_dir = auto_capture_dir.clone();
 
     if let Some(log_path) = ee_log_path {
@@ -6177,10 +6342,10 @@ fn append_to_file(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 
 /// Append text to both the global overlay session log and the per-session diagnostic file.
 /// The diagnostic target is found by picking the most recently modified folder under
-/// %TEMP%\warframe-companion\diagnostics\ that contains an ocr_session_log.txt.
+/// the state directory's `diagnostics/` that contains an ocr_session_log.txt.
 fn append_to_diag(global_log: &std::path::Path, text: &str) {
     let _ = append_to_file(global_log, text);
-    let diag_base = std::env::temp_dir().join("warframe-companion").join("diagnostics");
+    let diag_base = paths::state_dir().join("diagnostics");
     if let Ok(entries) = std::fs::read_dir(&diag_base) {
         let mut folders: Vec<std::path::PathBuf> = entries
             .filter_map(|e| e.ok().map(|d| d.path()))
@@ -7289,44 +7454,8 @@ async fn fetch_worldstate(state: State<'_, AppState>) -> Result<serde_json::Valu
             }
             return Ok((result, None));
         }
-        let raw = ureq::get("https://api.warframe.com/cdn/worldState.php")
-            .set("User-Agent", "FrameForge/3.2.0")
-            .timeout(std::time::Duration::from_secs(20))
-            .call()
-            .map_err(|e| format!("worldstate fetch failed: {}", e))?
-            .into_json::<serde_json::Value>()
-            .map_err(|e| format!("worldstate parse failed: {}", e))?;
+        let (raw, news_value) = fetch_worldstate_upstream()?;
         let mut result = parse_worldstate_value(&raw, now_ms, &catalog);
-
-        // Fetch news/promotions from Steam — official Warframe community announcements only.
-        // warframestat.us/pc/news was removed from that API entirely.
-        let news: Vec<serde_json::Value> = ureq::get(
-            "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=230410&count=10&maxlength=500&format=json"
-        )
-            .set("User-Agent", "FrameForge/3.2.0")
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-            .ok()
-            .and_then(|r| r.into_json::<serde_json::Value>().ok())
-            .and_then(|v| v["appnews"]["newsitems"].as_array().cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|item| item["feed_type"].as_i64().unwrap_or(0) == 1)
-            .map(|item| {
-                let title = item["title"].as_str().unwrap_or("").to_string();
-                let lower = title.to_lowercase();
-                let ts_ms = item["date"].as_i64().unwrap_or(0) * 1000;
-                serde_json::json!({
-                    "message":     title,
-                    "link":        item["url"].as_str().unwrap_or(""),
-                    "date":        ts_ms,
-                    "stream":      false,
-                    "primeAccess": lower.contains("prime access") || lower.contains("prime "),
-                    "update":      lower.contains("update") || lower.contains("patch notes"),
-                })
-            })
-            .collect();
-        let news_value = serde_json::json!(news);
         if let Some(obj) = result.as_object_mut() {
             obj.insert("news".to_string(), news_value.clone());
         }
@@ -7336,21 +7465,108 @@ async fn fetch_worldstate(state: State<'_, AppState>) -> Result<serde_json::Valu
     .map_err(|e| format!("task error: {}", e))??;
 
     if let Some((raw, news)) = fetched {
-        let mut cache = state.worldstate_cache.lock().unwrap_or_else(|e| e.into_inner());
-        // Two callers that both missed can finish out of order, so a response
-        // that started before what is already stored must not replace it.
-        let stored_is_newer = cache.as_ref().is_some_and(|(fetched_at, _, _)| *fetched_at > started_at);
-        if !stored_is_newer {
-            *cache = Some((std::time::Instant::now(), raw, news));
-        }
+        store_worldstate(&state, started_at, raw, news);
     }
     Ok(result)
+}
+
+/// Pull the raw worldstate and the Steam news that goes with it.
+fn fetch_worldstate_upstream() -> Result<(serde_json::Value, serde_json::Value), String> {
+    let raw = ureq::get("https://api.warframe.com/cdn/worldState.php")
+        .set("User-Agent", "FrameForge/3.2.0")
+        .timeout(std::time::Duration::from_secs(20))
+        .call()
+        .map_err(|e| format!("worldstate fetch failed: {}", e))?
+        .into_json::<serde_json::Value>()
+        .map_err(|e| format!("worldstate parse failed: {}", e))?;
+
+    // Official Warframe community announcements only: warframestat.us/pc/news
+    // was removed from that API entirely.
+    let news: Vec<serde_json::Value> = ureq::get(
+        "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=230410&count=10&maxlength=500&format=json"
+    )
+        .set("User-Agent", "FrameForge/3.2.0")
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .ok()
+        .and_then(|r| r.into_json::<serde_json::Value>().ok())
+        .and_then(|v| v["appnews"]["newsitems"].as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| item["feed_type"].as_i64().unwrap_or(0) == 1)
+        .map(|item| {
+            let title = item["title"].as_str().unwrap_or("").to_string();
+            let lower = title.to_lowercase();
+            let ts_ms = item["date"].as_i64().unwrap_or(0) * 1000;
+            serde_json::json!({
+                "message":     title,
+                "link":        item["url"].as_str().unwrap_or(""),
+                "date":        ts_ms,
+                "stream":      false,
+                "primeAccess": lower.contains("prime access") || lower.contains("prime "),
+                "update":      lower.contains("update") || lower.contains("patch notes"),
+            })
+        })
+        .collect();
+    Ok((raw, serde_json::json!(news)))
+}
+
+fn store_worldstate(
+    state: &AppState,
+    started_at: std::time::Instant,
+    raw: Arc<serde_json::Value>,
+    news: Arc<serde_json::Value>,
+) {
+    let mut cache = state.worldstate_cache.lock().unwrap_or_else(|e| e.into_inner());
+    // Two callers that both missed can finish out of order, so a response that
+    // started before what is already stored must not replace it.
+    let stored_is_newer = cache.as_ref().is_some_and(|(fetched_at, _, _)| *fetched_at > started_at);
+    if !stored_is_newer {
+        *cache = Some((std::time::Instant::now(), raw, news));
+    }
+}
+
+/// Background-refresh entry point: keeps the shared worldstate warm so a window
+/// polling on its own timer is served from memory. `force` has nothing to skip:
+/// the endpoint carries no validator.
+pub(crate) fn refresh_worldstate(app: &tauri::AppHandle, _force: bool) -> Result<(), String> {
+    // A frontend poll that missed the cache may have refetched moments ago;
+    // pulling again on the scheduler's own beat would double the upstream rate
+    // for nothing. Just under the frontend's 55 s TTL so a copy this task let
+    // age out is refetched on the next 5 s tick.
+    {
+        let state = app.state::<AppState>();
+        let cache = state.worldstate_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let still_warm = cache
+            .as_ref()
+            .is_some_and(|(at, _, _)| at.elapsed() < std::time::Duration::from_secs(50));
+        if still_warm {
+            return Ok(());
+        }
+    }
+    let started_at = std::time::Instant::now();
+    let (raw, news) = fetch_worldstate_upstream().inspect_err(|e| {
+        // Nothing of the worldstate is on disk, so a failed fetch has no cached
+        // copy behind it to report the age of.
+        cache::set_status("worldstate", cache::CacheStatus {
+            source:       cache::Source::Stale,
+            last_updated: None,
+            warning:      Some(format!("worldstate refresh failed: {e}")),
+        });
+    })?;
+    store_worldstate(&app.state::<AppState>(), started_at, Arc::new(raw), Arc::new(news));
+    cache::set_status("worldstate", cache::CacheStatus {
+        source:       cache::Source::Refreshed,
+        last_updated: Some(cache::now_unix()),
+        warning:      None,
+    });
+    Ok(())
 }
 
 /// Read the riven overlay session log.
 #[tauri::command]
 fn get_riven_session_log() -> String {
-    let path = std::env::temp_dir().join("frameforge_riven_session.txt");
+    let path = paths::state_dir().join("frameforge_riven_session.txt");
     std::fs::read_to_string(&path)
         .unwrap_or_else(|_| "(no riven session log yet — open the riven reroll screen first)".into())
 }
@@ -7358,7 +7574,7 @@ fn get_riven_session_log() -> String {
 /// Read the current overlay session log.
 #[tauri::command]
 fn get_overlay_session_log() -> String {
-    let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
+    let path = paths::state_dir().join("frameforge_overlay_session.txt");
     std::fs::read_to_string(&path).unwrap_or_else(|_| "(no session log yet — trigger a Void Fissure first)".into())
 }
 
@@ -7366,7 +7582,7 @@ fn get_overlay_session_log() -> String {
 /// lines into the same session log that gets copied to the diagnostics folder.
 #[tauri::command]
 fn log_relic_fe(msg: String) {
-    let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
+    let path = paths::state_dir().join("frameforge_overlay_session.txt");
     let _ = append_to_file(&path, &format!("[FE] {}\n", msg));
 }
 
@@ -7634,7 +7850,6 @@ fn dir_size_bytes(dir: &std::path::Path) -> u64 {
 }
 
 
-/// Return the total size of %TEMP%\warframe-companion\diagnostics\ in bytes.
 #[tauri::command]
 fn get_diag_folder_size(state: State<AppState>) -> u64 {
     dir_size_bytes(&state.auto_capture_dir)
@@ -7653,6 +7868,50 @@ fn clear_diag_folder(state: State<AppState>) -> u64 {
         }
     }
     0
+}
+
+/// A download cut short by a dropped connection leaves a file the filesystem
+/// is happy with, and the webview renders it as a broken image forever.
+/// The header is what decides whether a cached image counts as one.
+fn looks_like_image(data: &[u8]) -> bool {
+    data.starts_with(b"\x89PNG\r\n\x1a\n")
+        || data.starts_with(&[0xFF, 0xD8, 0xFF])
+        || data.starts_with(b"GIF8")
+        || (data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP")
+}
+
+/// Whether a fully read cached file is a complete image. The header identifies
+/// the format. The trailer is what a download cut short by a dropped connection
+/// loses, and a truncated file keeps its header.
+fn image_complete(data: &[u8]) -> bool {
+    if !looks_like_image(data) {
+        return false;
+    }
+    if data.starts_with(b"\x89PNG") {
+        // A PNG ends with the IEND chunk: its name followed by a 4-byte CRC.
+        return data.len() >= 12 && data[data.len() - 8..data.len() - 4] == *b"IEND";
+    }
+    if data.starts_with(&[0xFF, 0xD8]) {
+        return data.ends_with(&[0xFF, 0xD9]);
+    }
+    if data.starts_with(b"GIF8") {
+        return data.ends_with(&[0x3B]);
+    }
+    // WEBP: the RIFF size field counts everything after the first 8 bytes.
+    let size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+    data.len() >= size.saturating_add(8)
+}
+
+/// Whether the cached file at `path` is worth serving. Reads only the header
+/// (this runs once per catalogued image on every startup), so truncation past
+/// the header slips through here and is caught at serve time instead.
+fn cached_image_ok(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut buf = [0u8; 12];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .is_ok()
+        && looks_like_image(&buf)
 }
 
 /// Minimal HTTP file server for the local image cache.
@@ -7680,7 +7939,14 @@ async fn serve_image_files(listener: tokio::net::TcpListener, cache_dir: PathBuf
                     return;
                 }
             };
-            match tokio::fs::read(dir.join(filename)).await {
+            let path = dir.join(filename);
+            match tokio::fs::read(&path).await {
+                // A corrupt file is thrown away rather than served: the 404
+                // sends the caller to the CDN, and the next prewarm refetches it.
+                Ok(data) if !image_complete(&data) => {
+                    let _ = tokio::fs::remove_file(&path).await;
+                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
+                }
                 Ok(data) => {
                     let mime = if filename.ends_with(".png") { "image/png" }
                         else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") { "image/jpeg" }
@@ -7728,7 +7994,16 @@ async fn prewarm_image_cache(state: tauri::State<'_, AppState>) -> Result<(), St
             .filter_map(|i| i.image_name.clone())
             .collect::<HashSet<_>>()
             .into_iter()
-            .filter(|n| !cache_dir.join(n).exists())
+            .filter(|n| {
+                let path = cache_dir.join(n);
+                if cached_image_ok(&path) {
+                    return false;
+                }
+                // Whatever is there is not an image; a refetch needs the name
+                // free of it either way.
+                let _ = std::fs::remove_file(&path);
+                true
+            })
             .collect();
 
         if names.is_empty() { return; }
@@ -7742,7 +8017,7 @@ async fn prewarm_image_cache(state: tauri::State<'_, AppState>) -> Result<(), St
                     let url = format!("https://cdn.warframestat.us/img/{}", name);
                     if let Ok(resp) = ureq::get(&url).call() {
                         let mut buf = Vec::new();
-                        if resp.into_reader().read_to_end(&mut buf).is_ok() {
+                        if resp.into_reader().read_to_end(&mut buf).is_ok() && looks_like_image(&buf) {
                             let _ = std::fs::write(dir.join(&name), buf);
                         }
                     }
@@ -7862,8 +8137,6 @@ fn write_bmp(path: &std::path::Path, bgra: &[u8], w: u32, h: u32) -> std::io::Re
 
 /// Capture a diagnostic bundle: scan log + screenshot of the full Warframe window
 /// (including any overlay on top via GDI desktop BitBlt / DXGI fallback).
-/// Saves everything to %TEMP%\warframe-companion\diagnostics\<timestamp>\ and
-/// returns the folder path so the frontend can show it.
 #[tauri::command]
 async fn save_auto_diag_capture(state: State<'_, AppState>) -> Result<String, String> {
     // Reuse the frame already captured by the OCR pipeline — no second GPU readback,
@@ -7878,7 +8151,7 @@ async fn save_auto_diag_capture(state: State<'_, AppState>) -> Result<String, St
         let folder = auto_capture_dir.join(&ts);
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
 
-        let session_log = std::env::temp_dir().join("frameforge_overlay_session.txt");
+        let session_log = paths::state_dir().join("frameforge_overlay_session.txt");
         if session_log.exists() {
             let _ = std::fs::copy(&session_log, folder.join("ocr_session_log.txt"));
         }
@@ -8021,58 +8294,99 @@ fn patch_item_category(name: &str, category: &str, unique_name: &str) -> String 
     if name.contains("Blueprint") { "Blueprints".to_string() } else { category.to_string() }
 }
 
-/// Delete the bulk price cache and re-fetch from FrameForgePricing.
+/// Re-fetch bulk prices from FrameForgePricing, ignoring the cache's age.
 /// Updates both relics_run_prices and the WFM price cache in-place.
 #[tauri::command]
 async fn refresh_bulk_prices(state: State<'_, AppState>) -> Result<(), String> {
-    let _ = std::fs::remove_file(&state.relics_run_prices_cache_path);
+    let (prices, source, warning) = tauri::async_runtime::spawn_blocking(|| {
+        cache::get_or_refresh(BULK_PRICES_CACHE, std::time::Duration::ZERO, fetch_relics_run_data)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    let (by_name, by_slug) = tauri::async_runtime::spawn_blocking(fetch_relics_run_data)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if by_name.is_empty() {
-        return Err("Failed to fetch bulk prices — check your internet connection.".to_string());
+    // The user asked for new prices, so a stale copy is not an answer even
+    // though it is good enough for the background refresh.
+    if source != cache::Source::Refreshed {
+        return Err(warning.unwrap_or_else(|| "Failed to fetch bulk prices.".to_string()));
     }
+    let prices = prices.ok_or("Failed to fetch bulk prices.")?;
 
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let j = serde_json::json!({ "date": today, "by_name": &by_name, "by_slug": &by_slug });
-    if let Ok(s) = serde_json::to_string(&j) {
-        let _ = std::fs::write(&state.relics_run_prices_cache_path, s);
-    }
-
-    *state.relics_run_prices.lock().map_err(|e| e.to_string())? = by_name;
-    for (slug, price) in by_slug {
-        state.wfm.cache_price(slug, Some(price));
-    }
+    apply_bulk_prices(&state, prices, true);
     Ok(())
 }
 
-/// Load today's relics.run price cache from disk.
-/// Returns (by_name, by_slug) or None if missing/stale.
-fn load_relics_run_cache(path: &PathBuf) -> Option<(HashMap<String, u32>, HashMap<String, u32>)> {
-    let s = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    if v.get("date").and_then(|d| d.as_str()) != Some(today.as_str()) { return None; }
-    let by_name: HashMap<String, u32> = serde_json::from_value(v["by_name"].clone()).ok()?;
-    let by_slug: HashMap<String, u32> = serde_json::from_value(v["by_slug"].clone()).ok()?;
-    Some((by_name, by_slug))
+/// Background-refresh entry point. Unlike the manual command it defers to any
+/// per-item WFM lookup that has already priced a slug more precisely.
+pub(crate) fn refresh_bulk_prices_task(app: &tauri::AppHandle, force: bool) -> Result<(), String> {
+    let ttl = if force { std::time::Duration::ZERO } else { BULK_PRICES_TTL };
+    let (prices, _, warning) = cache::get_or_refresh(BULK_PRICES_CACHE, ttl, fetch_relics_run_data);
+    match prices {
+        Some(prices) if warning.is_none() => {
+            apply_bulk_prices(&app.state::<AppState>(), prices, false);
+            Ok(())
+        }
+        _ => Err(warning.unwrap_or_else(|| "bulk prices unavailable".into())),
+    }
+}
+
+/// Per-cache freshness for the status chip: which rung each cache last answered
+/// from, when it was last updated, and what went wrong if anything did.
+#[tauri::command]
+fn get_cache_statuses() -> HashMap<String, cache::CacheStatus> {
+    cache::statuses()
+}
+
+/// Bring every cache due at once, ignoring both TTLs and ETags. The scheduler
+/// picks this up on its next tick, so the work happens off the UI thread.
+#[tauri::command]
+fn refresh_all_caches() {
+    refresh::force_all();
+}
+
+/// Publish bulk prices into the shared state. `overwrite_slugs` decides whether
+/// a slug already priced by a per-item WFM lookup gets replaced: a manual
+/// refresh replaces, the background one defers to the fresher single lookup.
+fn apply_bulk_prices(state: &AppState, prices: BulkPrices, overwrite_slugs: bool) {
+    if prices.by_name.is_empty() {
+        return;
+    }
+    *state.relics_run_prices.lock().unwrap_or_else(|e| e.into_inner()) = prices.by_name;
+    for (slug, price) in prices.by_slug {
+        if overwrite_slugs || !state.wfm.is_price_cached(&slug) {
+            state.wfm.cache_price(slug, Some(price));
+        }
+    }
 }
 
 const PRICING_BASE: &str = "https://raw.githubusercontent.com/WyrmStudios/FrameForgePricing/main";
 
-/// Fetch items.json + today's price_history from the FrameForgePricing mirror.
-/// Returns (by_name, by_slug):
-///   by_name: item display name (lowercase) → median sell price  (for get_item_price)
-///   by_slug: authoritative WFM slug         → median sell price  (for wfm_price_cache)
+const BULK_PRICES_CACHE: &str = "bulk-prices-v1.json";
+
+/// The mirror republishes a few times a day; an hour keeps a long session from
+/// tallying a relic run against yesterday's plat.
+const BULK_PRICES_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Median sell prices keyed two ways: display name for the relic-run tally,
+/// WFM slug for seeding the per-item price cache.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct BulkPrices {
+    by_name: HashMap<String, u32>,
+    by_slug: HashMap<String, u32>,
+}
+
+/// Fetch items.json + the latest price_history from the FrameForgePricing mirror.
+///
+/// Both files are served without a usable ETag, and the pair only makes sense
+/// together, so the conditional-GET slot goes unused here.
 #[tracing::instrument(level = "debug", skip_all)]
-fn fetch_relics_run_data() -> (HashMap<String, u32>, HashMap<String, u32>) {
+fn fetch_relics_run_data(_etag: Option<&str>) -> Result<cache::Fetched<BulkPrices>, String> {
     // items.json gives the authoritative name → WFM slug mapping for every tradeable item.
-    let name_to_slug: HashMap<String, String> = ureq::get(&format!("{}/items.json", PRICING_BASE))
-        .call().ok()
-        .and_then(|r| r.into_json::<Vec<serde_json::Value>>().ok())
-        .unwrap_or_default()
+    let items: Vec<serde_json::Value> = ureq::get(&format!("{}/items.json", PRICING_BASE))
+        .call()
+        .map_err(|e| format!("items.json: {e}"))?
+        .into_json()
+        .map_err(|e| format!("items.json: {e}"))?;
+    let name_to_slug: HashMap<String, String> = items
         .into_iter()
         .filter_map(|v| {
             let name = v["i18n"]["en"]["name"].as_str()?.to_lowercase();
@@ -8081,12 +8395,14 @@ fn fetch_relics_run_data() -> (HashMap<String, u32>, HashMap<String, u32>) {
         })
         .collect();
 
-    let price_json: serde_json::Value = ureq::get(
-        &format!("{}/price_history_latest.json", PRICING_BASE)
-    ).call().ok().and_then(|r| r.into_json().ok()).unwrap_or_default();
+    let price_json: serde_json::Value =
+        ureq::get(&format!("{}/price_history_latest.json", PRICING_BASE))
+            .call()
+            .map_err(|e| format!("price_history_latest.json: {e}"))?
+            .into_json()
+            .map_err(|e| format!("price_history_latest.json: {e}"))?;
 
-    let mut by_name: HashMap<String, u32> = HashMap::new();
-    let mut by_slug: HashMap<String, u32> = HashMap::new();
+    let mut prices = BulkPrices::default();
 
     if let Some(obj) = price_json.as_object() {
         for (name, records) in obj {
@@ -8101,43 +8417,16 @@ fn fetch_relics_run_data() -> (HashMap<String, u32>, HashMap<String, u32>) {
                 let slug = name_to_slug.get(&name_lower)
                     .cloned()
                     .unwrap_or_else(|| to_wfm_slug(&name_lower));
-                by_name.insert(name_lower, price_u32);
-                by_slug.insert(slug, price_u32);
+                prices.by_name.insert(name_lower, price_u32);
+                prices.by_slug.insert(slug, price_u32);
             }
         }
     }
 
-    (by_name, by_slug)
-}
-
-fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
-    let s = std::fs::read_to_string(path).ok()?;
-    let arr: Vec<serde_json::Value> = serde_json::from_str(&s).ok()?;
-    // If the cache predates the item_type/product_category fields, discard it so
-    // a fresh fetch populates the new fields needed by fix_category.
-    if arr.first().map_or(false, |v| v.get("item_type").is_none()) {
-        let _ = std::fs::remove_file(path);
-        return None;
+    if prices.by_name.is_empty() {
+        return Err("price history carried no closed-order medians".to_string());
     }
-    let items: Vec<WfcdItem> = arr.into_iter().filter_map(|v| {
-        let unique_name = v["unique_name"].as_str()?.to_string();
-        let raw_name = v["name"].as_str()?.to_string();
-        let name = patch_item_name(&unique_name, &raw_name);
-        let image_name = v["image_name"].as_str().map(|s| s.to_string());
-        let vaulted = v["vaulted"].as_bool();
-        let ducats = v["ducats"].as_u64().map(|n| n as u32);
-        let raw_cat          = v["category"].as_str()?.to_string();
-        let category         = patch_item_category(&name, &raw_cat, &unique_name);
-        let item_type        = v["item_type"].as_str().unwrap_or("").to_string();
-        let product_category = v["product_category"].as_str().unwrap_or("").to_string();
-        let mastery_req       = v["mastery_req"].as_u64().map(|n| n as u32);
-        let omega_attenuation = v["omega_attenuation"].as_f64().map(|n| n as f32);
-        let fusion_limit      = v["fusion_limit"].as_u64().map(|n| n as u32);
-        let max_level_cap     = v["max_level_cap"].as_u64().map(|n| n as u32)
-            .or_else(|| if unique_name.contains("/EntratiMech/") { Some(40) } else { None });
-        Some(WfcdItem { unique_name, name, category, item_type, product_category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap })
-    }).collect();
-    if items.is_empty() { None } else { Some(dedup_known_aliases(items)) }
+    Ok(cache::Fetched::New(prices, None))
 }
 
 /// Remove known duplicate entries caused by the game listing the same warframe under
@@ -8468,12 +8757,6 @@ fn load_inventory_state_cache(path: &PathBuf) -> InventoryStateCache {
         .unwrap_or_default()
 }
 
-fn load_recipes_cache(path: &PathBuf) -> HashMap<String, Vec<RecipeComponent>> {
-    std::fs::read_to_string(path).ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
 fn save_window_state(window: &tauri::WebviewWindow, settings_path: &std::path::Path, prefix: &str) {
     let maximized = window.is_maximized().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(false);
@@ -8573,26 +8856,24 @@ fn restore_window_state(app: &tauri::AppHandle, window: &tauri::WebviewWindow, s
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let data_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("warframe-companion");
+    // Everything below used to sit in a single directory; carry the files that
+    // cannot be refetched over to the split layout before anything opens them.
+    paths::migrate_legacy();
+    let cache_dir = paths::cache_dir();
+    let data_dir = paths::data_dir();
+    let state_dir = paths::state_dir();
 
-    std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
     // ── BEGIN ocrs fallback ─────────────────────────────────────────────────
-    ocr_fallback::set_data_dir(data_dir.clone());
+    ocr_fallback::set_data_dir(cache_dir.clone());
     // ── END ocrs fallback ───────────────────────────────────────────────────
 
     let db_path = data_dir.join("data.db");
-    let items_cache_path = data_dir.join("items_cache.json");
-    let recipes_cache_path = data_dir.join("recipes_cache.json");
-    let relic_drops_cache_path = data_dir.join("relic_drops_cache.json");
-    let relic_rewards_cache_path = data_dir.join("relic_rewards_cache.json");
-    let quantities_cache_path = data_dir.join("quantities_cache.json");
-    let inventory_state_cache_path = data_dir.join("inventory_state_cache.json");
-    let settings_path = data_dir.join("settings.json");
-    let log_path = data_dir.join("scan_log.txt");
-    let changes_log_path = data_dir.join("inventory_changes.txt");
-    let debug_root = data_dir.join("Debugging");
+    let quantities_cache_path = cache_dir.join("quantities_cache.json");
+    let inventory_state_cache_path = cache_dir.join("inventory_state_cache.json");
+    let settings_path = paths::config_dir().join("settings.json");
+    let log_path = state_dir.join("scan_log.txt");
+    let changes_log_path = state_dir.join("inventory_changes.txt");
+    let debug_root = state_dir.join("Debugging");
     let blob_log_dir = debug_root.join("Inventory Snapshots");
     let api_log_dir = debug_root.join("Api Responses");
     let auto_capture_dir = debug_root.join("Auto-Capture");
@@ -8606,83 +8887,60 @@ pub fn run() {
                  &memory_probe_dir, &raw_scan_dir, &unmatched_paths_dir] {
         let _ = std::fs::create_dir_all(dir);
     }
-    let wfm_top_cache_path = data_dir.join("wfm_top_cache.json");
-    let syndicate_catalog_path = data_dir.join("syndicate_catalog.json");
-    let img_cache_dir = data_dir.join("img_cache");
+    let img_cache_dir = cache_dir.join("img_cache");
     let _ = std::fs::create_dir_all(&img_cache_dir);
     let auction_ids_path = data_dir.join("auction_ids.json");
     let initial_auction_ids: Vec<String> = std::fs::read_to_string(&auction_ids_path)
         .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    let relics_run_prices_cache_path = data_dir.join("relics_run_prices.json");
-    let initial_relics_run = load_relics_run_cache(&relics_run_prices_cache_path);
-    let initial_relics_run_prices = initial_relics_run.as_ref()
-        .map(|(by_name, _)| by_name.clone())
+    // Serve whatever prices were last written, however old; the background
+    // refresh below replaces them once the window is up.
+    let initial_relics_run = cache::load::<BulkPrices>(BULK_PRICES_CACHE)
+        .map(|c| c.data)
         .unwrap_or_default();
+    let initial_relics_run_prices = initial_relics_run.by_name;
     let initial_wfm_prices: HashMap<String, Option<u32>> = initial_relics_run
-        .map(|(_, by_slug)| by_slug.into_iter().map(|(k, v)| (k, Some(v))).collect())
-        .unwrap_or_default();
+        .by_slug
+        .into_iter()
+        .map(|(k, v)| (k, Some(v)))
+        .collect();
 
     let conn = db::init_db(&db_path).expect("Failed to initialize database");
 
-    // ── Version-based cache invalidation ──────────────────────────────────────
-    // On first launch after an upgrade, wipe item/recipe caches so bundled
-    // corrections and updated data sources take effect without manual clearing.
-    {
-        const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-        let last_version = read_settings_map(&settings_path)
-            .ok()
-            .and_then(|m| m.get("lastVersion").and_then(|v| v.as_str().map(String::from)));
-        if last_version.as_deref() != Some(CURRENT_VERSION) {
-            // inventory_state_cache intentionally excluded — it holds mastery/shards/forma
-            // that can only be restored by a live scan; wiping it on upgrade loses that data.
-            for path in &[
-                &items_cache_path, &recipes_cache_path,
-                &relic_drops_cache_path, &relic_rewards_cache_path,
-            ] {
-                let _ = std::fs::remove_file(path);
-            }
-            let _ = merge_settings(&settings_path, |map| {
-                map.insert("lastVersion".to_string(), serde_json::Value::String(CURRENT_VERSION.to_string()));
-            });
-        }
-    }
-
-    let initial_items = load_items_cache(&items_cache_path)
-        .unwrap_or_else(wfcd::fallback_items);
+    // Serve the last catalogue written, however old; the frontend revalidates
+    // it in the background once the window is up. `fallback_items` is the floor
+    // for a first launch with no network.
+    let cached_catalogue = cache::load::<wfcd::FetchResult>(CATALOGUE_CACHE).map(|c| c.data);
+    let (
+        initial_items,
+        initial_recipes,
+        initial_relic_drops,
+        initial_relic_rewards,
+        initial_blueprint_names,
+        initial_wiki_reward_names,
+        initial_syndicate_catalog,
+    ) = match cached_catalogue {
+        Some(c) => (
+            patch_catalogue_items(c.items),
+            c.recipes,
+            c.relic_drops,
+            c.relic_rewards,
+            c.blueprint_names,
+            c.wiki_reward_names,
+            c.syndicate_catalog,
+        ),
+        None => (
+            wfcd::fallback_items(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            std::collections::HashSet::new(),
+            HashMap::new(),
+        ),
+    };
     let initial_weapon_dispositions: HashMap<String, f32> = initial_items.iter()
         .filter_map(|i| i.omega_attenuation.map(|d| (i.unique_name.clone(), d)))
         .collect();
-    let initial_recipes = load_recipes_cache(&recipes_cache_path);
-    let initial_relic_drops: HashMap<String, Vec<String>> = std::fs::read_to_string(&relic_drops_cache_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    // Load relic rewards cache. Two invalidation conditions:
-    // 1. Format: must contain at least one EE.log path key ("/Lotus/...") — old caches only
-    //    had display-name keys and would cause the OCR prefilter to always miss.
-    // 2. Age: discard after 24 hours so new relics added with game updates are picked up.
-    let initial_relic_rewards: HashMap<String, Vec<wfcd::RelicReward>> = {
-        let cache_age_ok = std::fs::metadata(&relic_rewards_cache_path)
-            .and_then(|m| m.modified())
-            .map(|t| t.elapsed().unwrap_or(std::time::Duration::MAX) < std::time::Duration::from_secs(86_400))
-            .unwrap_or(false);
-        let loaded: Option<HashMap<String, Vec<wfcd::RelicReward>>> = if cache_age_ok {
-            std::fs::read_to_string(&relic_rewards_cache_path)
-                .ok().and_then(|s| serde_json::from_str(&s).ok())
-        } else {
-            None
-        };
-        match loaded {
-            Some(map) if map.keys().any(|k| k.starts_with("/Lotus/")) => map,
-            Some(_) => {
-                info!("relic_rewards cache is old format (no path keys) — discarding, will regenerate");
-                let _ = std::fs::remove_file(&relic_rewards_cache_path);
-                HashMap::new()
-            }
-            None => {
-                let _ = std::fs::remove_file(&relic_rewards_cache_path);
-                HashMap::new()
-            }
-        }
-    };
     // Load unified inventory state cache. All data lives in items: unique_name → CachedItem.
     let initial_state = load_inventory_state_cache(&inventory_state_cache_path);
     // Stackable resources: non-mod, non-unique paths.
@@ -8724,10 +8982,7 @@ pub fn run() {
             (k.clone(), mc)
         })
         .collect();
-    let initial_syndicate_catalog: HashMap<String, Vec<SyndicateOffer>> = std::fs::read_to_string(&syndicate_catalog_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-
-    let corrections = load_corrections(&data_dir.join("corrections.json"));
+    let corrections = load_corrections(&paths::config_dir().join("corrections.json"));
 
     tauri::Builder::default()
         .register_uri_scheme_protocol("ffauth", |ctx, req| console_login::handle_ffauth(ctx.app_handle(), &req)) // [console-login feature]
@@ -8735,10 +8990,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db_path,
-            items_cache_path,
-            recipes_cache_path,
-            relic_drops_cache_path,
-            relic_rewards_cache_path,
             quantities_cache_path,
             inventory_state_cache_path,
             settings_path,
@@ -8749,8 +9000,8 @@ pub fn run() {
             recipes: Mutex::new(initial_recipes),
             relic_drops: Mutex::new(initial_relic_drops),
             relic_rewards: Mutex::new(initial_relic_rewards),
-            blueprint_to_result: Mutex::new(HashMap::new()),
-            wiki_reward_names: Mutex::new(std::collections::HashSet::new()),
+            blueprint_to_result: Mutex::new(initial_blueprint_names),
+            wiki_reward_names: Mutex::new(initial_wiki_reward_names),
             weapon_dispositions: Mutex::new(initial_weapon_dispositions),
             current_quantities: Arc::new(Mutex::new(initial_quantities)),
             unique_quantities: Arc::new(Mutex::new(initial_unique)),
@@ -8776,9 +9027,7 @@ pub fn run() {
             wfm_price_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             wfm_priority_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             wfm_queue_started: Arc::new(AtomicBool::new(false)),
-            wfm_top_cache_path,
             syndicate_catalog: Mutex::new(initial_syndicate_catalog),
-            syndicate_catalog_path,
             auction_ids: Mutex::new(initial_auction_ids),
             auction_ids_path,
             img_cache_dir,
@@ -8786,7 +9035,6 @@ pub fn run() {
             local_player_name: Arc::new(Mutex::new(None)),
             pending_relic_rewards: Mutex::new(None),
             relics_run_prices: Mutex::new(initial_relics_run_prices),
-            relics_run_prices_cache_path,
             worldstate_cache: Mutex::new(None),
             debug_cat_enabled: Arc::new(AtomicBool::new(false)),
             auto_capture_dir,
@@ -8856,36 +9104,10 @@ pub fn run() {
                 ));
             }
 
-            // Load relics.run prices in the background. On a cache hit (today's file exists)
-            // this is just a disk read; on a miss it fetches items.json + price_history.
-            {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let state = app_handle.state::<AppState>();
-                    let (by_name, by_slug) = match load_relics_run_cache(&state.relics_run_prices_cache_path) {
-                        Some(cached) => cached,
-                        None => {
-                            let data = tauri::async_runtime::spawn_blocking(fetch_relics_run_data)
-                                .await.unwrap_or_default();
-                            if !data.0.is_empty() {
-                                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                                let j = serde_json::json!({ "date": today, "by_name": &data.0, "by_slug": &data.1 });
-                                if let Ok(s) = serde_json::to_string(&j) {
-                                    let _ = std::fs::write(&state.relics_run_prices_cache_path, s);
-                                }
-                            }
-                            data
-                        }
-                    };
-                    if by_name.is_empty() { return; }
-                    *state.relics_run_prices.lock().unwrap_or_else(|e| e.into_inner()) = by_name;
-                    for (slug, price) in by_slug {
-                        if !state.wfm.is_price_cached(&slug) {
-                            state.wfm.cache_price(slug, Some(price));
-                        }
-                    }
-                });
-            }
+            // Every cache is revalidated from here on: the first tick, five
+            // seconds in, walks the whole table, and a cache still inside its
+            // TTL costs a disk read.
+            refresh::spawn(app.handle().clone());
 
             Ok(())
         })
@@ -8922,6 +9144,7 @@ pub fn run() {
             get_recipes_bulk,
             get_relic_drops,
             get_relic_rewards,
+            wfcd::get_drop_data,
             fetch_wfm_items,
             fetch_wfm_price,
             start_wfm_queue,
@@ -8931,6 +9154,8 @@ pub fn run() {
             get_wfm_top_items,
             get_item_price,
             refresh_bulk_prices,
+            refresh_all_caches,
+            get_cache_statuses,
             wfm_set_status,
             start_log_watcher,
             ocr_riven_log_error,
@@ -9339,3 +9564,17 @@ MR 11
     }
 }
 
+#[cfg(test)]
+mod image_validation_tests {
+    use super::looks_like_image;
+
+    #[test]
+    fn a_truncated_download_is_not_an_image() {
+        assert!(looks_like_image(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"));
+        assert!(looks_like_image(b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!looks_like_image(b""));
+        assert!(!looks_like_image(b"<!DOCTYPE html>"));
+        // A WEBP header that stops before the format tag.
+        assert!(!looks_like_image(b"RIFF\0\0\0\0"));
+    }
+}

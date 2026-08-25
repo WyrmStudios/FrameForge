@@ -141,8 +141,9 @@ pub struct Wfm {
     limiter: Mutex<RateLimiter>,
     /// Contract limit: ≤10 requests/minute for /v1/auctions/... (rivens, liches, sisters).
     auction_limiter: Mutex<RateLimiter>,
-    /// slug → median sell price (None = not listed). Shared with the prefetch thread.
-    price_cache: Mutex<std::collections::HashMap<String, Option<u32>>>,
+    /// slug → median sell price (None = not listed) and when it was fetched.
+    /// Shared with the prefetch thread.
+    price_cache: Mutex<std::collections::HashMap<String, (Option<u32>, Instant)>>,
     /// Top-items-by-volume result, cached in memory for the session.
     top_cache: Mutex<Option<(Instant, Vec<WfmTopItem>)>>,
     /// Prime-set (name, slug) pairs, fetched once per session.
@@ -1038,20 +1039,26 @@ impl Wfm {
                 };
                 Ok(p.or_else(|| d90.and_then(|arr| trimmed_median_from_stats(arr))))
             }
-            Err(_) => Ok(None),
+            // 404 is warframe.market's answer for a slug it does not know:
+            // a real "unlisted", safe to cache.
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            // Anything else never got an answer about the item. Collapsing it
+            // into `Ok(None)` would cache "unlisted" for everything looked up
+            // while offline.
+            Err(e) => Err(format!("wfm price {}: {}", slug, e)),
         }
     }
 
     /// Price for a slug, retrying the blueprint-suffix variant — WFM is
     /// inconsistent about whether component blueprints keep the "_blueprint" suffix.
-    pub fn price_with_fallback(&self, slug: &str) -> Option<u32> {
-        self.price_for_slug(slug).unwrap_or(None).or_else(|| {
-            if let Some(stripped) = slug.strip_suffix("_blueprint") {
-                self.price_for_slug(stripped).unwrap_or(None)
-            } else {
-                self.price_for_slug(&format!("{}_blueprint", slug)).unwrap_or(None)
-            }
-        })
+    pub fn price_with_fallback(&self, slug: &str) -> Result<Option<u32>, String> {
+        if let Some(price) = self.price_for_slug(slug)? {
+            return Ok(Some(price));
+        }
+        match slug.strip_suffix("_blueprint") {
+            Some(stripped) => self.price_for_slug(stripped),
+            None => self.price_for_slug(&format!("{}_blueprint", slug)),
+        }
     }
 
     /// 7-day price + average daily volume for a slug, or None if unlisted / stale.
@@ -1125,28 +1132,42 @@ impl Wfm {
 
     // ── Price cache ───────────────────────────────────────────────────────────
 
-    /// The cached price for a slug: `Some(price_opt)` when the slug was fetched
-    /// (`price_opt` distinguishes "listed at N" from "not listed"), `None` when
-    /// it has never been fetched.
+    /// The cached price for a slug: `Some(price_opt)` when the slug has a live
+    /// entry (`price_opt` distinguishes "listed at N" from "not listed"), `None`
+    /// when it has never been fetched or its entry has expired.
     pub fn cached_price(&self, slug: &str) -> Option<Option<u32>> {
-        self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).get(slug).copied()
+        self.price_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(slug)
+            .filter(|(price, at)| price_entry_live(*price, at.elapsed()))
+            .map(|(price, _)| *price)
     }
 
     pub fn is_price_cached(&self, slug: &str) -> bool {
-        self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).contains_key(slug)
+        self.cached_price(slug).is_some()
     }
 
     pub fn cache_price(&self, slug: String, price: Option<u32>) {
-        self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(slug, price);
+        self.price_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(slug, (price, Instant::now()));
     }
 
     pub fn uncache_price(&self, slug: &str) {
         self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(slug);
     }
 
-    /// A clone of the whole slug → price cache.
+    /// A clone of the live entries in the slug → price cache.
     pub fn cached_prices(&self) -> std::collections::HashMap<String, Option<u32>> {
-        self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.price_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, (price, at))| price_entry_live(*price, at.elapsed()))
+            .map(|(slug, (price, _))| (slug.clone(), *price))
+            .collect()
     }
 
     // ── Top items cache ───────────────────────────────────────────────────────
@@ -1170,6 +1191,23 @@ impl Wfm {
 // ==============================================================================
 // Pure helpers (no session, no network) — the tested core
 // ==============================================================================
+
+/// How long "this slug has no listings" is believed before it is looked up again.
+const NEGATIVE_PRICE_TTL: Duration = Duration::from_secs(3600);
+
+/// How long a known price is served before it is looked up again. Generous,
+/// since prices drift over days rather than minutes, but bounded, so a session
+/// left running overnight does not keep quoting yesterday's plat.
+const POSITIVE_PRICE_TTL: Duration = Duration::from_secs(6 * 3600);
+
+/// Whether a price-cache entry may still be served.
+///
+/// An absent price only describes the order book at the moment of the lookup.
+/// An item listed an hour later would otherwise stay unpriced, so it expires
+/// far sooner than a known price.
+fn price_entry_live(price: Option<u32>, age: Duration) -> bool {
+    age < if price.is_some() { POSITIVE_PRICE_TTL } else { NEGATIVE_PRICE_TTL }
+}
 
 /// Convert a display name to a warframe.market URL slug.
 /// E.g. "Ash Prime Neuroptics Blueprint" → "ash_prime_neuroptics_blueprint"
@@ -1333,5 +1371,30 @@ mod tests {
         assert!(rl.try_acquire().is_none());
         // Fourth within the window must be told to wait.
         assert!(rl.try_acquire().is_some());
+    }
+
+    #[test]
+    fn only_missing_prices_expire() {
+        let old = NEGATIVE_PRICE_TTL + Duration::from_secs(1);
+        assert!(price_entry_live(Some(42), old));
+        assert!(price_entry_live(None, Duration::ZERO));
+        assert!(!price_entry_live(None, old));
+    }
+
+    #[test]
+    fn an_unlisted_slug_is_looked_up_again_after_the_ttl() {
+        let wfm = Wfm::new();
+        wfm.cache_price("ash_prime_set".to_string(), None);
+        assert!(wfm.is_price_cached("ash_prime_set"));
+
+        // Backdate the entry past the TTL rather than waiting an hour for it.
+        wfm.price_cache
+            .lock()
+            .unwrap()
+            .insert("ash_prime_set".to_string(), (None, Instant::now() - NEGATIVE_PRICE_TTL));
+
+        assert!(!wfm.is_price_cached("ash_prime_set"));
+        assert!(wfm.cached_price("ash_prime_set").is_none());
+        assert!(wfm.cached_prices().is_empty());
     }
 }

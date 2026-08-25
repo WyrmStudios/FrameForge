@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use tracing::warn;
 use std::io::{Cursor, Read};
 
-#[derive(Clone, Debug)]
+use crate::cache::{self, Fetched};
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WfcdItem {
     pub name: String,
     pub unique_name: String,
@@ -60,6 +62,7 @@ pub struct SyndicateOffer {
     pub result_unique: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct FetchResult {
     pub items: Vec<WfcdItem>,
     /// parent unique_name → list of components needed to craft it
@@ -172,8 +175,114 @@ fn fetch_wiki_reward_names() -> HashSet<String> {
     names
 }
 
-pub fn fetch_items() -> Result<FetchResult, String> {
-    fetch_from_wfcd()
+/// The upstream files the catalogue is built from. Each is a static file behind
+/// a CDN that answers conditional requests, so an unchanged catalogue costs four
+/// empty responses instead of tens of megabytes.
+const ALL_URL: &str =
+    "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/All.json";
+const RECIPES_URLS: [&str; 2] = [
+    "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/master/ExportRecipes.json",
+    "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/HEAD/ExportRecipes.json",
+];
+const SYNDICATES_URL: &str =
+    "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
+const RELICS_URL: &str =
+    "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json";
+
+/// The four upstream ETags, packed into the single tag the cache stores per entry.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct SourceEtags {
+    all: Option<String>,
+    recipes: Option<String>,
+    syndicates: Option<String>,
+    relics: Option<String>,
+}
+
+struct Source {
+    /// Absent when the server confirmed the copy already held, and when the
+    /// fetch failed outright. `unchanged` tells the two apart.
+    json: Option<serde_json::Value>,
+    etag: Option<String>,
+    unchanged: bool,
+}
+
+/// Conditional GET across `urls`, taking the first that answers.
+fn fetch_source(urls: &[&str], etag: Option<&str>) -> Source {
+    for url in urls {
+        match cache::get_conditional(url, etag) {
+            Ok(Fetched::NotModified) => {
+                return Source { json: None, etag: etag.map(str::to_string), unchanged: true }
+            }
+            Ok(Fetched::New(body, new_etag)) => match serde_json::from_str(&body) {
+                Ok(json) => return Source { json: Some(json), etag: new_etag, unchanged: false },
+                Err(e) => warn!("{url}: {e}"),
+            },
+            Err(e) => warn!("{url}: {e}"),
+        }
+    }
+    Source { json: None, etag: None, unchanged: false }
+}
+
+/// Rebuild the catalogue unless every source says nothing has moved.
+///
+/// `prev_etags` is what the last successful build stored; `force` asks for the
+/// bodies regardless of it, and still uses it to tell an outage apart from a
+/// source that was never there. Only All.json is mandatory on a first build.
+/// The other three degrade to their empty defaults, so a syndicate or relic
+/// outage does not cost a new user the item list.
+pub fn fetch_items(prev_etags: Option<&str>, force: bool) -> Result<Fetched<FetchResult>, String> {
+    let prev: SourceEtags =
+        prev_etags.and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
+    fn sent(etag: &Option<String>, force: bool) -> Option<&str> {
+        if force { None } else { etag.as_deref() }
+    }
+
+    let mut sources = [
+        (&[ALL_URL][..], fetch_source(&[ALL_URL], sent(&prev.all, force))),
+        (&RECIPES_URLS[..], fetch_source(&RECIPES_URLS, sent(&prev.recipes, force))),
+        (&[SYNDICATES_URL][..], fetch_source(&[SYNDICATES_URL], sent(&prev.syndicates, force))),
+        (&[RELICS_URL][..], fetch_source(&[RELICS_URL], sent(&prev.relics, force))),
+    ];
+
+    if sources.iter().all(|(_, s)| s.unchanged) {
+        return Ok(Fetched::NotModified);
+    }
+
+    // One file moving means the whole catalogue is rebuilt, and a body skipped
+    // as unchanged is still needed to do that.
+    for (urls, source) in sources.iter_mut() {
+        if source.unchanged {
+            *source = fetch_source(urls, None);
+        }
+    }
+
+    // A source that answered on the last build and cannot be reached now would
+    // rebuild the catalogue without its recipes or relic rewards, and that
+    // hollowed-out payload would then be cached over the good one for a day.
+    // Failing instead leaves the ladder to serve the previous copy.
+    let had = [prev.all, prev.recipes, prev.syndicates, prev.relics];
+    for ((urls, source), before) in sources.iter().zip(&had) {
+        if source.json.is_none() && before.is_some() {
+            return Err(format!("{} unavailable", urls[0]));
+        }
+    }
+
+    let [(_, all), (_, recipes), (_, syndicates), (_, relics)] = sources;
+    let all_json = all.json.ok_or_else(|| "All.json unavailable".to_string())?;
+    let result = fetch_from_wfcd(
+        &all_json,
+        recipes.json.as_ref(),
+        syndicates.json.as_ref(),
+        relics.json.as_ref(),
+    )?;
+
+    let etags = SourceEtags {
+        all: all.etag,
+        recipes: recipes.etag,
+        syndicates: syndicates.etag,
+        relics: relics.etag,
+    };
+    Ok(Fetched::New(result, serde_json::to_string(&etags).ok()))
 }
 
 fn strip_tags(s: &str) -> &str {
@@ -218,25 +327,14 @@ struct ExportRecipe {
     result_count: u32,
 }
 
-/// Fetch ExportRecipes from warframe-public-export-plus (stable URL, pre-processed, always current).
-/// Returns a map from resultType (= what gets crafted) → ExportRecipe.
+/// Read DE's recipe export, keyed by resultType (= what gets crafted).
 #[tracing::instrument(level = "debug", skip_all)]
-fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
-    // Try two URLs: the warframe-public-export-plus repo (pre-processed) and a fallback
-    let urls = [
-        "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/master/ExportRecipes.json",
-        "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/HEAD/ExportRecipes.json",
-    ];
-    let url = urls[0]; // primary
-
-    let json: serde_json::Value = ureq::get(url)
-        .set("User-Agent", "FrameForge/3.1.0")
-        .call()
-        .map_err(|e| format!("ExportRecipes fetch: {}", e))?
-        .into_json()
-        .map_err(|e| format!("ExportRecipes parse: {}", e))?;
-
+fn parse_export_recipes(json: Option<&serde_json::Value>) -> HashMap<String, ExportRecipe> {
     let mut map: HashMap<String, ExportRecipe> = HashMap::new();
+    let json = match json {
+        Some(j) => j,
+        None => return map,
+    };
 
     // warframe-public-export-plus format:
     //   { "/Lotus/Types/Recipes/...Blueprint": { "resultType": "...", "num": 1, "ingredients": [...] } }
@@ -266,26 +364,21 @@ fn fetch_export_recipes() -> Result<HashMap<String, ExportRecipe>, String> {
             }
         }
     }
-    Ok(map)
+    map
 }
 
-/// Fetch complete syndicate store catalog from warframe-drop-data/syndicates.json.
+/// Read the syndicate store catalog from warframe-drop-data/syndicates.json.
 /// This covers all vendor-purchased items: sigils, specters, health restores,
 /// weapon blueprints, augment mods — items that WFCD's `drops` field mostly omits.
 #[tracing::instrument(level = "debug", skip_all)]
-fn fetch_syndicate_store_catalog(items: &[WfcdItem]) -> HashMap<String, Vec<SyndicateOffer>> {
-    const URL: &str =
-        "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
-
-    let json: serde_json::Value = match ureq::get(URL)
-        .set("User-Agent", "FrameForge/3.1.0")
-        .call()
-        .ok()
-        .and_then(|r| r.into_json().ok())
-    {
+fn parse_syndicate_store_catalog(
+    json: Option<&serde_json::Value>,
+    items: &[WfcdItem],
+) -> HashMap<String, Vec<SyndicateOffer>> {
+    let json = match json {
         Some(v) => v,
         None => {
-            warn!("failed to fetch syndicates.json");
+            warn!("no syndicates.json available");
             return HashMap::new();
         }
     };
@@ -552,21 +645,18 @@ fn wfcd_category_to_display(wfcd_cat: &str) -> &'static str {
     }
 }
 
-/// Fetch relic → reward mappings from WFCD Relics.json.
+/// Read relic → reward mappings from WFCD Relics.json.
 /// Each entry is one specific refinement (Bronze/Silver/Gold/Platinum) with a
 /// uniqueName that matches the EE.log path exactly — no normalization needed.
 #[tracing::instrument(level = "debug", skip_all)]
-fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<String, Vec<RelicReward>> {
-    const URL: &str =
-        "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json";
-
-    let json: serde_json::Value = match ureq::get(URL)
-        .set("User-Agent", "FrameForge/3.1.0")
-        .call().ok().and_then(|r| r.into_json().ok())
-    {
+fn parse_relics_rewards(
+    json: Option<&serde_json::Value>,
+    image_by_name: &HashMap<String, String>,
+) -> HashMap<String, Vec<RelicReward>> {
+    let json = match json {
         Some(v) => v,
         None => {
-            warn!("failed to fetch Relics.json");
+            warn!("no Relics.json available");
             return HashMap::new();
         }
     };
@@ -628,7 +718,12 @@ fn fetch_relics_rewards(image_by_name: &HashMap<String, String>) -> HashMap<Stri
 }
 
 #[tracing::instrument(level = "debug", skip_all)]
-fn fetch_from_wfcd() -> Result<FetchResult, String> {
+fn fetch_from_wfcd(
+    all_json: &serde_json::Value,
+    recipes_json: Option<&serde_json::Value>,
+    syndicates_json: Option<&serde_json::Value>,
+    relics_json: Option<&serde_json::Value>,
+) -> Result<FetchResult, String> {
     let mut items: Vec<WfcdItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut raw_craftable: Vec<(String, serde_json::Value)> = Vec::new();
@@ -636,16 +731,6 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
     // Built by inverting each item's drops[] array (All.json stores item→relics).
     // WFCD canonicalizes all refinements under the Bronze path — dedup at build time.
     let mut raw_drop_entries: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
-
-    // Single All.json request replaces 20 sequential per-category fetches.
-    let all_json: serde_json::Value = ureq::get(
-        "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/All.json"
-    )
-    .set("User-Agent", "FrameForge/3.1.0")
-    .call()
-    .map_err(|e| format!("All.json fetch: {}", e))?
-    .into_json()
-    .map_err(|e| format!("All.json parse: {}", e))?;
 
     let all_items_raw = all_json.as_array()
         .ok_or_else(|| "All.json: expected top-level array".to_string())?;
@@ -880,16 +965,15 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
         .map(|i| (i.unique_name.clone(), i.name.clone()))
         .collect();
 
-    // Fetch DE's authoritative recipe data (best-effort; fall back to WFCD-only if it fails)
-    let export_recipes = fetch_export_recipes().unwrap_or_default();
+    // DE's authoritative recipe data (best-effort; fall back to WFCD-only if absent)
+    let export_recipes = parse_export_recipes(recipes_json);
 
     // Reverse map: blueprint unique_name → result item unique_name
     let bp_to_result: HashMap<String, String> = export_recipes.iter()
         .map(|(result, recipe)| (recipe.blueprint_unique.clone(), result.clone()))
         .collect();
 
-    // Fetch complete syndicate store catalog from warframe-drop-data (sigils, specters, etc.)
-    let mut syndicate_catalog = fetch_syndicate_store_catalog(&items);
+    let mut syndicate_catalog = parse_syndicate_store_catalog(syndicates_json, &items);
 
     // Fill result_unique on blueprint offers so the frontend can show crafted-item status
     for offers in syndicate_catalog.values_mut() {
@@ -1137,7 +1221,7 @@ fn fetch_from_wfcd() -> Result<FetchResult, String> {
 
     // Build relic_rewards from Relics.json — each entry is one specific refinement
     // (Bronze/Silver/Gold/Platinum) with its own uniqueName matching EE.log paths exactly.
-    let relic_rewards = fetch_relics_rewards(&image_by_name);
+    let relic_rewards = parse_relics_rewards(relics_json, &image_by_name);
 
     // Build blueprint_names: blueprint_path → (display_name, ducats)
     // Lets the frontend create virtual catalog entries for component blueprints that
@@ -1234,4 +1318,44 @@ pub fn fallback_items() -> Vec<WfcdItem> {
         image_name: None, vaulted: None, ducats: None, mastery_req: None, omega_attenuation: None, fusion_limit: None, max_level_cap: None,
     })
     .collect()
+}
+
+const DROP_DATA_URL: &str =
+    "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/all.json";
+const DROP_DATA_CACHE: &str = "drop-data-v1.json";
+const DROP_DATA_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Serve the drop tables off the cache ladder. `force` both ignores the cached
+/// copy's age and drops its ETag, so the server has to send the body back.
+fn load_drop_data(force: bool) -> (Option<serde_json::Value>, Option<String>) {
+    let ttl = if force { std::time::Duration::ZERO } else { DROP_DATA_TTL };
+    let (data, _, warning) = cache::get_or_refresh(DROP_DATA_CACHE, ttl, |etag| {
+        let etag = if force { None } else { etag };
+        match cache::get_conditional(DROP_DATA_URL, etag)? {
+            Fetched::New(body, etag) => serde_json::from_str(&body)
+                .map(|v| Fetched::New(v, etag))
+                .map_err(|e| e.to_string()),
+            Fetched::NotModified => Ok(Fetched::NotModified),
+        }
+    });
+    (data, warning)
+}
+
+/// The WFCD drop tables, verbatim. The relic view picks what it needs out of the
+/// payload, so parsing it here would only mean maintaining the same shape twice.
+#[tauri::command]
+pub async fn get_drop_data(force: Option<bool>) -> Result<serde_json::Value, String> {
+    let force = force.unwrap_or(false);
+    let (data, warning) = tauri::async_runtime::spawn_blocking(move || load_drop_data(force))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    data.ok_or_else(|| warning.unwrap_or_else(|| "drop data unavailable".into()))
+}
+
+pub fn refresh_drop_data(_app: &tauri::AppHandle, force: bool) -> Result<(), String> {
+    match load_drop_data(force) {
+        (Some(_), None) => Ok(()),
+        (_, warning) => Err(warning.unwrap_or_else(|| "drop data unavailable".into())),
+    }
 }

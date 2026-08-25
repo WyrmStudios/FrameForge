@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useImgLadder, cdnUrl } from "./ImgCacheDir";
 import "./Weapons.css";
 import type { InventoryItem } from "./App";
 
@@ -51,19 +52,11 @@ function effectiveCap(item: WeaponItem): number {
 // ── Image ─────────────────────────────────────────────────────────────────────
 
 function WeaponImg({ imageName, name }: { imageName?: string; name: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!imageName || failed) {
+  const { src, onError } = useImgLadder([cdnUrl(imageName)]);
+  if (!src) {
     return <div className="wpn-img-fallback">{name[0]?.toUpperCase() ?? "?"}</div>;
   }
-  return (
-    <img
-      className="wpn-img"
-      src={`https://cdn.warframestat.us/img/${imageName}`}
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
-  );
+  return <img key={src} className="wpn-img" src={src} alt="" loading="lazy" onError={onError} />;
 }
 
 // ── Item row ──────────────────────────────────────────────────────────────────

@@ -63,6 +63,7 @@ import TimerHelper, { FissureWatch, fmtMs } from "./TimerHelper";
 import { useWorldState } from "./worldstate";
 import { notify, ensurePermission } from "./notify";
 import { collectNewMatches, type SeenFissures } from "./fissureAlerts";
+import CacheStatusChip from "./CacheStatusChip";
 import Statistics from "./Statistics";
 import Syndicates from "./Syndicates";
 import Weapons from "./Weapons";
@@ -695,18 +696,20 @@ function OverlayTestPage() {
   );
 }
 
-function BulkPriceRefreshButton() {
-  const [state, setState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
-  const label = state === 'loading' ? 'Fetching…' : state === 'ok' ? 'Done!' : state === 'err' ? 'Failed' : 'Refresh Now';
+// Marks every cache due at once; the background scheduler picks the work up on
+// its next tick, so the button reports that it was queued, not that it is done.
+function RefreshAllButton() {
+  const [state, setState] = useState<'idle' | 'loading' | 'err'>('idle');
+  const label = state === 'loading' ? 'Refreshing…' : state === 'err' ? 'Failed' : 'Refresh Now';
   return (
     <button
       className="btn-secondary"
       disabled={state === 'loading'}
-      style={{ minWidth: 100, borderColor: state === 'ok' ? 'var(--accent)' : state === 'err' ? '#e05252' : undefined }}
+      style={{ minWidth: 100, borderColor: state === 'err' ? '#e05252' : undefined }}
       onClick={() => {
         setState('loading');
-        invoke('refresh_bulk_prices')
-          .then(() => { setState('ok'); setTimeout(() => setState('idle'), 3000); })
+        invoke('refresh_all_caches')
+          .then(() => setTimeout(() => setState('idle'), 5000))
           .catch(() => { setState('err'); setTimeout(() => setState('idle'), 4000); });
       }}
     >{label}</button>
@@ -1298,7 +1301,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       setMonitoring(false);
     }
     try {
-      const count = await invoke<number>("fetch_item_list");
+      const count = await invoke<number>("fetch_item_list", { force: true });
       setItemCount(count);
       const items = await invoke<CatalogItem[]>("get_all_items");
       setCatalog(items);
@@ -1319,9 +1322,22 @@ if (typeof s.autoDiagEnabled === "boolean") {
     }
   };
 
-  // Auto-refresh item database on every app start so the OCR catalog stays current.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { handleFetch(); }, []);
+  // The catalogue the backend loaded from disk is already on screen; revalidate
+  // it behind the UI so a launch never waits on the network, and leave the
+  // monitor running since the refresh is a no-op while the cache is fresh.
+  useEffect(() => {
+    invoke<number>("fetch_item_list").then(async count => {
+      setItemCount(count);
+      const items = await invoke<CatalogItem[]>("get_all_items");
+      setCatalog(items);
+      catalogRef.current = items;
+      const status = await invoke<{ count: number; recipe_count: number }>("get_item_list_status");
+      setRecipeCount(status.recipe_count);
+      setItemsRefreshKey(k => k + 1);
+      invoke("prewarm_image_cache").catch(() => {});
+    }).catch(e => setFetchMsg(`Error: ${e}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Warframe API: process inventory response ──────────────────────────────
 
@@ -2078,6 +2094,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
           </span>
         )}
         <div className="header-right">
+          <CacheStatusChip />
           {/* ── Connection status chips ── */}
           {(() => {
             // Memory chip
@@ -2468,13 +2485,13 @@ if (typeof s.autoDiagEnabled === "boolean") {
                 {/* ════════════ MARKET ════════════ */}
                 {settingsTab === "market" && <>
                   <div className="settings-section">
-                    <div className="settings-section-title">Bulk Prices</div>
+                    <div className="settings-section-title">Cached Data</div>
                     <div className="settings-row">
                       <div className="settings-row-info">
                         <span className="settings-row-label">Force Refresh</span>
-                        <span className="settings-row-desc">Re-download price data from FrameForgePricing right now. Use this if prices look stale or missing.</span>
+                        <span className="settings-row-desc">Re-download prices, the item catalogue, drop tables and riven data right now. Use this if anything looks stale or missing.</span>
                       </div>
-                      <BulkPriceRefreshButton />
+                      <RefreshAllButton />
                     </div>
                   </div>
                   <div className="settings-section">

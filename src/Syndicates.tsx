@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useImgLadder, cdnUrl } from "./ImgCacheDir";
 import "./Syndicates.css";
 import type { InventoryItem } from "./App";
 
@@ -102,23 +103,15 @@ const GROUP_LABELS: Record<SynGroup, string> = {
 // ── Image component ───────────────────────────────────────────────────────────
 
 function SynItemImg({ imageName, category }: { imageName?: string; category: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!imageName || failed) {
+  const { src, onError } = useImgLadder([cdnUrl(imageName)]);
+  if (!src) {
     return (
       <div className="syn-item-img-fallback">
         {category[0]?.toUpperCase() ?? "?"}
       </div>
     );
   }
-  return (
-    <img
-      className="syn-item-img"
-      src={`https://cdn.warframestat.us/img/${imageName}`}
-      alt=""
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
-  );
+  return <img key={src} className="syn-item-img" src={src} alt="" loading="lazy" onError={onError} />;
 }
 
 // ── Status badge ─────────────────────────────────────────────────────────────

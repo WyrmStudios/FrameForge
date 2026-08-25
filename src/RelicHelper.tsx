@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./HelpTip";
+import { cdnUrl, useImgLadder } from "./ImgCacheDir";
 import type { InventoryItem, ViewMode } from "./App";
 import { ViewToggle } from "./App";
 
@@ -66,10 +67,6 @@ function chanceToRarity(chance: number): string {
   return "Rare";
 }
 
-const DROP_URL       = "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/all.json";
-const DROP_CACHE_KEY = "ff-drop-data-v7";
-const DROP_CACHE_TTL = 24 * 60 * 60 * 1000;
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function findCatalogItemGlobal(itemName: string, nameMap: Map<string, CatalogItem>): CatalogItem | undefined {
@@ -95,8 +92,8 @@ function extractPrimeName(name: string): string | null {
   return idx >= 0 ? name.slice(0, idx + " Prime".length) : null;
 }
 
-function parseDropData(raw: any): RelicDrop[] {
-  const relicsArray: any[] = Array.isArray(raw?.relics) ? raw.relics : [];
+function parseDropData(raw: unknown): RelicDrop[] {
+  const relicsArray: any[] = Array.isArray((raw as any)?.relics) ? (raw as any).relics : [];
 
   const map = new Map<string, RelicDrop>();
   for (const r of relicsArray) {
@@ -128,11 +125,11 @@ function parseDropData(raw: any): RelicDrop[] {
 // ─── Images ───────────────────────────────────────────────────────────────────
 
 function RelicImg({ src }: { src?: string }) {
-  const [failed, setFailed] = useState(false);
+  const img = useImgLadder([src]);
   const base = { width: 44, height: 44, borderRadius: 6, flexShrink: 0 } as const;
-  if (!src || failed)
+  if (!img.src)
     return <div style={{ ...base, background: "rgba(255,255,255,.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#8b949e" }}>R</div>;
-  return <img style={{ ...base, objectFit: "contain" }} src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+  return <img key={img.src} style={{ ...base, objectFit: "contain" }} src={img.src} alt="" loading="lazy" onError={img.onError} />;
 }
 
 const RARITY_BG: Record<string, string> = {
@@ -142,11 +139,8 @@ const RARITY_BG: Record<string, string> = {
 };
 
 function PartImg({ srcs, rarity }: { srcs: (string | undefined)[]; rarity?: string }) {
-  // Deduplicate so the same failing URL isn't retried
-  const valid = [...new Set(srcs.filter(Boolean) as string[])];
-  const [idx, setIdx] = useState(0);
+  const { src, onError } = useImgLadder(srcs);
   const base = { width: 40, height: 40, borderRadius: 4 } as const;
-  const src = valid[idx];
   if (!src) {
     const bg = rarity ? (RARITY_BG[rarity] ?? "rgba(255,255,255,.06)") : "rgba(255,255,255,.06)";
     return <div style={{ ...base, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "rgba(255,255,255,.3)" }}>?</div>;
@@ -154,10 +148,8 @@ function PartImg({ srcs, rarity }: { srcs: (string | undefined)[]; rarity?: stri
   // key={src} forces React to unmount/remount the img when src changes,
   // preventing the broken-image icon from persisting between attempts
   return <img key={src} style={{ ...base, objectFit: "contain", display: "block" }} src={src} alt=""
-    onError={() => setIdx(i => i + 1)} />;
+    onError={onError} />;
 }
-
-const CDN = (name?: string) => name ? `https://cdn.warframestat.us/img/${name}` : undefined;
 
 // ─── Reward box ───────────────────────────────────────────────────────────────
 
@@ -283,7 +275,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
   if (view === "icons") {
     return (
       <div className={`${cardClass} relic-card-icon-only`} title={`${drop.fullName} ×${total}`}>
-        <RelicImg src={CDN(intactCat?.image_name)} />
+        <RelicImg src={cdnUrl(intactCat?.image_name)} />
         <span className="relic-icon-count">×{total}</span>
       </div>
     );
@@ -295,7 +287,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
       .join(" ");
     return (
       <div className={`${cardClass} relic-card-row`}>
-        {view === "list" && <div className="relic-row-img"><RelicImg src={CDN(intactCat?.image_name)} /></div>}
+        {view === "list" && <div className="relic-row-img"><RelicImg src={cdnUrl(intactCat?.image_name)} /></div>}
         <div className="relic-row-name">{drop.fullName}</div>
         {intactCat?.vaulted && <span className="vault-badge vault-yes" style={{ fontSize: 9 }}>🔒</span>}
         <span className="relic-row-total">×{total}</span>
@@ -335,7 +327,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
     <div className={cardClass}>
       <div className="relic-card-left">
         <div className="relic-card-icon-row">
-          <RelicImg src={CDN(intactCat?.image_name)} />
+          <RelicImg src={cdnUrl(intactCat?.image_name)} />
           <span className="relic-total">×{total}</span>
           {colorblindMode && allComplete && <span className="relic-cb-relic-check" title="All rewards obtained">✓✓</span>}
         </div>
@@ -370,21 +362,21 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
 
           const imageSrcs: (string | undefined)[] = [
             // 1. Catalog item image (direct or parent-prime fallback from findCatalogItem)
-            CDN(imageItem?.image_name),
+            cdnUrl(imageItem?.image_name),
             // 2. Parent prime warframe/weapon image
-            CDN(primeImageItem?.image_name),
+            cdnUrl(primeImageItem?.image_name),
             // 3. Construct from catalog unique_name: "YareliPrimeBlueprint" → "YareliPrime.png"
             (() => {
               const seg = (catalogItem?.unique_name ?? "").split("/").pop() ?? "";
               const file = seg.replace(/Blueprint$/, "");
-              return file ? `https://cdn.warframestat.us/img/${file}.png` : undefined;
+              return cdnUrl(file ? `${file}.png` : undefined);
             })(),
             // 4. Construct from parent prime name: "Yareli Prime" → "YareliPrime.png"
-            primeName ? `https://cdn.warframestat.us/img/${primeName.replace(/\s+/g, "")}.png` : undefined,
+            cdnUrl(primeName ? `${primeName.replace(/\s+/g, "")}.png` : undefined),
             // 5. Strip "Blueprint" from item name: "Forma Blueprint" → "Forma.png"
-            `https://cdn.warframestat.us/img/${r.itemName.replace(" Blueprint", "").replace(/\s+/g, "")}.png`,
+            cdnUrl(`${r.itemName.replace(" Blueprint", "").replace(/\s+/g, "")}.png`),
             // 6. Strip leading count prefix: "2X Forma" → "Forma.png"
-            `https://cdn.warframestat.us/img/${r.itemName.replace(/^\d+[xX]\s*/, "").replace(" Blueprint", "").replace(/\s+/g, "")}.png`,
+            cdnUrl(`${r.itemName.replace(/^\d+[xX]\s*/, "").replace(" Blueprint", "").replace(/\s+/g, "")}.png`),
           ];
           // Gold: the complete parent prime item is built and in inventory
           // "Burston Prime Barrel" → find "Burston Prime" → check inventory by name
@@ -715,16 +707,11 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
   const { search, tiers, ownership, vault, completion, sortMode, ignoreFormaKuva } = filters;
   const set = <K extends keyof RelicFilters>(k: K, v: RelicFilters[K]) => onFiltersChange({ ...filters, [k]: v });
 
-  const loadDrops = useCallback(() => {
+  const loadDrops = useCallback((force = false) => {
     setDropLoading(true);
     setDropError(false);
-    fetch(DROP_URL)
-      .then(r => r.json())
-      .then(d => {
-        const result = parseDropData(d);
-        setDrops(result);
-        try { localStorage.setItem(DROP_CACHE_KEY, JSON.stringify({ data: result, ts: Date.now() })); } catch {}
-      })
+    invoke<unknown>("get_drop_data", { force })
+      .then(d => setDrops(parseDropData(d)))
       .catch(() => setDropError(true))
       .finally(() => setDropLoading(false));
   }, []);
@@ -734,16 +721,6 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
   }, [refreshKey]);
 
   useEffect(() => {
-    try {
-      const cached = localStorage.getItem(DROP_CACHE_KEY);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (typeof ts === "number" && Date.now() - ts < DROP_CACHE_TTL && Array.isArray(data)) {
-          setDrops(data);
-          return;
-        }
-      }
-    } catch {}
     loadDrops();
   }, [loadDrops]);
 
@@ -895,7 +872,7 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
           <button className={`fchip ${sortMode === "za"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "za")}>Z–A</button>
           <span className="fbar-sep"/>
           <button className="fchip fchip-reset" onClick={() => onFiltersChange(RELIC_FILTERS_DEFAULT)}>Show All</button>
-          {dropError && <button className="btn-secondary" style={{ marginLeft: 4 }} onClick={loadDrops}>↺ Retry</button>}
+          {dropError && <button className="btn-secondary" style={{ marginLeft: 4 }} onClick={() => loadDrops(true)}>↺ Retry</button>}
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
             {dropLoading ? "Loading…" : `${visibleDrops.length} relics · ${ownedCount} owned`}
           </span>

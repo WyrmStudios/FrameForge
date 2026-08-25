@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useImgLadder, cdnUrl } from "./ImgCacheDir";
 import "./Reports.css";
 
 interface WfmTopItem {
@@ -270,11 +271,11 @@ function Legend({ items }: { items: { label: string; color: string; value: numbe
 // ── Main component ───────────────────────────────────────────────────────────
 
 function ItemImg({ imageName, size = 28 }: { imageName?: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
+  const { src, onError } = useImgLadder([cdnUrl(imageName)]);
   const s: React.CSSProperties = { width: size, height: size, objectFit: "contain", flexShrink: 0, borderRadius: 3 };
-  if (!imageName || failed)
+  if (!src)
     return <span style={{ ...s, background: "rgba(255,255,255,.06)", border: "1px solid #30363d", display: "inline-block" }} />;
-  return <img style={s} src={`https://cdn.warframestat.us/img/${imageName}`} alt="" loading="lazy" onError={() => setFailed(true)} />;
+  return <img key={src} style={s} src={src} alt="" loading="lazy" onError={onError} />;
 }
 
 interface Props {
