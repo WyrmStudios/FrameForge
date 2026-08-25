@@ -3,8 +3,10 @@
 body { background: transparent; overflow: hidden; }
 
 .rov-root {
-  width: 100vw;
-  height: 100vh;
+  /* Percentages, not vw/vh: viewport units skip #root's 1/scale shrink, so the
+     UI scale would apply to them twice and push the card past the window edge. */
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: flex-start;
   justify-content: center;
