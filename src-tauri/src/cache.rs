@@ -197,6 +197,10 @@ fn report<T>(
     (data, source, warning)
 }
 
+/// Bodies past this are refused as runaway responses. The catalogue sources are
+/// the largest bodies we pull, and All.json alone is ~30 MB.
+const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
+
 /// GET `url`, asking the server to skip the body when `etag` still matches.
 pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>, String> {
     let mut req = ureq::get(url)
@@ -211,7 +215,26 @@ pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>,
     match req.call() {
         Ok(resp) => {
             let etag = resp.header("etag").map(str::to_string);
-            let body = resp.into_string().map_err(|e| e.to_string())?;
+            // Not `into_string()`: ureq caps that at 10 MB.
+            use std::io::Read;
+            // Capped so a lying Content-Length cannot make us allocate the
+            // whole cap up front.
+            let hint = resp
+                .header("content-length")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0)
+                .min(64 * 1024 * 1024);
+            let mut body = Vec::with_capacity(hint);
+            // One byte past the cap so a body of exactly the cap's size is
+            // distinguishable from a truncated one.
+            resp.into_reader()
+                .take(MAX_BODY_BYTES + 1)
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            if body.len() as u64 > MAX_BODY_BYTES {
+                return Err(format!("{url}: response body exceeds {MAX_BODY_BYTES} bytes"));
+            }
+            let body = String::from_utf8(body).map_err(|e| e.to_string())?;
             Ok(Fetched::New(body, etag))
         }
         Err(ureq::Error::Status(304, _)) => Ok(Fetched::NotModified),
