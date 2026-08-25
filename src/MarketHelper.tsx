@@ -597,7 +597,6 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           prices={prices}
           modCopiesMap={modCopiesMap}
           onOpenPopup={(urlName, displayName, imageName, prefillModRank) => {
-            invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
             setPopup({ urlName, displayName, imageName, prefillModRank });
           }}
         />
@@ -685,11 +684,9 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
               pricesFetched={prices.size > 0}
               crafting={crafting}
               onCardClick={() => {
-                invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
                 setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
               }}
               onPartClick={(urlName, displayName, imageName) => {
-                invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
                 setPopup({ urlName, displayName, imageName });
               }} />
           );

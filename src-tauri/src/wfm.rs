@@ -147,6 +147,14 @@ pub struct Wfm {
     top_cache: Mutex<Option<(Instant, Vec<WfmTopItem>)>>,
     /// Prime-set (name, slug) pairs, fetched once per session.
     prime_sets_cache: Mutex<Option<Vec<(String, String)>>>,
+    /// Short-lived response memo, keyed by endpoint + params. One popup open
+    /// repeats its fetches (StrictMode double-mount, re-render refetches). The
+    /// memo collapses them so they do not wait for the 3/sec limit.
+    memo: Mutex<std::collections::HashMap<String, (Instant, serde_json::Value)>>,
+    /// Per-key in-flight locks. Concurrent misses on the same memo key fetch
+    /// once instead of racing. Entries are never removed: the map holds only
+    /// a few keys for each item the user opens.
+    memo_flights: Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<()>>>>,
 }
 
 impl Default for Wfm {
@@ -156,6 +164,8 @@ impl Default for Wfm {
             limiter: Mutex::new(RateLimiter::new(3, Duration::from_secs(1))),
             auction_limiter: Mutex::new(RateLimiter::new(10, Duration::from_secs(60))),
             price_cache: Mutex::new(std::collections::HashMap::new()),
+            memo: Mutex::new(std::collections::HashMap::new()),
+            memo_flights: Mutex::new(std::collections::HashMap::new()),
             top_cache: Mutex::new(None),
             prime_sets_cache: Mutex::new(None),
         }
@@ -171,12 +181,23 @@ impl Wfm {
 
     /// Block until the general 3/sec budget allows another request.
     fn wait(&self) {
+        // The sleep here does not show in request spans: a span looks fast
+        // while a burst waits for the limiter. Log the total blocked time
+        // whenever it is non-zero.
+        let start = Instant::now();
+        let mut slept = false;
         loop {
             let sleep_dur = self.limiter.lock().unwrap_or_else(|e| e.into_inner()).try_acquire();
             match sleep_dur {
                 None => break,
-                Some(d) => std::thread::sleep(d),
+                Some(d) => {
+                    slept = true;
+                    std::thread::sleep(d);
+                }
             }
+        }
+        if slept {
+            tracing::debug!(blocked_ms = start.elapsed().as_millis() as u64, "rate limiter wait");
         }
     }
 
@@ -194,6 +215,50 @@ impl Wfm {
                 Some(d) => std::thread::sleep(d),
             }
         }
+    }
+
+    // ── Response memo (internal) ──────────────────────────────────────────────
+
+    /// Return the memoized response for `key` if it is younger than 30 s.
+    /// Otherwise run `fetch` (single-flight per key) and memoize the result.
+    /// 30 s keeps order lists usable and is long enough to absorb a popup's
+    /// burst.
+    fn memoized(
+        &self,
+        key: &str,
+        fetch: impl FnOnce() -> Result<serde_json::Value, String>,
+    ) -> Result<serde_json::Value, String> {
+        const MEMO_TTL: Duration = Duration::from_secs(30);
+        let lookup = || {
+            self.memo
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(key)
+                .filter(|(at, _)| at.elapsed() < MEMO_TTL)
+                .map(|(_, v)| v.clone())
+        };
+        if let Some(v) = lookup() {
+            tracing::debug!(key, "memo hit");
+            return Ok(v);
+        }
+        let flight = self
+            .memo_flights
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(key.to_string())
+            .or_default()
+            .clone();
+        let _guard = flight.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = lookup() {
+            tracing::debug!(key, "memo hit after flight");
+            return Ok(v);
+        }
+        let v = fetch()?;
+        self.memo
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.to_string(), (Instant::now(), v.clone()));
+        Ok(v)
     }
 
     // ── Request building (internal) ───────────────────────────────────────────
@@ -604,21 +669,25 @@ impl Wfm {
 
     /// Current buy + sell orders for an item, each sorted best-first and capped
     /// at 15. When `mod_rank` is set, results are filtered to that rank.
+    #[tracing::instrument(level = "debug", skip_all, fields(slug = %url_name))]
     pub fn item_orders(&self, url_name: &str, mod_rank: Option<u32>) -> Result<serde_json::Value, String> {
-        let auth = self.auth_opt();
-        self.wait();
-        let mut req = ureq::get(&format!("{}/v2/orders/item/{}", API_BASE, url_name))
-            .set("language", "en")
-            .set("platform", "pc")
-            .set("User-Agent", USER_AGENT);
-        if let Some(ref h) = auth {
-            req = req.set("Authorization", h);
-        }
-        let json: serde_json::Value = req
-            .call()
-            .map_err(|e| format!("orders: {}", e))?
-            .into_json()
-            .map_err(|e| format!("parse: {}", e))?;
+        // Memoize the raw order list per item, not per rank. A mod-rank change
+        // in the popup then filters the memoized data and does not fetch again.
+        let json = self.memoized(&format!("orders:{url_name}"), || {
+            let auth = self.auth_opt();
+            self.wait();
+            let mut req = ureq::get(&format!("{}/v2/orders/item/{}", API_BASE, url_name))
+                .set("language", "en")
+                .set("platform", "pc")
+                .set("User-Agent", USER_AGENT);
+            if let Some(ref h) = auth {
+                req = req.set("Authorization", h);
+            }
+            req.call()
+                .map_err(|e| format!("orders: {}", e))?
+                .into_json()
+                .map_err(|e| format!("parse: {}", e))
+        })?;
 
         // Present orders best-first: ingame sellers before online before offline,
         // then cheapest sell / richest buy.
@@ -657,34 +726,40 @@ impl Wfm {
     }
 
     /// 90-day daily price statistics for an item (for the chart).
+    #[tracing::instrument(level = "debug", skip_all, fields(slug = %url_name))]
     pub fn item_statistics(&self, url_name: &str) -> Result<serde_json::Value, String> {
-        let auth = self.auth_opt();
-        self.wait();
-        let mut req = ureq::get(&format!("{}/v1/items/{}/statistics", API_BASE, url_name))
-            .set("language", "en")
-            .set("platform", "pc")
-            .set("User-Agent", USER_AGENT);
-        if let Some(ref h) = auth {
-            req = req.set("Authorization", h);
-        }
-        let json: serde_json::Value = req
-            .call()
-            .map_err(|e| format!("stats: {}", e))?
-            .into_json()
-            .map_err(|e| format!("parse: {}", e))?;
-        Ok(json["payload"]["statistics_closed"]["90days"].clone())
+        self.memoized(&format!("stats:{url_name}"), || {
+            let auth = self.auth_opt();
+            self.wait();
+            let mut req = ureq::get(&format!("{}/v1/items/{}/statistics", API_BASE, url_name))
+                .set("language", "en")
+                .set("platform", "pc")
+                .set("User-Agent", USER_AGENT);
+            if let Some(ref h) = auth {
+                req = req.set("Authorization", h);
+            }
+            let json: serde_json::Value = req
+                .call()
+                .map_err(|e| format!("stats: {}", e))?
+                .into_json()
+                .map_err(|e| format!("parse: {}", e))?;
+            Ok(json["payload"]["statistics_closed"]["90days"].clone())
+        })
     }
 
     /// The internal WFM item detail for a slug (needed to create orders). The
     /// caller enriches it further; `Wfm` returns only what the wire gives.
+    #[tracing::instrument(level = "debug", skip_all, fields(slug = %url_name))]
     pub fn item_info(&self, url_name: &str) -> Result<serde_json::Value, String> {
-        let auth = self.auth_opt().unwrap_or_default();
-        self.wait();
-        self.call("GET", &format!("/v2/items/{}", url_name), &auth)
-            .map_err(|e| format!("Item info: {}", e))?
-            .into_json::<serde_json::Value>()
-            .map_err(|e| format!("Parse: {}", e))
-            .map(|j| j["data"].clone())
+        self.memoized(&format!("info:{url_name}"), || {
+            let auth = self.auth_opt().unwrap_or_default();
+            self.wait();
+            self.call("GET", &format!("/v2/items/{}", url_name), &auth)
+                .map_err(|e| format!("Item info: {}", e))?
+                .into_json::<serde_json::Value>()
+                .map_err(|e| format!("Parse: {}", e))
+                .map(|j| j["data"].clone())
+        })
     }
 
     /// The authenticated user's active buy + sell orders.

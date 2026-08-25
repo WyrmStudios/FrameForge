@@ -1686,17 +1686,27 @@ fn wfm_login(state: State<AppState>, email: String, password: String) -> Result<
     state.wfm.login(&email, &password)
 }
 
+// The popup sends the info, statistics, and orders requests at the same time.
+// Tauri runs sync commands one after another on the IPC thread. Each command
+// here is async and runs on the blocking pool, so the three requests overlap.
+
 /// Fetch current in-game buy and sell orders for an item, sorted by price.
 /// When `mod_rank` is provided the results are filtered to that specific rank only.
 #[tauri::command]
-fn wfm_get_item_orders(state: State<AppState>, url_name: String, mod_rank: Option<u32>) -> Result<serde_json::Value, String> {
-    state.wfm.item_orders(&url_name, mod_rank)
+async fn wfm_get_item_orders(state: State<'_, AppState>, url_name: String, mod_rank: Option<u32>) -> Result<serde_json::Value, String> {
+    let wfm = state.wfm.clone();
+    tauri::async_runtime::spawn_blocking(move || wfm.item_orders(&url_name, mod_rank))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Fetch 90-day price statistics for an item (daily medians for the chart).
 #[tauri::command]
-fn wfm_get_item_statistics(state: State<AppState>, url_name: String) -> Result<serde_json::Value, String> {
-    state.wfm.item_statistics(&url_name)
+async fn wfm_get_item_statistics(state: State<'_, AppState>, url_name: String) -> Result<serde_json::Value, String> {
+    let wfm = state.wfm.clone();
+    tauri::async_runtime::spawn_blocking(move || wfm.item_statistics(&url_name))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ── Top WFM items by 7-day trade volume ───────────────────────────────────────
@@ -3398,8 +3408,11 @@ fn wfm_get_riven_attributes(state: State<AppState>) -> Result<Vec<String>, Strin
 /// Also returns `modMaxRank` from the local WFCD item cache when the item is a mod,
 /// so the frontend never needs a second network request to detect this.
 #[tauri::command]
-fn wfm_get_item_info(state: State<AppState>, url_name: String) -> Result<serde_json::Value, String> {
-    let mut data = state.wfm.item_info(&url_name)?;
+async fn wfm_get_item_info(state: State<'_, AppState>, url_name: String) -> Result<serde_json::Value, String> {
+    let wfm = state.wfm.clone();
+    let mut data = tauri::async_runtime::spawn_blocking(move || wfm.item_info(&url_name))
+        .await
+        .map_err(|e| e.to_string())??;
 
     // Enrich with modMaxRank from inventory_state_cache.json — the canonical source.
     // Match by display name since url_name ↔ unique_name conversion isn't 1:1.
