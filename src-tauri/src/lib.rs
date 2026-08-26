@@ -1755,21 +1755,18 @@ async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>
 
     // Only one scan at a time: a second one would compete for the same rate-limiter
     // budget and take twice as long for both.
-    let claimed_scan =
-        WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok();
+    let scan_slot = WfmScanSlot::claim();
 
     // An expired copy beats an empty tab for the minute and a half a scan takes,
     // so hand it over and rescan behind it.
     if let Some(cached) = disk {
-        if claimed_scan {
+        if let Some(slot) = scan_slot {
             let wfm = state.wfm.clone();
             std::thread::spawn(move || {
-                // Release the scan slot even on a panic, or every later scan
-                // is blocked for the rest of the session.
+                let _slot = slot;
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     finish_wfm_top_scan(&wfm, scan_wfm_top_items(&wfm, &arcane_candidates));
                 }));
-                WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
             });
         }
         cache::set_status(WFM_TOP_CACHE, cache::CacheStatus {
@@ -1781,7 +1778,7 @@ async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>
     }
 
     // Nothing to show, so the caller has to wait for a scan either way.
-    if !claimed_scan {
+    let Some(_slot) = scan_slot else {
         for _ in 0..120u32 {  // poll every 5 s, max 10 minutes
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             if let Some(items) = state.wfm.cached_top_items(WFM_TOP_TTL) {
@@ -1789,15 +1786,11 @@ async fn get_wfm_top_items(state: State<'_, AppState>) -> Result<Vec<WfmTopItem>
             }
         }
         return Err("WFM top items scan timed out".to_string());
-    }
+    };
 
-    // Run blocking ureq calls on the thread pool — keeps the async runtime free
     let wfm = state.wfm.clone();
     let scan_result =
         tokio::task::spawn_blocking(move || scan_wfm_top_items(&wfm, &arcane_candidates)).await;
-
-    // Release the scan slot before propagating any error
-    WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
 
     let results = scan_result.map_err(|e| e.to_string())?;
     finish_wfm_top_scan(&state.wfm, results.clone());
@@ -1823,9 +1816,9 @@ pub(crate) fn refresh_wfm_top(app: &tauri::AppHandle, force: bool) -> Result<(),
     if !force && state.wfm.cached_top_items(WFM_TOP_TTL).is_some() {
         return Ok(());
     }
-    if WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+    let Some(slot) = WfmScanSlot::claim() else {
         return Ok(());
-    }
+    };
     let arcane_candidates: Vec<ArcaneCandidate> = {
         let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner());
         items.iter()
@@ -1835,12 +1828,10 @@ pub(crate) fn refresh_wfm_top(app: &tauri::AppHandle, force: bool) -> Result<(),
     };
     let wfm = state.wfm.clone();
     std::thread::spawn(move || {
-        // Release the scan slot even on a panic, or every later scan is
-        // blocked for the rest of the session.
+        let _slot = slot;
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             finish_wfm_top_scan(&wfm, scan_wfm_top_items(&wfm, &arcane_candidates));
         }));
-        WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
     });
     Ok(())
 }
@@ -2340,6 +2331,27 @@ fn get_weapon_dispositions(state: State<AppState>) -> HashMap<String, f32> {
 /// lives in `Wfm`.
 static WFM_SCAN_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Holds the one scan slot. Dropping it releases the slot. Tying the release to
+/// `Drop` frees it on every exit (error, panic, or a cancelled future), where
+/// a manual `store(false)` after an `.await` would leak the slot for the rest
+/// of the session and time out every later scan.
+struct WfmScanSlot;
+
+impl WfmScanSlot {
+    fn claim() -> Option<Self> {
+        WFM_SCAN_RUNNING
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+            .then_some(WfmScanSlot)
+    }
+}
+
+impl Drop for WfmScanSlot {
+    fn drop(&mut self) {
+        WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Cache: (warframe_pid, Option<flag_va>). None inner = scanned this PID, pattern not found.
 /// Re-scanned only when PID changes (game restart). Prevents 200ms re-scan storm.
