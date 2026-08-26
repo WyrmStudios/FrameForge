@@ -123,11 +123,20 @@ fn migrate_into(old: &Path, config: &Path, data: &Path, cache: &Path) {
     info!("migrating from {}", old.display());
 
     move_file(&old.join("settings.json"), &config.join("settings.json"));
-    move_file(&old.join("corrections.json"), &config.join("corrections.json"));
-    move_file(&old.join("auction_ids.json"), &data.join("auction_ids.json"));
+    move_file(
+        &old.join("corrections.json"),
+        &config.join("corrections.json"),
+    );
+    move_file(
+        &old.join("auction_ids.json"),
+        &data.join("auction_ids.json"),
+    );
     // Named like caches and stored with them, but only a live game scan can
     // produce them again, so they travel rather than get dropped.
-    move_file(&old.join("quantities_cache.json"), &cache.join("quantities_cache.json"));
+    move_file(
+        &old.join("quantities_cache.json"),
+        &cache.join("quantities_cache.json"),
+    );
     move_file(
         &old.join("inventory_state_cache.json"),
         &cache.join("inventory_state_cache.json"),
@@ -214,7 +223,9 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("frameforge-paths-tests").join(name);
+        let dir = std::env::temp_dir()
+            .join("frameforge-paths-tests")
+            .join(name);
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("old")).unwrap();
         fs::create_dir_all(dir.join("config")).unwrap();
@@ -230,8 +241,12 @@ mod tests {
     #[test]
     fn moves_user_state_and_drops_caches() {
         let dir = scratch("moves");
-        let (old, config, data, cache) =
-            (dir.join("old"), dir.join("config"), dir.join("data"), dir.join("cache"));
+        let (old, config, data, cache) = (
+            dir.join("old"),
+            dir.join("config"),
+            dir.join("data"),
+            dir.join("cache"),
+        );
         write(old.join("settings.json"), "{}");
         write(old.join("auction_ids.json"), "[]");
         write(old.join("corrections.json"), "[]");
@@ -244,13 +259,28 @@ mod tests {
 
         migrate_into(&old, &config, &data, &cache);
 
-        assert_eq!(fs::read_to_string(config.join("settings.json")).unwrap(), "{}");
-        assert_eq!(fs::read_to_string(data.join("auction_ids.json")).unwrap(), "[]");
+        assert_eq!(
+            fs::read_to_string(config.join("settings.json")).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            fs::read_to_string(data.join("auction_ids.json")).unwrap(),
+            "[]"
+        );
         assert_eq!(fs::read_to_string(data.join("data.db")).unwrap(), "db");
         assert_eq!(fs::read_to_string(data.join("data.db-wal")).unwrap(), "wal");
-        assert_eq!(fs::read_to_string(config.join("corrections.json")).unwrap(), "[]");
-        assert_eq!(fs::read_to_string(cache.join("inventory_state_cache.json")).unwrap(), "inv");
-        assert_eq!(fs::read_to_string(cache.join("quantities_cache.json")).unwrap(), "qty");
+        assert_eq!(
+            fs::read_to_string(config.join("corrections.json")).unwrap(),
+            "[]"
+        );
+        assert_eq!(
+            fs::read_to_string(cache.join("inventory_state_cache.json")).unwrap(),
+            "inv"
+        );
+        assert_eq!(
+            fs::read_to_string(cache.join("quantities_cache.json")).unwrap(),
+            "qty"
+        );
         assert!(!old.join("items_cache.json").exists());
         assert!(!old.join("img_cache").exists());
         assert!(!old.exists(), "emptied old directory should be gone");
@@ -259,8 +289,12 @@ mod tests {
     #[test]
     fn never_overwrites_the_destination() {
         let dir = scratch("no-overwrite");
-        let (old, config, data, cache) =
-            (dir.join("old"), dir.join("config"), dir.join("data"), dir.join("cache"));
+        let (old, config, data, cache) = (
+            dir.join("old"),
+            dir.join("config"),
+            dir.join("data"),
+            dir.join("cache"),
+        );
         write(old.join("settings.json"), "old");
         write(config.join("settings.json"), "new");
         write(old.join("data.db"), "old-db");
@@ -268,16 +302,26 @@ mod tests {
 
         migrate_into(&old, &config, &data, &cache);
 
-        assert_eq!(fs::read_to_string(config.join("settings.json")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(config.join("settings.json")).unwrap(),
+            "new"
+        );
         assert_eq!(fs::read_to_string(data.join("data.db")).unwrap(), "new-db");
-        assert_eq!(fs::read_to_string(old.join("settings.json")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(old.join("settings.json")).unwrap(),
+            "old"
+        );
     }
 
     #[test]
     fn keeps_the_old_directory_when_something_is_left_in_it() {
         let dir = scratch("leftovers");
-        let (old, config, data, cache) =
-            (dir.join("old"), dir.join("config"), dir.join("data"), dir.join("cache"));
+        let (old, config, data, cache) = (
+            dir.join("old"),
+            dir.join("config"),
+            dir.join("data"),
+            dir.join("cache"),
+        );
         write(old.join("settings.json"), "{}");
         write(old.join("scan_log.txt"), "log");
 
@@ -291,20 +335,32 @@ mod tests {
     fn does_nothing_without_an_old_directory() {
         let dir = scratch("absent");
         fs::remove_dir_all(dir.join("old")).unwrap();
-        migrate_into(&dir.join("old"), &dir.join("config"), &dir.join("data"), &dir.join("cache"));
+        migrate_into(
+            &dir.join("old"),
+            &dir.join("config"),
+            &dir.join("data"),
+            &dir.join("cache"),
+        );
         assert!(!dir.join("config").join("settings.json").exists());
     }
 
     #[test]
     fn a_second_run_changes_nothing() {
         let dir = scratch("idempotent");
-        let (old, config, data, cache) =
-            (dir.join("old"), dir.join("config"), dir.join("data"), dir.join("cache"));
+        let (old, config, data, cache) = (
+            dir.join("old"),
+            dir.join("config"),
+            dir.join("data"),
+            dir.join("cache"),
+        );
         write(old.join("settings.json"), "{}");
 
         migrate_into(&old, &config, &data, &cache);
         migrate_into(&old, &config, &data, &cache);
 
-        assert_eq!(fs::read_to_string(config.join("settings.json")).unwrap(), "{}");
+        assert_eq!(
+            fs::read_to_string(config.join("settings.json")).unwrap(),
+            "{}"
+        );
     }
 }

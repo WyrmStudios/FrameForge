@@ -26,9 +26,11 @@ pub fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> 
     std::fs::write(&tmp, data)?;
     // Without this the rename can hit the platter before the data does, and a
     // power loss leaves a complete-looking file full of zeroes.
-    std::fs::File::open(&tmp).and_then(|f| f.sync_all()).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })?;
+    std::fs::File::open(&tmp)
+        .and_then(|f| f.sync_all())
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })?;
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
@@ -84,7 +86,9 @@ fn refresh_lock(name: &str) -> Arc<Mutex<()>> {
 
 pub fn set_status(name: &str, status: CacheStatus) {
     if let Ok(mut guard) = STATUSES.lock() {
-        guard.get_or_insert_with(HashMap::new).insert(name.to_string(), status);
+        guard
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), status);
     }
 }
 
@@ -119,7 +123,11 @@ pub fn load<T: DeserializeOwned>(name: &str) -> Option<Cached<T>> {
 }
 
 pub fn store<T: Serialize>(name: &str, etag: Option<String>, data: &T) -> std::io::Result<()> {
-    let cached = Cached { retrieved_at_unix: now_unix(), etag, data };
+    let cached = Cached {
+        retrieved_at_unix: now_unix(),
+        etag,
+        data,
+    };
     let body = serde_json::to_vec(&cached)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     atomic_write(&path_of(name), &body)
@@ -152,7 +160,13 @@ where
         .is_some_and(|c| now.saturating_sub(c.retrieved_at_unix) < ttl.as_secs());
     if still_fresh {
         let c = cached.expect("still_fresh is only true for a loaded cache");
-        return report(name, Some(c.retrieved_at_unix), Source::Fresh, None, Some(c.data));
+        return report(
+            name,
+            Some(c.retrieved_at_unix),
+            Source::Fresh,
+            None,
+            Some(c.data),
+        );
     }
 
     let result = fetch(cached.as_ref().and_then(|c| c.etag.as_deref()));
@@ -181,7 +195,13 @@ where
         Err(e) => match cached {
             Some(c) => {
                 let warning = format!("{name}: showing cached data, refresh failed: {e}");
-                report(name, Some(c.retrieved_at_unix), Source::Stale, Some(warning), Some(c.data))
+                report(
+                    name,
+                    Some(c.retrieved_at_unix),
+                    Source::Stale,
+                    Some(warning),
+                    Some(c.data),
+                )
             }
             None => {
                 let warning = format!("{name}: no cached data and refresh failed: {e}");
@@ -198,7 +218,14 @@ fn report<T>(
     warning: Option<String>,
     data: Option<T>,
 ) -> (Option<T>, Source, Option<String>) {
-    set_status(name, CacheStatus { source, last_updated, warning: warning.clone() });
+    set_status(
+        name,
+        CacheStatus {
+            source,
+            last_updated,
+            warning: warning.clone(),
+        },
+    );
     (data, source, warning)
 }
 
@@ -209,7 +236,10 @@ const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
 /// GET `url`, asking the server to skip the body when `etag` still matches.
 pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>, String> {
     let mut req = ureq::get(url)
-        .set("User-Agent", concat!("FrameForge/", env!("CARGO_PKG_VERSION")))
+        .set(
+            "User-Agent",
+            concat!("FrameForge/", env!("CARGO_PKG_VERSION")),
+        )
         // Generous because of the body sizes, but bounded: ureq has no default
         // timeout, and a black-holed connection here would otherwise hang the
         // caller, and with it the refresh lock, forever.
@@ -237,7 +267,9 @@ pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>,
                 .read_to_end(&mut body)
                 .map_err(|e| e.to_string())?;
             if body.len() as u64 > MAX_BODY_BYTES {
-                return Err(format!("{url}: response body exceeds {MAX_BODY_BYTES} bytes"));
+                return Err(format!(
+                    "{url}: response body exceeds {MAX_BODY_BYTES} bytes"
+                ));
             }
             let body = String::from_utf8(body).map_err(|e| e.to_string())?;
             Ok(Fetched::New(body, etag))
@@ -344,7 +376,8 @@ mod tests {
         let v2 = scratch("schema-v2");
         store(&v1, None, &"old shape".to_string()).unwrap();
 
-        let (data, source, _) = get_or_refresh(&v2, Duration::from_secs(3600), fetches("new shape"));
+        let (data, source, _) =
+            get_or_refresh(&v2, Duration::from_secs(3600), fetches("new shape"));
 
         assert_eq!(data.as_deref(), Some("new shape"));
         assert_eq!(source, Source::Refreshed);

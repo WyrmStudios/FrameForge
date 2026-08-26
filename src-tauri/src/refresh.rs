@@ -37,12 +37,36 @@ struct Task {
 const TASKS: &[Task] = &[
     // Just under the 60s frontend poll, so a window's own tick is served from
     // the cache this fills rather than from the network.
-    Task { name: "worldstate", interval: Duration::from_secs(55), run: crate::refresh_worldstate },
-    Task { name: "bulk-prices", interval: Duration::from_secs(3600), run: crate::refresh_bulk_prices_task },
-    Task { name: "catalogue", interval: Duration::from_secs(24 * 3600), run: crate::refresh_catalogue },
-    Task { name: "drop-data", interval: Duration::from_secs(24 * 3600), run: crate::wfcd::refresh_drop_data },
-    Task { name: "riven-db", interval: Duration::from_secs(24 * 3600), run: crate::refresh_riven_db_task },
-    Task { name: "wfm-top", interval: Duration::from_secs(3 * 3600), run: crate::refresh_wfm_top },
+    Task {
+        name: "worldstate",
+        interval: Duration::from_secs(55),
+        run: crate::refresh_worldstate,
+    },
+    Task {
+        name: "bulk-prices",
+        interval: Duration::from_secs(3600),
+        run: crate::refresh_bulk_prices_task,
+    },
+    Task {
+        name: "catalogue",
+        interval: Duration::from_secs(24 * 3600),
+        run: crate::refresh_catalogue,
+    },
+    Task {
+        name: "drop-data",
+        interval: Duration::from_secs(24 * 3600),
+        run: crate::wfcd::refresh_drop_data,
+    },
+    Task {
+        name: "riven-db",
+        interval: Duration::from_secs(24 * 3600),
+        run: crate::refresh_riven_db_task,
+    },
+    Task {
+        name: "wfm-top",
+        interval: Duration::from_secs(3 * 3600),
+        run: crate::refresh_wfm_top,
+    },
 ];
 
 /// Set by the manual refresh; consumed by the next tick, which then runs every
