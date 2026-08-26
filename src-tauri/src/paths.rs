@@ -199,8 +199,13 @@ fn move_file(src: &Path, dst: &Path) -> bool {
 fn copy_then_delete(src: &Path, dst: &Path) -> io::Result<()> {
     fs::copy(src, dst)?;
     // The delete below makes the copy the only remaining version, so it has to
-    // be on the platter before then.
+    // be on the platter before then, directory entry included: a power loss
+    // right after the unlink would lose the file despite its synced contents.
     fs::File::open(dst)?.sync_all()?;
+    #[cfg(unix)]
+    if let Some(dir) = dst.parent() {
+        fs::File::open(dir)?.sync_all()?;
+    }
     fs::remove_file(src)
 }
 

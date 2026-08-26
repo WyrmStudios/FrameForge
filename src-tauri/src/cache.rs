@@ -24,6 +24,11 @@ use crate::paths;
 pub fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;
+    // Without this the rename can hit the platter before the data does, and a
+    // power loss leaves a complete-looking file full of zeroes.
+    std::fs::File::open(&tmp).and_then(|f| f.sync_all()).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
