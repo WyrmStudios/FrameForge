@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Mutex;
-use tracing::warn;
 use std::io::{Cursor, Read};
+use std::sync::Mutex;
+use tracing::{info, warn};
 
 use crate::cache::{self, Fetched};
 
@@ -298,17 +298,26 @@ enum Probe {
 }
 
 /// Ask about one source, taking the first mirror that answers with usable JSON.
+#[tracing::instrument(level = "debug", skip_all, fields(source = %spec.name, answer, bytes))]
 fn probe_source(spec: &SourceSpec, etag: Option<&str>, force: bool, fetch: &FetchFn<'_>) -> Probe {
+    let span = tracing::Span::current();
     let sent = if force { None } else { etag };
     let mut last = format!("{} unavailable", spec.name);
     for url in &spec.urls {
         match fetch(url, sent) {
-            Ok(Fetched::NotModified) => return Probe::Unchanged,
+            Ok(Fetched::NotModified) => {
+                span.record("answer", "unchanged");
+                return Probe::Unchanged;
+            }
             // Validated but not kept: a mirror that answers with something
             // unparseable should fall through to the next one, and the tree is
             // only wanted once, in `resolve_source`.
             Ok(Fetched::New(body, new_etag)) => match serde_json::from_str::<serde::de::IgnoredAny>(&body) {
-                Ok(_) => return Probe::Body(body, new_etag),
+                Ok(_) => {
+                    span.record("answer", "body");
+                    span.record("bytes", body.len());
+                    return Probe::Body(body, new_etag);
+                }
                 Err(e) => {
                     warn!("{url}: {e}");
                     last = e.to_string();
@@ -320,6 +329,7 @@ fn probe_source(spec: &SourceSpec, etag: Option<&str>, force: bool, fetch: &Fetc
             }
         }
     }
+    span.record("answer", "failed");
     Probe::Failed(last)
 }
 
@@ -331,6 +341,7 @@ struct Resolved {
 
 /// Turn a probe into a body, reaching for the stored copy where the server did
 /// not supply one.
+#[tracing::instrument(level = "debug", skip_all, fields(source = %spec.name, origin))]
 fn resolve_source(
     spec: &SourceSpec,
     etag: Option<&str>,
@@ -338,31 +349,45 @@ fn resolve_source(
     fetch: &FetchFn<'_>,
     store: &dyn BodyStore,
 ) -> Resolved {
+    let span = tracing::Span::current();
     let kept = || etag.map(str::to_string);
     match probe {
         Probe::Body(body, new_etag) => {
+            span.record("origin", "network");
             store.write(&spec.name, &body);
             Resolved { json: serde_json::from_str(&body).ok(), etag: new_etag }
         }
         Probe::Unchanged => match store.read(&spec.name).and_then(|b| serde_json::from_str(&b).ok())
         {
-            Some(json) => Resolved { json: Some(json), etag: kept() },
+            Some(json) => {
+                span.record("origin", "store");
+                Resolved { json: Some(json), etag: kept() }
+            }
             // The ETag outlived the body it described. Ask again without it.
             None => match probe_source(spec, None, true, fetch) {
                 Probe::Body(body, new_etag) => {
+                    span.record("origin", "refetched");
+                    warn!("{}: the stored body was gone; fetched it again", spec.name);
                     store.write(&spec.name, &body);
                     Resolved { json: serde_json::from_str(&body).ok(), etag: new_etag }
                 }
-                _ => Resolved { json: None, etag: None },
+                _ => {
+                    span.record("origin", "missing");
+                    Resolved { json: None, etag: None }
+                }
             },
         },
         Probe::Failed(e) => {
             match store.read(&spec.name).and_then(|b| serde_json::from_str(&b).ok()) {
                 Some(json) => {
+                    span.record("origin", "stale");
                     warn!("{}: {e}, building from the stored copy", spec.name);
                     Resolved { json: Some(json), etag: kept() }
                 }
-                None => Resolved { json: None, etag: None },
+                None => {
+                    span.record("origin", "missing");
+                    Resolved { json: None, etag: None }
+                }
             }
         }
     }
@@ -372,6 +397,7 @@ fn resolve_source(
 ///
 /// The bodies are megabytes each over one connection apiece, so this is waiting
 /// on the network rather than on a CPU.
+#[tracing::instrument(level = "debug", skip_all, fields(sources = specs.len(), force))]
 fn probe_all(specs: &[SourceSpec], etags: &BTreeMap<String, String>, force: bool, fetch: &FetchFn<'_>) -> Vec<Probe> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out: Mutex<Vec<(usize, Probe)>> = Mutex::new(Vec::with_capacity(specs.len()));
@@ -401,6 +427,7 @@ pub fn fetch_items(prev_etags: Option<&str>, force: bool) -> Result<Fetched<Fetc
     fetch_items_with(prev_etags, force, &|url, etag| cache::get_conditional(url, etag), &DiskStore)
 }
 
+#[tracing::instrument(level = "info", skip_all, fields(force))]
 fn fetch_items_with(
     prev_etags: Option<&str>,
     force: bool,
@@ -412,7 +439,16 @@ fn fetch_items_with(
     let specs = source_specs();
 
     let probes = probe_all(&specs, &prev, force, fetch);
-    if probes.iter().all(|p| matches!(p, Probe::Unchanged)) {
+    let unchanged = probes.iter().filter(|p| matches!(p, Probe::Unchanged)).count();
+    let failed = probes.iter().filter(|p| matches!(p, Probe::Failed(_))).count();
+    info!(
+        sources = specs.len(),
+        unchanged,
+        downloaded = specs.len() - unchanged - failed,
+        failed,
+        "catalogue sources probed"
+    );
+    if unchanged == probes.len() {
         return Ok(Fetched::NotModified);
     }
 
@@ -452,7 +488,16 @@ fn fetch_items_with(
     let recipes_json = bodies.get("ExportRecipes");
     let syndicates_json = bodies.get("syndicates");
 
+    info!(raw_items = all_items.len(), "catalogue sources assembled");
     let result = fetch_from_wfcd(&all_items, recipes_json, syndicates_json, relics_json)?;
+    info!(
+        items = result.items.len(),
+        recipes = result.recipes.len(),
+        relic_rewards = result.relic_rewards.len(),
+        syndicates = result.syndicate_catalog.len(),
+        dispositions = result.weapon_dispositions.len(),
+        "catalogue rebuilt"
+    );
 
     Ok(Fetched::New(result, serde_json::to_string(&etags).ok()))
 }

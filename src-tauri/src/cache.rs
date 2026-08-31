@@ -138,6 +138,7 @@ pub fn store<T: Serialize>(name: &str, etag: Option<String>, data: &T) -> std::i
 /// `fetch` receives the cached ETag so it can ask the server whether anything
 /// changed. Returns the data, the rung that supplied it, and, when the answer
 /// is not current, what went wrong, for the caller to surface.
+#[tracing::instrument(level = "debug", skip_all, fields(cache = %name, ttl_secs = ttl.as_secs()))]
 pub fn get_or_refresh<T>(
     name: &str,
     ttl: Duration,
@@ -226,6 +227,7 @@ fn report<T>(
             warning: warning.clone(),
         },
     );
+    tracing::debug!(cache = name, rung = ?source, warning = warning.as_deref(), "cache served");
     (data, source, warning)
 }
 
@@ -234,7 +236,9 @@ fn report<T>(
 const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
 
 /// GET `url`, asking the server to skip the body when `etag` still matches.
+#[tracing::instrument(level = "debug", skip_all, fields(url = %url, revalidated = etag.is_some(), status, bytes))]
 pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>, String> {
+    let span = tracing::Span::current();
     let mut req = ureq::get(url)
         .set(
             "User-Agent",
@@ -250,8 +254,12 @@ pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>,
     match req.call() {
         // ureq hands back 3xx it did not follow as a success, so a confirmed
         // copy arrives here rather than in the error arm below.
-        Ok(resp) if resp.status() == 304 => Ok(Fetched::NotModified),
+        Ok(resp) if resp.status() == 304 => {
+            span.record("status", 304);
+            Ok(Fetched::NotModified)
+        }
         Ok(resp) => {
+            span.record("status", resp.status());
             let etag = resp.header("etag").map(str::to_string);
             // Not `into_string()`: ureq caps that at 10 MB.
             use std::io::Read;
@@ -275,6 +283,7 @@ pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>,
                 ));
             }
             let body = String::from_utf8(body).map_err(|e| e.to_string())?;
+            span.record("bytes", body.len());
             Ok(Fetched::New(body, etag))
         }
         Err(ureq::Error::Status(304, _)) => Ok(Fetched::NotModified),
