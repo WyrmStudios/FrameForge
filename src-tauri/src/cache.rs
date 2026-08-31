@@ -248,6 +248,9 @@ pub fn get_conditional(url: &str, etag: Option<&str>) -> Result<Fetched<String>,
         req = req.set("If-None-Match", tag);
     }
     match req.call() {
+        // ureq hands back 3xx it did not follow as a success, so a confirmed
+        // copy arrives here rather than in the error arm below.
+        Ok(resp) if resp.status() == 304 => Ok(Fetched::NotModified),
         Ok(resp) => {
             let etag = resp.header("etag").map(str::to_string);
             // Not `into_string()`: ureq caps that at 10 MB.

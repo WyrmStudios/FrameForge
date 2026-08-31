@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Mutex;
 use tracing::warn;
 use std::io::{Cursor, Read};
 
@@ -175,113 +176,284 @@ fn fetch_wiki_reward_names() -> HashSet<String> {
     names
 }
 
-/// The upstream files the catalogue is built from. Each is a static file behind
-/// a CDN that answers conditional requests, so an unchanged catalogue costs four
-/// empty responses instead of tens of megabytes.
-const ALL_URL: &str =
-    "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/All.json";
+// ==============================================================================
+// Upstream sources
+// ==============================================================================
+
+/// warframe-items stopped publishing the combined `All.json` once it outgrew
+/// what the repository would carry, so the catalogue is rebuilt from the
+/// per-category files that file used to be a concatenation of.
+///
+/// `Enemy`, `Node` and `Quests` are deliberately left out: nothing in them can
+/// be owned, and node entries are discarded downstream in any case.
+const CATEGORY_BASE: &str = "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/";
+const CATEGORIES: [&str; 21] = [
+    "Arcanes",
+    "Arch-Gun",
+    "Arch-Melee",
+    "Archwing",
+    "Fish",
+    "Gear",
+    "Glyphs",
+    "Melee",
+    "Misc",
+    "Mods",
+    "Pets",
+    "Primary",
+    "Railjack",
+    "Relics",
+    "Resources",
+    "Secondary",
+    "Sentinels",
+    "SentinelWeapons",
+    "Sigils",
+    "Skins",
+    "Warframes",
+];
 const RECIPES_URLS: [&str; 2] = [
     "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/master/ExportRecipes.json",
     "https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/HEAD/ExportRecipes.json",
 ];
 const SYNDICATES_URL: &str =
     "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
-const RELICS_URL: &str =
-    "https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json";
 
-/// The four upstream ETags, packed into the single tag the cache stores per entry.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct SourceEtags {
-    all: Option<String>,
-    recipes: Option<String>,
-    syndicates: Option<String>,
-    relics: Option<String>,
+/// One upstream file, and what its absence costs.
+struct SourceSpec {
+    /// Names both the stored body and the stored ETag.
+    name: String,
+    /// Mirrors, tried in order.
+    urls: Vec<String>,
+    /// A category the catalogue cannot be built without. The extras degrade to
+    /// their empty defaults so a syndicate outage does not cost a new user the
+    /// item list.
+    required: bool,
 }
 
-struct Source {
-    /// Absent when the server confirmed the copy already held, and when the
-    /// fetch failed outright. `unchanged` tells the two apart.
-    json: Option<serde_json::Value>,
-    etag: Option<String>,
-    unchanged: bool,
+fn source_specs() -> Vec<SourceSpec> {
+    let mut specs: Vec<SourceSpec> = CATEGORIES
+        .iter()
+        .map(|name| SourceSpec {
+            name: (*name).to_string(),
+            urls: vec![format!("{CATEGORY_BASE}{name}.json")],
+            required: true,
+        })
+        .collect();
+    specs.push(SourceSpec {
+        name: "ExportRecipes".to_string(),
+        urls: RECIPES_URLS.iter().map(|u| u.to_string()).collect(),
+        required: false,
+    });
+    specs.push(SourceSpec {
+        name: "syndicates".to_string(),
+        urls: vec![SYNDICATES_URL.to_string()],
+        required: false,
+    });
+    specs
 }
 
-/// Conditional GET across `urls`, taking the first that answers.
-fn fetch_source(urls: &[&str], etag: Option<&str>) -> Source {
-    for url in urls {
-        match cache::get_conditional(url, etag) {
-            Ok(Fetched::NotModified) => {
-                return Source { json: None, etag: etag.map(str::to_string), unchanged: true }
-            }
-            Ok(Fetched::New(body, new_etag)) => match serde_json::from_str(&body) {
-                Ok(json) => return Source { json: Some(json), etag: new_etag, unchanged: false },
-                Err(e) => warn!("{url}: {e}"),
-            },
-            Err(e) => warn!("{url}: {e}"),
+/// Where the raw upstream bodies live between builds.
+///
+/// Keeping them means an upstream commit to one file re-downloads that file
+/// rather than all twenty-three.
+trait BodyStore: Sync {
+    fn read(&self, name: &str) -> Option<String>;
+    fn write(&self, name: &str, body: &str);
+}
+
+struct DiskStore;
+
+impl DiskStore {
+    fn dir() -> std::path::PathBuf {
+        let dir = crate::paths::cache_dir().join("catalogue");
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+}
+
+impl BodyStore for DiskStore {
+    fn read(&self, name: &str) -> Option<String> {
+        std::fs::read_to_string(Self::dir().join(format!("{name}.json"))).ok()
+    }
+
+    fn write(&self, name: &str, body: &str) {
+        let path = Self::dir().join(format!("{name}.json"));
+        if let Err(e) = cache::atomic_write(&path, body.as_bytes()) {
+            warn!("cannot store {name}: {e}");
         }
     }
-    Source { json: None, etag: None, unchanged: false }
+}
+
+/// A conditional GET, injected so the resolution table below can be tested
+/// without a network.
+type FetchFn<'a> = dyn Fn(&str, Option<&str>) -> Result<Fetched<String>, String> + Sync + 'a;
+
+/// What the server said when asked about one source.
+enum Probe {
+    Unchanged,
+    /// The body as it arrived, kept unparsed so it reaches the store byte for
+    /// byte and is only turned into a tree once.
+    Body(String, Option<String>),
+    /// Every mirror failed, or answered with something that would not parse.
+    Failed(String),
+}
+
+/// Ask about one source, taking the first mirror that answers with usable JSON.
+fn probe_source(spec: &SourceSpec, etag: Option<&str>, force: bool, fetch: &FetchFn<'_>) -> Probe {
+    let sent = if force { None } else { etag };
+    let mut last = format!("{} unavailable", spec.name);
+    for url in &spec.urls {
+        match fetch(url, sent) {
+            Ok(Fetched::NotModified) => return Probe::Unchanged,
+            // Validated but not kept: a mirror that answers with something
+            // unparseable should fall through to the next one, and the tree is
+            // only wanted once, in `resolve_source`.
+            Ok(Fetched::New(body, new_etag)) => match serde_json::from_str::<serde::de::IgnoredAny>(&body) {
+                Ok(_) => return Probe::Body(body, new_etag),
+                Err(e) => {
+                    warn!("{url}: {e}");
+                    last = e.to_string();
+                }
+            },
+            Err(e) => {
+                warn!("{url}: {e}");
+                last = e;
+            }
+        }
+    }
+    Probe::Failed(last)
+}
+
+/// One source's contribution to this build.
+struct Resolved {
+    json: Option<serde_json::Value>,
+    etag: Option<String>,
+}
+
+/// Turn a probe into a body, reaching for the stored copy where the server did
+/// not supply one.
+fn resolve_source(
+    spec: &SourceSpec,
+    etag: Option<&str>,
+    probe: Probe,
+    fetch: &FetchFn<'_>,
+    store: &dyn BodyStore,
+) -> Resolved {
+    let kept = || etag.map(str::to_string);
+    match probe {
+        Probe::Body(body, new_etag) => {
+            store.write(&spec.name, &body);
+            Resolved { json: serde_json::from_str(&body).ok(), etag: new_etag }
+        }
+        Probe::Unchanged => match store.read(&spec.name).and_then(|b| serde_json::from_str(&b).ok())
+        {
+            Some(json) => Resolved { json: Some(json), etag: kept() },
+            // The ETag outlived the body it described. Ask again without it.
+            None => match probe_source(spec, None, true, fetch) {
+                Probe::Body(body, new_etag) => {
+                    store.write(&spec.name, &body);
+                    Resolved { json: serde_json::from_str(&body).ok(), etag: new_etag }
+                }
+                _ => Resolved { json: None, etag: None },
+            },
+        },
+        Probe::Failed(e) => {
+            match store.read(&spec.name).and_then(|b| serde_json::from_str(&b).ok()) {
+                Some(json) => {
+                    warn!("{}: {e}, building from the stored copy", spec.name);
+                    Resolved { json: Some(json), etag: kept() }
+                }
+                None => Resolved { json: None, etag: None },
+            }
+        }
+    }
+}
+
+/// Probe every source, four at a time.
+///
+/// The bodies are megabytes each over one connection apiece, so this is waiting
+/// on the network rather than on a CPU.
+fn probe_all(specs: &[SourceSpec], etags: &BTreeMap<String, String>, force: bool, fetch: &FetchFn<'_>) -> Vec<Probe> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let out: Mutex<Vec<(usize, Probe)>> = Mutex::new(Vec::with_capacity(specs.len()));
+
+    std::thread::scope(|scope| {
+        for _ in 0..4.min(specs.len()) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(spec) = specs.get(i) else { return };
+                let probe = probe_source(spec, etags.get(&spec.name).map(String::as_str), force, fetch);
+                out.lock().unwrap_or_else(|e| e.into_inner()).push((i, probe));
+            });
+        }
+    });
+
+    let mut probes = out.into_inner().unwrap_or_else(|e| e.into_inner());
+    probes.sort_by_key(|(i, _)| *i);
+    probes.into_iter().map(|(_, p)| p).collect()
 }
 
 /// Rebuild the catalogue unless every source says nothing has moved.
 ///
 /// `prev_etags` is what the last successful build stored; `force` asks for the
 /// bodies regardless of it, and still uses it to tell an outage apart from a
-/// source that was never there. Only All.json is mandatory on a first build.
-/// The other three degrade to their empty defaults, so a syndicate or relic
-/// outage does not cost a new user the item list.
+/// source that was never there.
 pub fn fetch_items(prev_etags: Option<&str>, force: bool) -> Result<Fetched<FetchResult>, String> {
-    let prev: SourceEtags =
+    fetch_items_with(prev_etags, force, &|url, etag| cache::get_conditional(url, etag), &DiskStore)
+}
+
+fn fetch_items_with(
+    prev_etags: Option<&str>,
+    force: bool,
+    fetch: &FetchFn<'_>,
+    store: &dyn BodyStore,
+) -> Result<Fetched<FetchResult>, String> {
+    let prev: BTreeMap<String, String> =
         prev_etags.and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
-    fn sent(etag: &Option<String>, force: bool) -> Option<&str> {
-        if force { None } else { etag.as_deref() }
-    }
+    let specs = source_specs();
 
-    let mut sources = [
-        (&[ALL_URL][..], fetch_source(&[ALL_URL], sent(&prev.all, force))),
-        (&RECIPES_URLS[..], fetch_source(&RECIPES_URLS, sent(&prev.recipes, force))),
-        (&[SYNDICATES_URL][..], fetch_source(&[SYNDICATES_URL], sent(&prev.syndicates, force))),
-        (&[RELICS_URL][..], fetch_source(&[RELICS_URL], sent(&prev.relics, force))),
-    ];
-
-    if sources.iter().all(|(_, s)| s.unchanged) {
+    let probes = probe_all(&specs, &prev, force, fetch);
+    if probes.iter().all(|p| matches!(p, Probe::Unchanged)) {
         return Ok(Fetched::NotModified);
     }
 
-    // One file moving means the whole catalogue is rebuilt, and a body skipped
-    // as unchanged is still needed to do that.
-    for (urls, source) in sources.iter_mut() {
-        if source.unchanged {
-            *source = fetch_source(urls, None);
+    let mut etags: BTreeMap<String, String> = BTreeMap::new();
+    let mut bodies: HashMap<&str, serde_json::Value> = HashMap::with_capacity(specs.len());
+    for (spec, probe) in specs.iter().zip(probes) {
+        let etag = prev.get(&spec.name).map(String::as_str);
+        let resolved = resolve_source(spec, etag, probe, fetch, store);
+        // A source that answered on the last build and cannot be reached now
+        // would rebuild the catalogue without its recipes or relic rewards, and
+        // that hollowed-out payload would then be cached over the good one for a
+        // day. Failing instead leaves the ladder to serve the previous copy.
+        let Some(json) = resolved.json else {
+            if spec.required || etag.is_some() {
+                return Err(format!("{} unavailable", spec.name));
+            }
+            continue;
+        };
+        if let Some(tag) = resolved.etag {
+            etags.insert(spec.name.clone(), tag);
         }
+        bodies.insert(spec.name.as_str(), json);
     }
 
-    // A source that answered on the last build and cannot be reached now would
-    // rebuild the catalogue without its recipes or relic rewards, and that
-    // hollowed-out payload would then be cached over the good one for a day.
-    // Failing instead leaves the ladder to serve the previous copy.
-    let had = [prev.all, prev.recipes, prev.syndicates, prev.relics];
-    for ((urls, source), before) in sources.iter().zip(&had) {
-        if source.json.is_none() && before.is_some() {
-            return Err(format!("{} unavailable", urls[0]));
-        }
+    // The upstream All.json was these same files concatenated, so the catalogue
+    // builder still sees one flat item list. Order within it does not matter:
+    // no uniqueName appears in two files, and the builder regroups by category.
+    let arrays: Vec<&Vec<serde_json::Value>> =
+        CATEGORIES.iter().filter_map(|c| bodies.get(c)?.as_array()).collect();
+    let mut all_items: Vec<&serde_json::Value> =
+        Vec::with_capacity(arrays.iter().map(|a| a.len()).sum());
+    for arr in arrays {
+        all_items.extend(arr.iter());
     }
 
-    let [(_, all), (_, recipes), (_, syndicates), (_, relics)] = sources;
-    let all_json = all.json.ok_or_else(|| "All.json unavailable".to_string())?;
-    let result = fetch_from_wfcd(
-        &all_json,
-        recipes.json.as_ref(),
-        syndicates.json.as_ref(),
-        relics.json.as_ref(),
-    )?;
+    let relics_json = bodies.get("Relics");
+    let recipes_json = bodies.get("ExportRecipes");
+    let syndicates_json = bodies.get("syndicates");
 
-    let etags = SourceEtags {
-        all: all.etag,
-        recipes: recipes.etag,
-        syndicates: syndicates.etag,
-        relics: relics.etag,
-    };
+    let result = fetch_from_wfcd(&all_items, recipes_json, syndicates_json, relics_json)?;
+
     Ok(Fetched::New(result, serde_json::to_string(&etags).ok()))
 }
 
@@ -719,30 +891,27 @@ fn parse_relics_rewards(
 
 #[tracing::instrument(level = "debug", skip_all)]
 fn fetch_from_wfcd(
-    all_json: &serde_json::Value,
+    all_items_raw: &[&serde_json::Value],
     recipes_json: Option<&serde_json::Value>,
     syndicates_json: Option<&serde_json::Value>,
     relics_json: Option<&serde_json::Value>,
 ) -> Result<FetchResult, String> {
     let mut items: Vec<WfcdItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut raw_craftable: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut raw_craftable: Vec<(String, &serde_json::Value)> = Vec::new();
     // relic_path → Vec<(item_unique, item_name, rarity)>
     // Built by inverting each item's drops[] array (All.json stores item→relics).
     // WFCD canonicalizes all refinements under the Bronze path — dedup at build time.
     let mut raw_drop_entries: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
 
-    let all_items_raw = all_json.as_array()
-        .ok_or_else(|| "All.json: expected top-level array".to_string())?;
-
     // Group items by display category to preserve the two-pass structure below.
-    let mut category_map: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    let mut category_map: HashMap<String, Vec<&serde_json::Value>> = HashMap::new();
     for item in all_items_raw.iter() {
         let wfcd_cat = item.get("category").and_then(|v| v.as_str()).unwrap_or("");
         let display_cat = wfcd_category_to_display(wfcd_cat).to_string();
-        category_map.entry(display_cat).or_default().push(item.clone());
+        category_map.entry(display_cat).or_default().push(item);
     }
-    let mut all_files: Vec<(String, Vec<serde_json::Value>)> = category_map.into_iter().collect();
+    let mut all_files: Vec<(String, Vec<&serde_json::Value>)> = category_map.into_iter().collect();
     all_files.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Pass 1: record all top-level unique_names before processing components.
@@ -788,16 +957,16 @@ fn fetch_from_wfcd(
             // `category` (display category from wfcd_category_to_display) groups similar WFCD
             // categories together (e.g. "Sentinels"+"SentinelWeapons"+"Pets" → "Companions").
             // `wfcd_item_cat` is the raw WFCD category on the item itself; used to preserve
-            // fine-grained categories like "Emotes", "Ephemera" that would otherwise fall into "Misc".
+            // fine-grained categories that would otherwise fall into "Misc".
             let wfcd_item_cat = item.get("category").and_then(|v| v.as_str()).unwrap_or("");
 
             // Correct category before inserting:
             // • Blueprint items always go to "Blueprints"
-            // • Fine-grained categories (Sigils, Emotes, Ephemera, Skins) → keep as-is
+            // • Fine-grained categories (Sigils, Skins) → keep as-is
             // • Non-relic items that WFCD groups under Relics (segments, etc.) → "Misc"
             let corrected_cat = if name.contains("Blueprint") {
                 "Blueprints".to_string()
-            } else if matches!(wfcd_item_cat, "Sigils" | "Emotes" | "Skins" | "Ephemera") {
+            } else if matches!(wfcd_item_cat, "Sigils" | "Skins") {
                 wfcd_item_cat.to_string()
             } else if category == "Relics" {
                 let n = name.to_lowercase();
@@ -826,7 +995,7 @@ fn fetch_from_wfcd(
 
             if let Some(comps) = item.get("components").and_then(|v| v.as_array()) {
                 if !comps.is_empty() {
-                    raw_craftable.push((unique_name.clone(), item.clone()));
+                    raw_craftable.push((unique_name.clone(), *item));
                 }
             }
 
@@ -957,7 +1126,7 @@ fn fetch_from_wfcd(
     }
 
     if items.is_empty() {
-        return Err("All.json returned no usable items".to_string());
+        return Err("upstream categories held no usable items".to_string());
     }
 
     let display_names: HashMap<String, String> = items
@@ -1357,5 +1526,98 @@ pub fn refresh_drop_data(_app: &tauri::AppHandle, force: bool) -> Result<(), Str
     match load_drop_data(force) {
         (Some(_), None) => Ok(()),
         (_, warning) => Err(warning.unwrap_or_else(|| "drop data unavailable".into())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct MemStore(Mutex<HashMap<String, String>>);
+
+    impl MemStore {
+        fn with(name: &str, body: &str) -> Self {
+            let store = Self::default();
+            store.write(name, body);
+            store
+        }
+    }
+
+    impl BodyStore for MemStore {
+        fn read(&self, name: &str) -> Option<String> {
+            self.0.lock().expect("no test panics while holding this").get(name).cloned()
+        }
+
+        fn write(&self, name: &str, body: &str) {
+            self.0
+                .lock()
+                .expect("no test panics while holding this")
+                .insert(name.to_string(), body.to_string());
+        }
+    }
+
+    fn spec() -> SourceSpec {
+        SourceSpec { name: "Mods".into(), urls: vec!["https://example/Mods.json".into()], required: true }
+    }
+
+    fn never(_: &str, _: Option<&str>) -> Result<Fetched<String>, String> {
+        panic!("no request expected")
+    }
+
+    #[test]
+    fn fresh_body_is_used_and_stored() {
+        let store = MemStore::default();
+        let probe = Probe::Body("[1]".to_string(), Some("new".into()));
+        let out = resolve_source(&spec(), Some("old"), probe, &never, &store);
+
+        assert_eq!(out.json, Some(serde_json::json!([1])));
+        assert_eq!(out.etag.as_deref(), Some("new"));
+        assert_eq!(store.read("Mods").as_deref(), Some("[1]"));
+    }
+
+    #[test]
+    fn confirmed_body_comes_back_from_the_store() {
+        let store = MemStore::with("Mods", "[2]");
+        let out = resolve_source(&spec(), Some("old"), Probe::Unchanged, &never, &store);
+
+        assert_eq!(out.json, Some(serde_json::json!([2])));
+        // The tag still describes the body, so the next build can revalidate.
+        assert_eq!(out.etag.as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn confirmation_without_a_stored_body_refetches_unconditionally() {
+        let store = MemStore::default();
+        let sent: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+        let fetch = |_: &str, etag: Option<&str>| {
+            sent.lock().expect("no panic in this closure").push(etag.map(str::to_string));
+            Ok(Fetched::New("[3]".to_string(), Some("fetched".into())))
+        };
+
+        let out = resolve_source(&spec(), Some("old"), Probe::Unchanged, &fetch, &store);
+
+        assert_eq!(out.json, Some(serde_json::json!([3])));
+        assert_eq!(out.etag.as_deref(), Some("fetched"));
+        assert_eq!(sent.into_inner().expect("no panic in this closure"), vec![None]);
+    }
+
+    #[test]
+    fn a_failed_source_falls_back_to_the_stored_body() {
+        let store = MemStore::with("Mods", "[4]");
+        let out =
+            resolve_source(&spec(), Some("old"), Probe::Failed("timed out".into()), &never, &store);
+
+        assert_eq!(out.json, Some(serde_json::json!([4])));
+        assert_eq!(out.etag.as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn a_failed_source_with_nothing_stored_yields_no_body() {
+        let store = MemStore::default();
+        let out = resolve_source(&spec(), None, Probe::Failed("timed out".into()), &never, &store);
+
+        assert!(out.json.is_none());
+        assert!(out.etag.is_none());
     }
 }
