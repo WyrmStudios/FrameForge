@@ -825,6 +825,8 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [filterVaulted,  setFilterVaulted]  = useState(false);
   const [filterUnvaulted,setFilterUnvaulted]= useState(false);
   const [sortMode, setSortMode] = useState<"qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "recent">("qty-desc");
+  const prevSortRef = useRef(sortMode);
+  useEffect(() => { if (sortMode !== "recent") prevSortRef.current = sortMode; }, [sortMode]);
   const [filterRank, setFilterRank] = useState<number | "unranked" | null>(null);
   const [inventoryView, setInventoryView] = useState<ViewMode>(() =>
     (localStorage.getItem("ff-view-inventory") as ViewMode | null) ?? "cards"
@@ -3181,7 +3183,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
               </div>
               <div className="filter-bar">
                 <button className={`fchip ${filterOwned?"fchip-on":""}`} onClick={()=>setFilterOwned(v=>!v)}>Owned</button>
-                <button className={`fchip ${filterRecent?"fchip-on":""}`} onClick={()=>setFilterRecent(v=>{ const next = !v; if (next) setSortMode("recent"); else if (sortMode === "recent") setSortMode("qty-desc"); return next; })}>Changed recently</button>
+                <button className={`fchip ${filterRecent?"fchip-on":""}`} onClick={()=>setFilterRecent(v=>{ const next = !v; if (next) { setSortMode("recent"); } else { setSortMode(prevSortRef.current); } return next; })}>Changed recently</button>
                 <button className={`fchip ${filterPrime?"fchip-on":""}`} onClick={()=>setFilterPrime(v=>!v)}>Prime</button>
                 <button className={`fchip ${filterVaulted?"fchip-on":""}`} onClick={()=>setFilterVaulted(v=>!v)}>🔒 Vaulted</button>
                 <button className={`fchip ${filterUnvaulted?"fchip-on":""}`} onClick={()=>setFilterUnvaulted(v=>!v)}>🔓 Unvaulted</button>
