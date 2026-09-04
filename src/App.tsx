@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyScale, overlayScale } from "./uiScale";
+import { useContextMenu, CtxMenu, extractItemName, openWiki, copyWikiLink } from "./CtxMenu";
 
 // ── Riven overlay — module-level window management ────────────────────────────
 // Stored OUTSIDE React so StrictMode remounts don't destroy/recreate the window.
@@ -766,6 +767,7 @@ export default function App() {
   if (IS_MODULAR) return <ModularWindowPage />;
 
   const [activeModule, setActiveModule] = useState<Module>("inventory");
+  const { ctxMenu, open: openCtx, close: closeCtx } = useContextMenu();
 
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -3210,7 +3212,14 @@ if (typeof s.autoDiagEnabled === "boolean") {
                 ]} />
               </div>
 
-              <div className={`item-grid item-grid-${inventoryView}`}>
+              <div className={`item-grid item-grid-${inventoryView}`}
+                   onContextMenu={e => {
+                     const name = extractItemName(e);
+                     if (name) { e.preventDefault(); openCtx(e.clientX, e.clientY, [
+                       { label: "Open Wiki", action: () => openWiki(name) },
+                       { label: "Copy Wiki Link", action: () => copyWikiLink(name) },
+                     ]); }
+                   }}>
                 {visibleItems.length === 0 ? (
                   <div className="empty-msg" style={{gridColumn:"1/-1"}}>
                     {monitoring
@@ -3303,6 +3312,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
             </div>
           </>
         )}
+
+        {ctxMenu && <CtxMenu state={ctxMenu} onClose={closeCtx} />}
 
         {/* ── Foundry module ── */}
         {activeModule === "foundry" && (
