@@ -27,8 +27,13 @@ export function useContextMenu() {
     };
   }, [ctxMenu]);
 
-  const open = (x: number, y: number, items: CtxMenuItem[]) =>
-    setCtxMenu({ x, y, items });
+  const open = (x: number, y: number, items: CtxMenuItem[]) => {
+    const menuW = 180;
+    const menuH = items.length * 30 + 8;
+    const maxX = window.innerWidth - menuW;
+    const maxY = window.innerHeight - menuH;
+    setCtxMenu({ x: Math.min(x, maxX), y: Math.min(y, maxY), items });
+  };
 
   const close = () => setCtxMenu(null);
 
@@ -116,6 +121,18 @@ export function openWiki(name: string) {
   openUrl(wikiUrl(name));
 }
 
-export function copyWikiLink(name: string) {
-  navigator.clipboard.writeText(wikiUrl(name));
+export async function copyWikiLink(name: string) {
+  try {
+    await navigator.clipboard.writeText(wikiUrl(name));
+  } catch {
+    // fallback: create a temporary textarea and copy
+    const ta = document.createElement("textarea");
+    ta.value = wikiUrl(name);
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
 }
