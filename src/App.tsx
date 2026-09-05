@@ -1479,7 +1479,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
     const now = Math.floor(Date.now() / 1000);
     setLastApiRefresh(now);
 
-    // Diff against previous API quantities to generate change log entries
+    // Diff against previous API quantities to generate changelog entries
     const prev = prevApiQtyRef.current;
     if (Object.keys(prev).length > 0) {
       const allKeys = new Set([...Object.keys(prev), ...Object.keys(apiQty)]);
@@ -2678,7 +2678,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
                     <div className="settings-row">
                       <div className="settings-row-info">
                         <span className="settings-row-label">Clear Cache</span>
-                        <span className="settings-row-desc">Reset all scanned quantities and change log.</span>
+                        <span className="settings-row-desc">Reset all scanned quantities and changelog.</span>
                       </div>
                       <button
                         className="btn-danger"

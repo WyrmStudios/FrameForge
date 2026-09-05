@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ItemImg from "./ItemImg";
 import "./ChangeLog.css";
 
@@ -37,33 +37,34 @@ function timeStr(ts: number, format: ChangeLogProps["clockFormat"], locale: stri
 }
 
 function ChangeRow({
-  change, item, clockFormat, systemLocale, onClick, onExpand, feed = false,
+  change, item, clockFormat, systemLocale, onItemClick, onRowClick, timeBreak = false, feed = false,
 }: {
   change: ChangeLogEntry;
   item?: CatalogItem;
   clockFormat: ChangeLogProps["clockFormat"];
   systemLocale: string;
-  onClick: () => void;
-  onExpand?: () => void;
+  onItemClick: () => void;
+  onRowClick?: () => void;
+  timeBreak?: boolean;
   feed?: boolean;
 }) {
   const name = item?.name ?? change.item_name;
   const category = item?.category ?? "Miscellaneous";
   return (
     <div
-      className={`inv-card inv-card-row log-item-row${feed ? " log-feed-row" : ""}`}
-      role="button"
-      tabIndex={0}
-      title={`Open ${name} in Inventory`}
-      onClick={onClick}
-      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
+      className={`inv-card inv-card-row log-item-row${feed ? " log-feed-row" : ""}${timeBreak ? " log-time-break" : ""}`}
+      role={onRowClick ? "button" : undefined}
+      tabIndex={onRowClick ? 0 : undefined}
+      title={onRowClick ? "Open changelog" : `Open ${name} in Inventory`}
+      onClick={onRowClick}
+      onKeyDown={e => { if (onRowClick && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onRowClick(); } }}
     >
       <span className="log-time">{timeStr(change.timestamp, clockFormat, systemLocale)}</span>
       <div className="inv-row-icon">
         <ItemImg imageName={item?.image_name} category={category} size={20} />
       </div>
       <div className="inv-row-name log-name-group">
-        <span>{name}</span>
+        <button className="log-name-link" onClick={e => { e.stopPropagation(); onItemClick(); }}>{name}</button>
         <span className="log-cat">{category}</span>
       </div>
       <div className="inv-row-qty log-change-qty">
@@ -73,7 +74,6 @@ function ChangeRow({
         </span>
         <span className={`log-amount ${change.delta > 0 ? "log-positive" : "log-negative"}`}>{deltaText(change.delta)}</span>
       </div>
-      {onExpand && <button className="log-expand-button" onClick={e => { e.stopPropagation(); onExpand(); }} aria-label="Open change log">+</button>}
     </div>
   );
 }
@@ -84,13 +84,22 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
   const [resizing, setResizing] = useState(false);
   const [feedIndex, setFeedIndex] = useState<number | null>(0);
   const feedPausedRef = useRef(false);
-  const visibleChanges = catalog.length === 0
-    ? changes
-    : changes.filter(change => catalog.some(item => item.unique_name === change.unique_name));
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizeHeightRef = useRef(panelHeight);
+  const catalogById = useMemo(
+    () => new Map(catalog.map(item => [item.unique_name, item])),
+    [catalog]
+  );
+  const visibleChanges = useMemo(
+    () => catalog.length === 0
+      ? changes
+      : changes.filter(change => catalogById.has(change.unique_name)),
+    [catalog.length, catalogById, changes]
+  );
   const latestTimestamp = visibleChanges[0]?.timestamp;
   const latestBatch = latestTimestamp == null
     ? []
-    : visibleChanges.filter(change => Math.floor(change.timestamp / 60) === Math.floor(latestTimestamp / 60));
+    : visibleChanges.filter(change => change.timestamp === latestTimestamp);
 
   useEffect(() => {
     setFeedIndex(latestBatch.length === 0 ? null : 0);
@@ -112,12 +121,12 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
   }, [expanded, latestTimestamp, latestBatch.length]);
 
   const feedChange = feedIndex === null ? undefined : latestBatch[feedIndex];
-  const feedItem = feedChange && catalog.find(item => item.unique_name === feedChange.unique_name);
+  const feedItem = feedChange && catalogById.get(feedChange.unique_name);
 
   return (
     <div
       className={`log-panel${expanded ? " log-panel-expanded" : ""}${resizing ? " log-panel-resizing" : ""}`}
-      style={{ "--log-panel-height": `${panelHeight}px` } as React.CSSProperties}
+      style={{ height: expanded ? panelHeight : undefined }}
     >
       {!expanded && feedChange && (
         <div
@@ -131,8 +140,8 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
             item={feedItem}
             clockFormat={clockFormat}
             systemLocale={systemLocale}
-            onClick={() => onItemClick(feedChange.unique_name)}
-            onExpand={() => setExpanded(true)}
+            onItemClick={() => onItemClick(feedChange.unique_name)}
+            onRowClick={() => setExpanded(true)}
             feed
           />
         </div>
@@ -140,10 +149,9 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
 
       {!expanded && !feedChange && (
         <button className="log-empty-collapsed" onClick={() => setExpanded(true)}>
-          <span>Change log</span>
+          <span>Changelog</span>
           <span className="log-collapsed-count">
             {latestBatch.length === 0 ? "No changes yet" : `${latestBatch.length} change${latestBatch.length === 1 ? "" : "s"}`}
-            <span>+</span>
           </span>
         </button>
       )}
@@ -151,21 +159,34 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
       {expanded && (
         <div className="log-expanded-body">
           <div
-            className="log-resize-handle"
+            className="log-resize-edge"
             onMouseDown={event => {
               event.preventDefault();
               event.stopPropagation();
               setResizing(true);
               const startY = event.clientY;
               const startHeight = panelHeight;
+              const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ff-scale")) || 1;
               document.body.style.userSelect = "none";
               const onMove = (moveEvent: MouseEvent) => {
                 const maxHeight = Math.max(140, Math.min(800, window.innerHeight * 0.8));
-                setPanelHeight(Math.max(100, Math.min(maxHeight, startHeight + startY - moveEvent.clientY)));
+                const nextHeight = Math.max(100, Math.min(maxHeight, startHeight + (startY - moveEvent.clientY) / scale));
+                resizeHeightRef.current = nextHeight;
+                if (resizeFrameRef.current === null) {
+                  resizeFrameRef.current = window.requestAnimationFrame(() => {
+                    setPanelHeight(resizeHeightRef.current);
+                    resizeFrameRef.current = null;
+                  });
+                }
               };
               const onUp = () => {
                 window.removeEventListener("mousemove", onMove);
                 window.removeEventListener("mouseup", onUp);
+                if (resizeFrameRef.current !== null) {
+                  window.cancelAnimationFrame(resizeFrameRef.current);
+                  resizeFrameRef.current = null;
+                }
+                setPanelHeight(resizeHeightRef.current);
                 document.body.style.userSelect = "";
                 setResizing(false);
               };
@@ -174,14 +195,16 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
             }}
           />
           <button className="log-header" aria-expanded onClick={() => setExpanded(false)}>
-            <span className="log-header-title">Change log</span>
-            <span className="log-chevron" aria-hidden="true">−</span>
+            <span className="log-header-title">Changelog</span>
+            <span className="log-header-summary">
+              {latestBatch.length} change{latestBatch.length === 1 ? "" : "s"}
+            </span>
           </button>
           <div className="log-list">
             {visibleChanges.length === 0 ? (
               <span className="log-empty">No changes recorded yet.</span>
             ) : visibleChanges.map((change, index) => {
-              const item = catalog.find(catalogItem => catalogItem.unique_name === change.unique_name);
+              const item = catalogById.get(change.unique_name);
               return (
                 <ChangeRow
                   key={change.id || index}
@@ -189,7 +212,8 @@ export default function ChangeLog({ changes, catalog, clockFormat, systemLocale,
                   item={item}
                   clockFormat={clockFormat}
                   systemLocale={systemLocale}
-                  onClick={() => onItemClick(change.unique_name)}
+                  onItemClick={() => onItemClick(change.unique_name)}
+                  timeBreak={index > 0 && change.timestamp !== visibleChanges[index - 1].timestamp}
                 />
               );
             })}
