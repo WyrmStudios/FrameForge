@@ -1311,6 +1311,7 @@ function RivenSellModal({ riven, weaponName, disposition, category, onClose, onS
         minimalReputation:   saleType === "direct" ? 0 : (parseInt(minRep, 10) || 0),
         note,
         visible,
+        isDirectSell:        saleType === "direct",
       });
       onSuccess();
       onClose();
