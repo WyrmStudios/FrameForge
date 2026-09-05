@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef, memo, useContext, Component, ReactNode } from "react";
+﻿import { useState, useEffect, useMemo, useCallback, useRef, memo, Component, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
@@ -80,6 +80,8 @@ import Syndicates from "./Syndicates";
 import Weapons from "./Weapons";
 import Overlay from "./Overlay";
 import ModularWindow from "./ModularWindow";
+import ChangeLog from "./ChangeLog";
+import ItemImg from "./ItemImg";
 import { HelpTip } from "./HelpTip";
 import "./App.css";
 
@@ -207,42 +209,6 @@ const CATEGORIES = [
   { id: "Skins",      label: "Skins" },
   { id: "Railjack",   label: "Railjack" },
 ];
-
-function BlueprintIcon() {
-  return (
-    <svg className="item-img-fallback" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="5" y="2" width="17" height="22" rx="1.5" fill="#0d1f33" stroke="#388bfd" strokeWidth="1.2"/>
-      <path d="M18 2 L22 6 L18 6 Z" fill="#388bfd" opacity="0.5"/>
-      <line x1="8" y1="11" x2="19" y2="11" stroke="#388bfd" strokeWidth="1" opacity="0.9"/>
-      <line x1="8" y1="14" x2="19" y2="14" stroke="#388bfd" strokeWidth="1" opacity="0.9"/>
-      <line x1="8" y1="17" x2="14" y2="17" stroke="#388bfd" strokeWidth="1" opacity="0.9"/>
-      <circle cx="23" cy="23" r="6" fill="#0d1117" stroke="#388bfd" strokeWidth="1.2"/>
-      <line x1="23" y1="20" x2="23" y2="26" stroke="#388bfd" strokeWidth="1.2"/>
-      <line x1="20" y1="23" x2="26" y2="23" stroke="#388bfd" strokeWidth="1.2"/>
-    </svg>
-  );
-}
-
-function ItemImg({ imageName, category, size = 32 }: { imageName?: string; category: string; size?: number }) {
-  const baseUrl = useContext(ImgCacheDirContext);
-  const [localFailed, setLocalFailed] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const style = { width: size, height: size, flexShrink: 0 as const };
-  if (!imageName || failed) {
-    if (category === "Blueprints") return <BlueprintIcon />;
-    return <span className="item-img-fallback" style={{ ...style, fontSize: size * 0.35 }}>{category[0].toUpperCase()}</span>;
-  }
-  if (imageName.startsWith("http") || imageName.startsWith("/")) {
-    return <img className="item-img" style={style} src={imageName} alt="" loading="lazy" onError={() => setFailed(true)} />;
-  }
-  const useLocal = Boolean(baseUrl) && !localFailed;
-  const src = useLocal ? `${baseUrl}/${imageName}` : `https://cdn.warframestat.us/img/${imageName}`;
-  return (
-    <img className="item-img" style={style} src={src} alt="" loading="lazy"
-      onError={() => useLocal ? setLocalFailed(true) : setFailed(true)} />
-  );
-}
-
 
 function fmt(n: number) { return n.toLocaleString(); }
 function fmtBytes(n: number) {
@@ -843,7 +809,6 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [statsTab, setStatsTab] = useState<"trade" | "item">("trade");
   const [reportsDateRange, setReportsDateRange] = useState<number | "all">(30);
   const [lastChanged, setLastChanged] = useState<Record<string, number>>({});
-  const [logPanelH, setLogPanelH] = useState(180);
   const [monitoring, setMonitoring] = useState(false);
   const [warframeRunning, setWarframeRunning] = useState(false);
   const [itemCount, setItemCount] = useState(0);
@@ -3132,6 +3097,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
           </button>
         </nav>
 
+        <div className="app-content">
+        <div className="module-content">
         {/* ── Inventory module ── */}
         {activeModule === "inventory" && (
           <>
@@ -3260,46 +3227,6 @@ if (typeof s.autoDiagEnabled === "boolean") {
                 )}
               </div>
 
-              <div className="log-panel" style={{ height: logPanelH }}>
-                <div
-                  className="log-resize-handle"
-                  onMouseDown={e => {
-                    const startY = e.clientY;
-                    const startH = logPanelH;
-                    const onMove = (me: MouseEvent) => {
-                      const delta = startY - me.clientY;
-                      setLogPanelH(Math.max(80, Math.min(600, startH + delta)));
-                    };
-                    const onUp = () => {
-                      window.removeEventListener("mousemove", onMove);
-                      window.removeEventListener("mouseup", onUp);
-                    };
-                    window.addEventListener("mousemove", onMove);
-                    window.addEventListener("mouseup", onUp);
-                  }}
-                />
-                <div className="log-header">Change log</div>
-                <div className="log-list">
-                  {changeLog.length === 0 ? (
-                    <span className="log-empty">No changes recorded yet.</span>
-                  ) : (
-                    changeLog.map((c, i) => {
-                      const logItem = catalogRef.current.find(ci => ci.unique_name === c.unique_name);
-                      return (
-                        <div key={c.id || i} className="log-row">
-                          <span className="log-name">
-                            {logItem?.name ?? c.item_name}
-                            {logItem && <span className="log-cat">{logItem.category}</span>}
-                          </span>
-                          <span className={`log-delta ${deltaClass(c.delta)}`}>{deltaText(c.delta)}</span>
-                          <span className="log-range">{fmt(c.old_qty)} → {fmt(c.new_qty)}</span>
-                          <span className="log-time">{timeStr(c.timestamp, clockFormat, systemLocale)}</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
             </div>
           </>
         )}
@@ -3398,6 +3325,19 @@ if (typeof s.autoDiagEnabled === "boolean") {
           </ErrorBoundary>
         )}
 
+        </div>
+
+        <ChangeLog
+          changes={changeLog}
+          catalog={catalog}
+          clockFormat={clockFormat}
+          systemLocale={systemLocale}
+          onItemClick={_uniqueName => {
+            setActiveModule("inventory");
+            setFilterRecent(true);
+          }}
+        />
+        </div>
 
         {/* ── Modular Window — always visible unless popped out ── */}
         {!modularPopout && <ModularWindow

@@ -1,0 +1,84 @@
+.log-panel {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 35px;
+  overflow: hidden;
+}
+.log-panel-expanded {
+  max-height: var(--log-panel-height, 270px);
+  box-shadow: 0 -8px 24px rgba(0,0,0,.18);
+}
+.log-panel-resizing { transition: none; }
+
+.log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: background .15s, color .15s;
+}
+.log-header:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.log-header-title { color: inherit; }
+.log-header-summary { color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.log-chevron { margin-left: auto; color: var(--accent); font-size: 17px; font-weight: 400; line-height: 1; }
+
+.log-feed { overflow: hidden; animation: log-feed-reveal .6s ease both; }
+.log-feed-row { border-bottom: none; cursor: pointer; }
+.log-feed-row:hover, .log-item-row:focus-visible { background: rgba(56,139,253,.08); outline: none; }
+.log-feed-row .log-change-qty { margin-left: auto; }
+.log-empty-collapsed { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 34px; padding: 0 12px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; text-align: left; }
+.log-collapsed-count { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.log-empty-collapsed:hover { background: rgba(255,255,255,.04); color: var(--text); }
+
+.log-expanded-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.log-resize-handle { height: 6px; cursor: ns-resize; background: transparent; flex-shrink: 0; }
+.log-resize-handle:hover { background: var(--accent); opacity: .4; }
+.log-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0; }
+.log-item-row { cursor: pointer; }
+.log-item-row svg.item-img-fallback { width: 20px; height: 20px; }
+.log-name-group { display: flex; align-items: center; gap: 6px; }
+.log-cat { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.log-change-qty { width: auto; min-width: 160px; gap: 5px; }
+.log-direction { font-size: 14px; font-weight: 700; line-height: 1; }
+.log-amount { font-size: 11px; font-weight: 700; }
+.log-positive { color: var(--green); }
+.log-negative { color: var(--red); }
+.log-item-row .inv-row-cat { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-range { color: var(--muted); flex-shrink: 0; white-space: nowrap; font-size: 11px; font-weight: 400; }
+.log-time { color: var(--muted); flex-shrink: 0; min-width: 40px; text-align: left; font-size: 11px; }
+.log-expand-button { flex: 0 0 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; }
+.log-expand-button:hover { color: var(--accent); border-color: var(--border); background: rgba(255,255,255,.04); }
+
+@media (max-width: 800px) {
+  .log-item-row { gap: 5px; padding-left: 8px; padding-right: 8px; }
+  .log-item-row .log-cat { max-width: 72px; font-size: 9px; }
+  .log-change-qty { min-width: 128px; }
+  .log-time { display: none; }
+}
+.log-empty { display: block; padding: 12px 16px; color: var(--muted); font-size: 12px; }
+
+@keyframes log-feed-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .log-panel, .log-header { transition: none; }
+  .log-feed { animation: none; }
+}

@@ -4936,6 +4936,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
                     let all_keys: std::collections::HashSet<&String> =
                         prev_all.keys().chain(emit_qty.keys()).collect();
                     for key in all_keys {
+                        if ignored_paths.contains(key.as_str()) { continue; }
                         let old_qty = *prev_all.get(key).unwrap_or(&0);
                         let new_qty = *emit_qty.get(key).unwrap_or(&0);
                         if old_qty == new_qty { continue; }
