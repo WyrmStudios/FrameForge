@@ -80,7 +80,7 @@ import Syndicates from "./Syndicates";
 import Weapons from "./Weapons";
 import Overlay from "./Overlay";
 import ModularWindow from "./ModularWindow";
-import ChangeLog from "./ChangeLog";
+import ChangeLog, { getLatestChangeBatch, getVisibleChangeLogEntries } from "./ChangeLog";
 import ItemImg from "./ItemImg";
 import { HelpTip } from "./HelpTip";
 import "./App.css";
@@ -783,6 +783,10 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const prevApiQtyRef = useRef<Record<string, number>>({});
   const manualCredsRef = useRef<{ accountId: string; nonce: string } | null>(null);
   const [changeLog, setChangeLog] = useState<QuantityChange[]>([]);
+  const [changeLogArrivalToken, setChangeLogArrivalToken] = useState(0);
+  const [lastInventoryScanAt, setLastInventoryScanAt] = useState<number | null>(null);
+  const [changeLogExpanded, setChangeLogExpanded] = useState(false);
+  const [changeLogHeight, setChangeLogHeight] = useState(270);
   const [category, setCategory] = useState("all");
   const [search, setSearch] = useState("");
   const [filterOwned,    setFilterOwned]    = useState(false);
@@ -852,6 +856,39 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [systemLocale, setSystemLocale] = useState("en-US");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
   const [imgCacheDir, setImgCacheDir] = useState("");
+
+  const visibleChangeLog = useMemo(
+    () => getVisibleChangeLogEntries(changeLog, catalog),
+    [changeLog, catalog]
+  );
+  const latestChangeBatch = useMemo(
+    () => getLatestChangeBatch(visibleChangeLog),
+    [visibleChangeLog]
+  );
+
+  const previewChangeLogFeed = () => {
+    setShowSettings(false);
+    const timestamp = Math.max(Math.floor(Date.now() / 1000), (changeLog[0]?.timestamp ?? 0) + 9);
+    const previewItems = catalog.slice(0, 3);
+    const changes: QuantityChange[] = (previewItems.length > 0 ? previewItems : [{
+      unique_name: "change-log-preview", name: "Change Log Preview", category: "Miscellaneous",
+    }]).map((item, index) => {
+      const oldQty = 12 + index;
+      const delta = index === previewItems.length - 1 ? -(index + 1) : index + 1;
+      return {
+        id: -Date.now() - index,
+        unique_name: item.unique_name,
+        item_name: item.name,
+        old_qty: oldQty,
+        new_qty: oldQty + delta,
+        delta,
+        timestamp,
+      };
+    });
+    setChangeLog(previous => [...changes, ...previous].slice(0, 200));
+    setChangeLogArrivalToken(token => token + 1);
+    setLastInventoryScanAt(timestamp);
+  };
 
   // ── Modular Window state ───────────────────────────────────────────────────
   const [tracked, setTracked] = useState<string[]>([]);
@@ -1114,6 +1151,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
   useEffect(() => {
     const unlisten = listen<InventoryUpdate>("inventory-update", (e) => {
       const p = e.payload;
+      setLastInventoryScanAt(p.scanned_at);
       // Only replace quantities if the content actually changed.
       // The monitor loop re-emits cached state periodically; without this guard
       // every emit triggers a full 17k-item useMemo rebuild cascade.
@@ -1194,6 +1232,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       }
       if (p.changes.length > 0) {
         setChangeLog(prev => [...p.changes, ...prev].slice(0, 200));
+        setChangeLogArrivalToken(token => token + 1);
         setLastChanged(prev => {
           const next = { ...prev };
           for (const c of p.changes) next[c.unique_name] = c.timestamp;
@@ -1495,6 +1534,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       }
       if (changes.length > 0) {
         setChangeLog(prev => [...changes, ...prev].slice(0, 200));
+        setChangeLogArrivalToken(token => token + 1);
         setLastChanged(prev => {
           const next = { ...prev };
           for (const c of changes) next[c.unique_name] = c.timestamp;
@@ -2760,6 +2800,18 @@ if (typeof s.autoDiagEnabled === "boolean") {
                   </div>
 
                   <div className="settings-section">
+                    <div className="settings-section-title">Change Log Preview</div>
+                    <div className="settings-row">
+                      <div className="settings-row-info">
+                        <span className="settings-row-label">Test feed</span>
+                        <span className="settings-row-desc">Temporary tool: play a sample collapsed feed for animation review.</span>
+                      </div>
+                      {/* Temporary animation review control; remove before the final PR. */}
+                      <button className="btn-secondary" onClick={previewChangeLogFeed}>Play</button>
+                    </div>
+                  </div>
+
+                  <div className="settings-section">
                     <div className="settings-section-title">Diagnostics</div>
                     <div className="debug-table">
 
@@ -3328,10 +3380,17 @@ if (typeof s.autoDiagEnabled === "boolean") {
         </div>
 
         <ChangeLog
-          changes={changeLog}
+          visibleChanges={visibleChangeLog}
+          latestBatch={latestChangeBatch}
+          arrivalToken={changeLogArrivalToken}
+          lastScanAt={lastInventoryScanAt}
           catalog={catalog}
           clockFormat={clockFormat}
           systemLocale={systemLocale}
+          expanded={changeLogExpanded}
+          height={changeLogHeight}
+          onExpandedChange={setChangeLogExpanded}
+          onHeightChange={setChangeLogHeight}
           onItemClick={_uniqueName => {
             setActiveModule("inventory");
             setFilterRecent(true);
