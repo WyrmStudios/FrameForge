@@ -48,8 +48,7 @@
 .log-status-divider { color: var(--muted); font-size: 11px; font-weight: 400; }
 .log-last-scan { color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; white-space: nowrap; }
 .log-feed { position: relative; z-index: 1; align-self: center; width: min(680px, calc(100% - 220px)); overflow: hidden; }
-.log-feed[data-transition="entering"] { animation: log-feed-enter .18s ease-out both; }
-.log-feed[data-transition="leaving"] { animation: log-feed-leave .12s ease-in both; }
+.log-feed { animation: log-feed-cycle 4.5s ease both; }
 .log-feed-row.inv-card { position: relative; border: none; background: transparent; cursor: pointer; }
 .log-feed-row.inv-card:hover { background: transparent; }
 .log-feed-open { position: absolute; z-index: 1; inset: 0; border: none; background: transparent; cursor: pointer; }
@@ -97,12 +96,10 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
-@keyframes log-feed-enter {
+@keyframes log-feed-cycle {
   from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes log-feed-leave {
-  from { opacity: 1; }
+  4% { opacity: 1; }
+  96% { opacity: 1; }
   to { opacity: 0; }
 }
 @keyframes log-row-arrive {

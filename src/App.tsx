@@ -866,30 +866,6 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
     [visibleChangeLog]
   );
 
-  const previewChangeLogFeed = () => {
-    setShowSettings(false);
-    const timestamp = Math.max(Math.floor(Date.now() / 1000), (changeLog[0]?.timestamp ?? 0) + 9);
-    const previewItems = catalog.slice(0, 3);
-    const changes: QuantityChange[] = (previewItems.length > 0 ? previewItems : [{
-      unique_name: "change-log-preview", name: "Change Log Preview", category: "Miscellaneous",
-    }]).map((item, index) => {
-      const oldQty = 12 + index;
-      const delta = index === previewItems.length - 1 ? -(index + 1) : index + 1;
-      return {
-        id: -Date.now() - index,
-        unique_name: item.unique_name,
-        item_name: item.name,
-        old_qty: oldQty,
-        new_qty: oldQty + delta,
-        delta,
-        timestamp,
-      };
-    });
-    setChangeLog(previous => [...changes, ...previous].slice(0, 200));
-    setChangeLogArrivalToken(token => token + 1);
-    setLastInventoryScanAt(timestamp);
-  };
-
   // ── Modular Window state ───────────────────────────────────────────────────
   const [tracked, setTracked] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -2100,6 +2076,19 @@ if (typeof s.autoDiagEnabled === "boolean") {
     return out.slice(0, 1000);
   }, [catalog, inventory, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
 
+  const openChangeLogItem = (uniqueName: string) => {
+    const item = catalog.find(candidate => candidate.unique_name === uniqueName);
+    setActiveModule("inventory");
+    setCategory("all");
+    setSearch(item?.name ?? "");
+    setFilterOwned(false);
+    setFilterRecent(false);
+    setFilterPrime(false);
+    setFilterVaulted(false);
+    setFilterUnvaulted(false);
+    setFilterRank(null);
+  };
+
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -2800,18 +2789,6 @@ if (typeof s.autoDiagEnabled === "boolean") {
                   </div>
 
                   <div className="settings-section">
-                    <div className="settings-section-title">Change Log Preview</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Test feed</span>
-                        <span className="settings-row-desc">Temporary tool: play a sample collapsed feed for animation review.</span>
-                      </div>
-                      {/* Temporary animation review control; remove before the final PR. */}
-                      <button className="btn-secondary" onClick={previewChangeLogFeed}>Play</button>
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
                     <div className="settings-section-title">Diagnostics</div>
                     <div className="debug-table">
 
@@ -3391,10 +3368,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
           height={changeLogHeight}
           onExpandedChange={setChangeLogExpanded}
           onHeightChange={setChangeLogHeight}
-          onItemClick={_uniqueName => {
-            setActiveModule("inventory");
-            setFilterRecent(true);
-          }}
+          onItemClick={openChangeLogItem}
         />
         </div>
 

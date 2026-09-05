@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import ItemImg from "./ItemImg";
 import "./ChangeLog.css";
 
@@ -36,13 +36,6 @@ interface ChangeLogProps {
   onItemClick: (uniqueName: string) => void;
 }
 
-type FeedTransition = "entering" | "leaving" | null;
-
-interface FeedPlayback {
-  index: number | null;
-  transition: FeedTransition;
-}
-
 export function getVisibleChangeLogEntries(changes: ChangeLogEntry[], catalog: ChangeLogCatalogItem[]) {
   if (catalog.length === 0) return changes;
   const catalogIds = new Set(catalog.map(item => item.unique_name));
@@ -66,6 +59,10 @@ function timeStr(ts: number, format: ChangeLogProps["clockFormat"], locale: stri
   if (format === "12h") opts.hour12 = true;
   else if (format === "24h") opts.hour12 = false;
   return new Date(ts * 1000).toLocaleTimeString(locale, opts);
+}
+
+function changeKey(change: ChangeLogEntry) {
+  return `${change.id}:${change.unique_name}:${change.timestamp}`;
 }
 
 function ChangeRow({
@@ -113,70 +110,48 @@ export default function ChangeLog({
   const resizeFrameRef = useRef<number | null>(null);
   const resizeHeightRef = useRef(height);
   const handledArrivalRef = useRef(0);
-  const handledExpandedArrivalRef = useRef(0);
   const [showArrival, setShowArrival] = useState(false);
-  const [feedPlayback, setFeedPlayback] = useState<FeedPlayback>({ index: null, transition: null });
+  const [feedIndex, setFeedIndex] = useState<number | null>(null);
   const [arrivingEntryKeys, setArrivingEntryKeys] = useState<Set<string>>(new Set());
   const catalogById = new Map(catalog.map(item => [item.unique_name, item]));
-  const batchKey = latestBatch.map(change => `${change.id}:${change.unique_name}:${change.timestamp}`).join("|");
+  const batchKey = latestBatch.map(changeKey).join("|");
 
   useEffect(() => {
     if (arrivalToken === 0 || arrivalToken === handledArrivalRef.current) return;
     handledArrivalRef.current = arrivalToken;
     if (!batchKey) {
       setShowArrival(false);
-      setFeedPlayback({ index: null, transition: null });
+      setFeedIndex(null);
       return;
     }
     setShowArrival(true);
     if (expanded) {
-      setFeedPlayback({ index: null, transition: null });
-      return;
+      setFeedIndex(null);
+      setArrivingEntryKeys(new Set(latestBatch.map(changeKey)));
+      const timer = window.setTimeout(() => setArrivingEntryKeys(new Set()), 160);
+      return () => window.clearTimeout(timer);
     }
-    setFeedPlayback({ index: 0, transition: "entering" });
-  }, [arrivalToken, batchKey, expanded]);
-
-  useEffect(() => {
-    if (arrivalToken === 0 || arrivalToken === handledExpandedArrivalRef.current) return;
-    handledExpandedArrivalRef.current = arrivalToken;
-    if (!expanded || !batchKey) return;
-    const entryKeys = new Set(latestBatch.map(change => `${change.id}:${change.unique_name}:${change.timestamp}`));
-    setArrivingEntryKeys(entryKeys);
-    const timer = window.setTimeout(() => setArrivingEntryKeys(new Set()), 160);
-    return () => window.clearTimeout(timer);
+    setArrivingEntryKeys(new Set());
+    setFeedIndex(0);
   }, [arrivalToken, batchKey, expanded, latestBatch]);
 
   useEffect(() => {
     if (!expanded) return;
-    setFeedPlayback({ index: null, transition: null });
+    setFeedIndex(null);
   }, [expanded]);
 
   useEffect(() => {
-    if (expanded || feedPlayback.index === null || feedPlayback.transition !== null) return;
+    if (expanded || feedIndex === null) return;
     const timer = window.setTimeout(() => {
-      setFeedPlayback(current => current.index === null || current.transition !== null
-        ? current
-        : { ...current, transition: "leaving" }
-      );
-    }, 4200);
+      setFeedIndex(index => index === null || index + 1 >= latestBatch.length ? null : index + 1);
+    }, 4500);
     return () => window.clearTimeout(timer);
-  }, [expanded, feedPlayback.index, feedPlayback.transition]);
+  }, [expanded, feedIndex, latestBatch.length]);
 
   const positiveChanges = latestBatch.filter(change => change.delta > 0).length;
   const negativeChanges = latestBatch.filter(change => change.delta < 0).length;
-  const feedChange = feedPlayback.index === null ? undefined : latestBatch[feedPlayback.index];
+  const feedChange = feedIndex === null ? undefined : latestBatch[feedIndex];
   const feedItem = feedChange && catalogById.get(feedChange.unique_name);
-
-  const handleFeedAnimationEnd = () => {
-    setFeedPlayback(current => {
-      if (current.transition === "entering") return { ...current, transition: null };
-      if (current.transition !== "leaving" || current.index === null) return current;
-      const nextIndex = current.index + 1;
-      return nextIndex >= latestBatch.length
-        ? { index: null, transition: null }
-        : { index: nextIndex, transition: "entering" };
-    });
-  };
 
   return (
     <div
@@ -199,9 +174,7 @@ export default function ChangeLog({
       </div>}
       {!expanded && feedChange && <div
         className="log-feed"
-        key={feedChange.id || feedPlayback.index}
-        data-transition={feedPlayback.transition ?? undefined}
-        onAnimationEnd={handleFeedAnimationEnd}
+        key={`${arrivalToken}:${feedIndex}:${changeKey(feedChange)}`}
       >
         <ChangeRow
           change={feedChange}
@@ -285,7 +258,7 @@ export default function ChangeLog({
             ) : visibleChanges.map((change, index) => {
               const item = catalogById.get(change.unique_name);
               const key = change.id || index;
-              const arriving = arrivingEntryKeys.has(`${change.id}:${change.unique_name}:${change.timestamp}`);
+              const arriving = arrivingEntryKeys.has(changeKey(change));
               const row = (
                 <ChangeRow
                   change={change}
@@ -298,14 +271,7 @@ export default function ChangeLog({
               );
               return arriving
                 ? <div className="log-row-arrival-wrap" key={key}>{row}</div>
-                : <ChangeRow key={key}
-                    change={change}
-                    item={item}
-                    clockFormat={clockFormat}
-                    systemLocale={systemLocale}
-                    onItemClick={() => onItemClick(change.unique_name)}
-                    timeBreak={index > 0 && visibleChanges[index - 1].timestamp - change.timestamp > CHANGE_BATCH_GAP_SECONDS}
-                  />;
+                : <Fragment key={key}>{row}</Fragment>;
             })}
           </div>
         </div>
