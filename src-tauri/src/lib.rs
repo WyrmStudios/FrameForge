@@ -3851,7 +3851,15 @@ fn wfm_get_cached_prices(state: State<'_, AppState>) -> HashMap<String, Option<u
 #[tauri::command]
 fn get_change_log(state: State<AppState>, limit: i64) -> Result<Vec<QuantityChange>, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    db::get_quantity_changes(&conn, limit).map_err(|e| e.to_string())
+    let ignored_paths: std::collections::HashSet<&str> = state.corrections.iter()
+        .filter(|(_, correction)| correction.category.as_deref() == Some("Ignored"))
+        .map(|(path, _)| path.as_str())
+        .collect();
+    db::get_quantity_changes(&conn, limit)
+        .map(|changes| changes.into_iter()
+            .filter(|change| !ignored_paths.contains(change.unique_name.as_str()))
+            .collect())
+        .map_err(|e| e.to_string())
 }
 
 // ─── Tracked items / snapshots ───────────────────────────────────────────────
