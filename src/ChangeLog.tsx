@@ -5,13 +5,23 @@ import "./ChangeLog.css";
 
 export const CHANGE_BATCH_GAP_SECONDS = 8;
 const MIN_LOG_HEIGHT = 100;
+const MAX_LOG_HEIGHT = 800;
+
+function getScale() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ff-scale")) || 1;
+}
+
+function getMinLogHeight() {
+  return MIN_LOG_HEIGHT / getScale();
+}
 
 function getMaxLogHeight() {
-  return Math.max(140, Math.min(800, window.innerHeight * 0.8));
+  const scale = getScale();
+  return Math.max(getMinLogHeight(), Math.min(MAX_LOG_HEIGHT / scale, window.innerHeight * 0.8 / scale));
 }
 
 function clampLogHeight(height: number) {
-  return Math.max(MIN_LOG_HEIGHT, Math.min(getMaxLogHeight(), height));
+  return Math.max(getMinLogHeight(), Math.min(getMaxLogHeight(), height));
 }
 
 export interface ChangeLogEntry {
@@ -45,12 +55,6 @@ interface ChangeLogProps {
   onItemClick: (uniqueName: string) => void;
   onChangeLogClick: () => void;
   onCategoryClick: (category: string) => void;
-}
-
-function getVisibleChangeLogEntries(changes: ChangeLogEntry[], catalog: ChangeLogCatalogItem[]) {
-  if (catalog.length === 0) return changes;
-  const catalogIds = new Set(catalog.map(item => item.unique_name));
-  return changes.filter(change => catalogIds.has(change.unique_name));
 }
 
 function getLatestChangeBatch(changes: ChangeLogEntry[]) {
@@ -131,21 +135,21 @@ function ChangeLogHeader({
   onChangeLogClick: () => void;
 }) {
   return (
-    <div className="log-header">
-      <button
-        className="log-header-toggle"
-        aria-expanded={expanded}
-        aria-controls={expanded ? "change-log-list" : undefined}
-        aria-label={expanded ? "Collapse change log" : "Open change log"}
-        onClick={() => onExpandedChange(!expanded)}
-      />
-      <button className="log-header-title" onClick={onChangeLogClick}>Changelog</button>
+    <div className="log-header" onClick={() => onExpandedChange(!expanded)}>
+      <button className="log-header-title" aria-label="Show recent inventory changes" onClick={event => { event.stopPropagation(); onChangeLogClick(); }}>Changelog</button>
       {showArrival && <span className="log-header-arrival log-arrival-notice" role="status" key={arrivalToken}>
         {positiveChanges > 0 && <span className="log-positive">+{positiveChanges}</span>}
         {negativeChanges > 0 && <span className="log-negative">-{negativeChanges}</span>}
       </span>}
       <span className="log-status-divider" aria-hidden="true">·</span>
       <span className="log-last-scan">last scan {lastScanAt == null ? "not yet" : timeStr(lastScanAt, clockFormat, systemLocale)}</span>
+      <button
+        className="log-header-toggle"
+        aria-expanded={expanded}
+        aria-controls={expanded ? "change-log-list" : undefined}
+        aria-label={expanded ? "Collapse change log" : "Open change log"}
+        onClick={event => { event.stopPropagation(); onExpandedChange(!expanded); }}
+      >{expanded ? "^" : "v"}</button>
     </div>
   );
 }
@@ -153,6 +157,8 @@ function ChangeLogHeader({
 function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, "height" | "onHeightChange">) {
   const resizeFrameRef = useRef<number | null>(null);
   const resizeHeightRef = useRef(height);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
   return (
     <div
       className="log-resize-edge"
@@ -162,12 +168,12 @@ function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, 
       aria-controls="change-log-list"
       aria-orientation="horizontal"
       aria-valuenow={height}
-      aria-valuemin={MIN_LOG_HEIGHT}
+      aria-valuemin={getMinLogHeight()}
       aria-valuemax={getMaxLogHeight()}
       onKeyDown={event => {
         const next = event.key === "ArrowUp" ? height + 20
           : event.key === "ArrowDown" ? height - 20
-          : event.key === "Home" ? MIN_LOG_HEIGHT
+          : event.key === "Home" ? getMinLogHeight()
           : event.key === "End" ? getMaxLogHeight()
           : null;
         if (next !== null) {
@@ -178,6 +184,8 @@ function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, 
       onMouseDown={event => {
         event.preventDefault();
         event.stopPropagation();
+        resizeCleanupRef.current?.();
+        resizeHeightRef.current = height;
         const startY = event.clientY;
         const startHeight = height;
         const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ff-scale")) || 1;
@@ -193,17 +201,24 @@ function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, 
           }
         };
         const onUp = () => {
+          onHeightChange(resizeHeightRef.current);
+          cleanup();
+        };
+        const cleanup = () => {
           window.removeEventListener("mousemove", onMove);
           window.removeEventListener("mouseup", onUp);
+          window.removeEventListener("blur", onUp);
           if (resizeFrameRef.current !== null) {
             window.cancelAnimationFrame(resizeFrameRef.current);
             resizeFrameRef.current = null;
           }
-          onHeightChange(resizeHeightRef.current);
           document.body.style.userSelect = "";
+          resizeCleanupRef.current = null;
         };
         window.addEventListener("mousemove", onMove);
         window.addEventListener("mouseup", onUp);
+        window.addEventListener("blur", onUp);
+        resizeCleanupRef.current = cleanup;
       }}
     />
   );
@@ -219,18 +234,17 @@ export default function ChangeLog({
   const [arrivingEntryKeys, setArrivingEntryKeys] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.unique_name, item])), [catalog]);
-  const visibleChanges = useMemo(() => getVisibleChangeLogEntries(changes, catalog), [changes, catalog]);
-  const latestBatch = useMemo(() => getLatestChangeBatch(visibleChanges), [visibleChanges]);
+  const latestBatch = useMemo(() => getLatestChangeBatch(changes), [changes]);
   const filteredChanges = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    if (!query) return visibleChanges;
-    return visibleChanges.filter(change => {
+    if (!query) return changes;
+    return changes.filter(change => {
       const item = catalogById.get(change.unique_name);
       const name = item?.name ?? change.item_name;
       const category = item?.category ?? "Miscellaneous";
       return name.toLocaleLowerCase().includes(query) || category.toLocaleLowerCase().includes(query);
     });
-  }, [visibleChanges, catalogById, search]);
+  }, [changes, catalogById, search]);
   const batchKey = latestBatch.map(changeKey).join("|");
 
   useEffect(() => {
@@ -277,7 +291,7 @@ export default function ChangeLog({
   return (
     <div
       className={`log-panel${expanded ? " log-panel-expanded" : ""}`}
-      style={{ height: expanded ? height : undefined }}
+      style={{ height: expanded ? height : undefined, maxHeight: expanded ? getMaxLogHeight() : undefined }}
     >
       <ChangeLogHeader
         expanded={expanded}
@@ -311,7 +325,8 @@ export default function ChangeLog({
         <div className="log-expanded-body">
           <ChangeLogResizeHandle height={height} onHeightChange={onHeightChange} />
           <div className="log-search">
-            <SearchBar value={search} onChange={setSearch} placeholder="Search changes..." />
+            <label className="log-search-label" htmlFor="change-log-search">Search changes</label>
+            <SearchBar id="change-log-search" value={search} onChange={setSearch} placeholder="Search changes..." />
           </div>
           <div className="log-list" id="change-log-list">
             {filteredChanges.length === 0 ? (

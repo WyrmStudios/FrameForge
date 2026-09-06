@@ -11,7 +11,6 @@
 }
 .log-panel-expanded {
   height: auto;
-  max-height: min(80vh, 800px);
   box-shadow: 0 -8px 24px rgba(0,0,0,.18);
   position: relative;
 }
@@ -38,11 +37,10 @@
   transition: background .15s, color .15s;
 }
 .log-header:hover { background: rgba(255,255,255,.04); color: var(--text); }
-.log-header-toggle { position: absolute; z-index: 0; inset: 0; border: none; background: transparent; cursor: pointer; }
-.log-header-title { position: relative; z-index: 2; padding: 0; border: none; background: none; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+.log-header-toggle { margin-left: auto; padding: 0; border: none; background: none; color: inherit; cursor: pointer; font: inherit; }
+.log-header-title { padding: 0; border: none; background: none; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; }
 .log-header-title:hover, .log-header-title:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
 .log-header-summary { color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-.log-header-arrival, .log-header .log-status-divider, .log-header .log-last-scan { position: relative; z-index: 2; pointer-events: none; }
 .log-header-arrival { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: none; letter-spacing: 0; }
 
 .log-panel:not(.log-panel-expanded) .log-header { position: absolute; inset: 0; }
@@ -62,6 +60,7 @@
 .log-resize-edge { position: absolute; z-index: 2; top: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; }
 .log-resize-edge:hover, .log-resize-edge:focus-visible { background: rgba(56,139,253,.28); outline: none; }
 .log-search { display: flex; padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.log-search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .log-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0; }
 .log-item-row { cursor: default; }
 .log-row-arrival-wrap { display: grid; grid-template-rows: minmax(0, 0fr); overflow: hidden; opacity: 0; animation: log-row-arrive .16s ease-out both; }

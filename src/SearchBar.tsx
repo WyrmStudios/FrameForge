@@ -3,11 +3,13 @@ interface SearchBarProps {
   onChange: (value: string) => void;
   placeholder: string;
   className?: string;
+  id?: string;
 }
 
-export default function SearchBar({ value, onChange, placeholder, className = "search-box" }: SearchBarProps) {
+export default function SearchBar({ value, onChange, placeholder, className = "search-box", id }: SearchBarProps) {
   return (
     <input
+      id={id}
       className={className}
       placeholder={placeholder}
       value={value}
