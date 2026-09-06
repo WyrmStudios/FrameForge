@@ -34,6 +34,8 @@ interface ChangeLogProps {
   onExpandedChange: (expanded: boolean) => void;
   onHeightChange: (height: number) => void;
   onItemClick: (uniqueName: string) => void;
+  onChangeLogClick: () => void;
+  onCategoryClick: (category: string) => void;
 }
 
 export function getVisibleChangeLogEntries(changes: ChangeLogEntry[], catalog: ChangeLogCatalogItem[]) {
@@ -66,13 +68,14 @@ function changeKey(change: ChangeLogEntry) {
 }
 
 function ChangeRow({
-  change, item, clockFormat, systemLocale, onItemClick, onFeedExpand, timeBreak = false, feed = false,
+  change, item, clockFormat, systemLocale, onItemClick, onCategoryClick, onFeedExpand, timeBreak = false, feed = false,
 }: {
   change: ChangeLogEntry;
   item?: ChangeLogCatalogItem;
   clockFormat: ChangeLogProps["clockFormat"];
   systemLocale: string;
   onItemClick: () => void;
+  onCategoryClick: () => void;
   onFeedExpand?: () => void;
   timeBreak?: boolean;
   feed?: boolean;
@@ -90,7 +93,7 @@ function ChangeRow({
       </div>
       <div className="inv-row-name log-name-group">
         <button className="log-name-link" onClick={e => { e.stopPropagation(); onItemClick(); }}>{name}</button>
-        <span className="log-cat">{category}</span>
+        <button className="log-cat log-category-link" onClick={e => { e.stopPropagation(); onCategoryClick(); }}>{category}</button>
       </div>
       <div className="inv-row-qty log-change-qty">
         <span className="log-range">{fmt(change.old_qty)} → {fmt(change.new_qty)}</span>
@@ -103,9 +106,44 @@ function ChangeRow({
   );
 }
 
+function ChangeLogHeader({
+  expanded, showArrival, arrivalToken, positiveChanges, negativeChanges, lastScanAt,
+  clockFormat, systemLocale, onExpandedChange, onChangeLogClick,
+}: {
+  expanded: boolean;
+  showArrival: boolean;
+  arrivalToken: number;
+  positiveChanges: number;
+  negativeChanges: number;
+  lastScanAt: number | null;
+  clockFormat: ChangeLogProps["clockFormat"];
+  systemLocale: string;
+  onExpandedChange: (expanded: boolean) => void;
+  onChangeLogClick: () => void;
+}) {
+  return (
+    <div className="log-header">
+      <button
+        className="log-header-toggle"
+        aria-expanded={expanded}
+        aria-controls={expanded ? "change-log-list" : undefined}
+        aria-label={expanded ? "Collapse change log" : "Open change log"}
+        onClick={() => onExpandedChange(!expanded)}
+      />
+      <button className="log-header-title" onClick={onChangeLogClick}>Changelog</button>
+      {showArrival && <span className="log-header-arrival log-arrival-notice" role="status" key={arrivalToken}>
+        {positiveChanges > 0 && <span className="log-positive">+{positiveChanges}</span>}
+        {negativeChanges > 0 && <span className="log-negative">-{negativeChanges}</span>}
+      </span>}
+      <span className="log-status-divider" aria-hidden="true">·</span>
+      <span className="log-last-scan">last scan {lastScanAt == null ? "not yet" : timeStr(lastScanAt, clockFormat, systemLocale)}</span>
+    </div>
+  );
+}
+
 export default function ChangeLog({
   visibleChanges, latestBatch, catalog, clockFormat, systemLocale, expanded, height,
-  arrivalToken, lastScanAt, onExpandedChange, onHeightChange, onItemClick,
+  arrivalToken, lastScanAt, onExpandedChange, onHeightChange, onItemClick, onChangeLogClick, onCategoryClick,
 }: ChangeLogProps) {
   const resizeFrameRef = useRef<number | null>(null);
   const resizeHeightRef = useRef(height);
@@ -158,20 +196,18 @@ export default function ChangeLog({
       className={`log-panel${expanded ? " log-panel-expanded" : ""}`}
       style={{ height: expanded ? height : undefined }}
     >
-      {!expanded && <button
-        className="log-collapsed-open-area"
-        aria-label="Open change log"
-        onClick={() => onExpandedChange(true)}
-      />}
-      {!expanded && <div className="log-collapsed-meta">
-        <span className="log-collapsed-title">Changelog</span>
-        {showArrival && <span className="log-arrival-notice" role="status" key={arrivalToken}>
-          {positiveChanges > 0 && <span className="log-positive">+{positiveChanges}</span>}
-          {negativeChanges > 0 && <span className="log-negative">-{negativeChanges}</span>}
-        </span>}
-        <span className="log-status-divider" aria-hidden="true">·</span>
-        <span className="log-last-scan">last scan {lastScanAt == null ? "not yet" : timeStr(lastScanAt, clockFormat, systemLocale)}</span>
-      </div>}
+      <ChangeLogHeader
+        expanded={expanded}
+        showArrival={showArrival}
+        arrivalToken={arrivalToken}
+        positiveChanges={positiveChanges}
+        negativeChanges={negativeChanges}
+        lastScanAt={lastScanAt}
+        clockFormat={clockFormat}
+        systemLocale={systemLocale}
+        onExpandedChange={onExpandedChange}
+        onChangeLogClick={onChangeLogClick}
+      />
       {!expanded && feedChange && <div
         className="log-feed"
         key={`${arrivalToken}:${feedIndex}:${changeKey(feedChange)}`}
@@ -182,6 +218,7 @@ export default function ChangeLog({
           clockFormat={clockFormat}
           systemLocale={systemLocale}
           onItemClick={() => onItemClick(feedChange.unique_name)}
+          onCategoryClick={() => onCategoryClick(feedItem?.category ?? "Miscellaneous")}
           onFeedExpand={() => onExpandedChange(true)}
           feed
         />
@@ -243,15 +280,6 @@ export default function ChangeLog({
               window.addEventListener("mouseup", onUp);
             }}
           />
-          <button className="log-header" aria-expanded aria-controls="change-log-list" onClick={() => onExpandedChange(false)}>
-            <span className="log-header-title">Changelog</span>
-            {showArrival && <span className="log-header-arrival">
-              {positiveChanges > 0 && <span className="log-positive">+{positiveChanges}</span>}
-              {negativeChanges > 0 && <span className="log-negative">-{negativeChanges}</span>}
-            </span>}
-            <span className="log-status-divider" aria-hidden="true">·</span>
-            <span className="log-last-scan">last scan {lastScanAt == null ? "not yet" : timeStr(lastScanAt, clockFormat, systemLocale)}</span>
-          </button>
           <div className="log-list" id="change-log-list">
             {visibleChanges.length === 0 ? (
               <span className="log-empty">No changes recorded yet.</span>
@@ -266,6 +294,7 @@ export default function ChangeLog({
                   clockFormat={clockFormat}
                   systemLocale={systemLocale}
                   onItemClick={() => onItemClick(change.unique_name)}
+                  onCategoryClick={() => onCategoryClick(item?.category ?? "Miscellaneous")}
                   timeBreak={index > 0 && visibleChanges[index - 1].timestamp - change.timestamp > CHANGE_BATCH_GAP_SECONDS}
                 />
               );

@@ -2076,18 +2076,25 @@ if (typeof s.autoDiagEnabled === "boolean") {
     return out.slice(0, 1000);
   }, [catalog, inventory, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
 
-  const openChangeLogItem = (uniqueName: string) => {
-    const item = catalog.find(candidate => candidate.unique_name === uniqueName);
+  const resetInventoryFilters = (recent: boolean, searchTerm = "", categoryId = "all") => {
     setActiveModule("inventory");
-    setCategory("all");
-    setSearch(item?.name ?? "");
+    setCategory(categoryId);
+    setSearch(searchTerm);
     setFilterOwned(false);
-    setFilterRecent(false);
+    setFilterRecent(recent);
     setFilterPrime(false);
     setFilterVaulted(false);
     setFilterUnvaulted(false);
     setFilterRank(null);
   };
+
+  const openChangeLogItem = (uniqueName: string) => {
+    const item = catalog.find(candidate => candidate.unique_name === uniqueName);
+    resetInventoryFilters(false, item?.name);
+  };
+
+  const openRecentChanges = () => resetInventoryFilters(true);
+  const openRecentCategory = (categoryId: string) => resetInventoryFilters(true, "", categoryId);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -3369,6 +3376,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
           onExpandedChange={setChangeLogExpanded}
           onHeightChange={setChangeLogHeight}
           onItemClick={openChangeLogItem}
+          onChangeLogClick={openRecentChanges}
+          onCategoryClick={openRecentCategory}
         />
         </div>
 
