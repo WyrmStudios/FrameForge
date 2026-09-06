@@ -58,7 +58,7 @@
 
 .log-expanded-body { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .log-resize-edge { position: absolute; z-index: 2; top: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; }
-.log-resize-edge:hover, .log-resize-edge:focus-visible { background: rgba(56,139,253,.28); outline: none; }
+.log-resize-edge:hover { background: rgba(56,139,253,.28); }
 .log-search { display: flex; padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .log-search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .log-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0; }

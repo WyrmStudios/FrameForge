@@ -162,25 +162,6 @@ function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, 
   return (
     <div
       className="log-resize-edge"
-      role="separator"
-      tabIndex={0}
-      aria-label="Change log height"
-      aria-controls="change-log-list"
-      aria-orientation="horizontal"
-      aria-valuenow={height}
-      aria-valuemin={getMinLogHeight()}
-      aria-valuemax={getMaxLogHeight()}
-      onKeyDown={event => {
-        const next = event.key === "ArrowUp" ? height + 20
-          : event.key === "ArrowDown" ? height - 20
-          : event.key === "Home" ? getMinLogHeight()
-          : event.key === "End" ? getMaxLogHeight()
-          : null;
-        if (next !== null) {
-          event.preventDefault();
-          onHeightChange(clampLogHeight(next));
-        }
-      }}
       onMouseDown={event => {
         event.preventDefault();
         event.stopPropagation();
