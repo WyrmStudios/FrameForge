@@ -143,13 +143,6 @@ function ChangeLogHeader({
       </span>}
       <span className="log-status-divider" aria-hidden="true">·</span>
       <span className="log-last-scan">last scan {lastScanAt == null ? "not yet" : timeStr(lastScanAt, clockFormat, systemLocale)}</span>
-      <button
-        className="log-header-toggle"
-        aria-expanded={expanded}
-        aria-controls={expanded ? "change-log-list" : undefined}
-        aria-label={expanded ? "Collapse change log" : "Open change log"}
-        onClick={event => { event.stopPropagation(); onExpandedChange(!expanded); }}
-      >{expanded ? "^" : "v"}</button>
     </div>
   );
 }

@@ -37,7 +37,6 @@
   transition: background .15s, color .15s;
 }
 .log-header:hover { background: rgba(255,255,255,.04); color: var(--text); }
-.log-header-toggle { margin-left: auto; padding: 0; border: none; background: none; color: inherit; cursor: pointer; font: inherit; }
 .log-header-title { padding: 0; border: none; background: none; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; }
 .log-header-title:hover, .log-header-title:focus-visible { color: var(--text); text-decoration: underline; outline: none; }
 .log-header-summary { color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
