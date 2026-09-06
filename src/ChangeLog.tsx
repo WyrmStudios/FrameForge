@@ -1,8 +1,18 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import ItemImg from "./ItemImg";
+import SearchBar from "./SearchBar";
 import "./ChangeLog.css";
 
 export const CHANGE_BATCH_GAP_SECONDS = 8;
+const MIN_LOG_HEIGHT = 100;
+
+function getMaxLogHeight() {
+  return Math.max(140, Math.min(800, window.innerHeight * 0.8));
+}
+
+function clampLogHeight(height: number) {
+  return Math.max(MIN_LOG_HEIGHT, Math.min(getMaxLogHeight(), height));
+}
 
 export interface ChangeLogEntry {
   id: number;
@@ -22,8 +32,7 @@ export interface ChangeLogCatalogItem {
 }
 
 interface ChangeLogProps {
-  visibleChanges: ChangeLogEntry[];
-  latestBatch: ChangeLogEntry[];
+  changes: ChangeLogEntry[];
   arrivalToken: number;
   lastScanAt: number | null;
   catalog: ChangeLogCatalogItem[];
@@ -38,13 +47,13 @@ interface ChangeLogProps {
   onCategoryClick: (category: string) => void;
 }
 
-export function getVisibleChangeLogEntries(changes: ChangeLogEntry[], catalog: ChangeLogCatalogItem[]) {
+function getVisibleChangeLogEntries(changes: ChangeLogEntry[], catalog: ChangeLogCatalogItem[]) {
   if (catalog.length === 0) return changes;
   const catalogIds = new Set(catalog.map(item => item.unique_name));
   return changes.filter(change => catalogIds.has(change.unique_name));
 }
 
-export function getLatestChangeBatch(changes: ChangeLogEntry[]) {
+function getLatestChangeBatch(changes: ChangeLogEntry[]) {
   if (changes.length === 0) return [];
   const batch = [changes[0]];
   for (let index = 1; index < changes.length; index++) {
@@ -75,7 +84,7 @@ function ChangeRow({
   clockFormat: ChangeLogProps["clockFormat"];
   systemLocale: string;
   onItemClick: () => void;
-  onCategoryClick: () => void;
+  onCategoryClick: (category: string) => void;
   onFeedExpand?: () => void;
   timeBreak?: boolean;
   feed?: boolean;
@@ -93,7 +102,7 @@ function ChangeRow({
       </div>
       <div className="inv-row-name log-name-group">
         <button className="log-name-link" onClick={e => { e.stopPropagation(); onItemClick(); }}>{name}</button>
-        <button className="log-cat log-category-link" onClick={e => { e.stopPropagation(); onCategoryClick(); }}>{category}</button>
+        <button className="log-cat log-category-link" onClick={e => { e.stopPropagation(); onCategoryClick(category); }}>{category}</button>
       </div>
       <div className="inv-row-qty log-change-qty">
         <span className="log-range">{fmt(change.old_qty)} → {fmt(change.new_qty)}</span>
@@ -141,17 +150,87 @@ function ChangeLogHeader({
   );
 }
 
-export default function ChangeLog({
-  visibleChanges, latestBatch, catalog, clockFormat, systemLocale, expanded, height,
-  arrivalToken, lastScanAt, onExpandedChange, onHeightChange, onItemClick, onChangeLogClick, onCategoryClick,
-}: ChangeLogProps) {
+function ChangeLogResizeHandle({ height, onHeightChange }: Pick<ChangeLogProps, "height" | "onHeightChange">) {
   const resizeFrameRef = useRef<number | null>(null);
   const resizeHeightRef = useRef(height);
+  return (
+    <div
+      className="log-resize-edge"
+      role="separator"
+      tabIndex={0}
+      aria-label="Change log height"
+      aria-controls="change-log-list"
+      aria-orientation="horizontal"
+      aria-valuenow={height}
+      aria-valuemin={MIN_LOG_HEIGHT}
+      aria-valuemax={getMaxLogHeight()}
+      onKeyDown={event => {
+        const next = event.key === "ArrowUp" ? height + 20
+          : event.key === "ArrowDown" ? height - 20
+          : event.key === "Home" ? MIN_LOG_HEIGHT
+          : event.key === "End" ? getMaxLogHeight()
+          : null;
+        if (next !== null) {
+          event.preventDefault();
+          onHeightChange(clampLogHeight(next));
+        }
+      }}
+      onMouseDown={event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const startY = event.clientY;
+        const startHeight = height;
+        const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ff-scale")) || 1;
+        document.body.style.userSelect = "none";
+        const onMove = (moveEvent: MouseEvent) => {
+          const nextHeight = clampLogHeight(startHeight + (startY - moveEvent.clientY) / scale);
+          resizeHeightRef.current = nextHeight;
+          if (resizeFrameRef.current === null) {
+            resizeFrameRef.current = window.requestAnimationFrame(() => {
+              onHeightChange(resizeHeightRef.current);
+              resizeFrameRef.current = null;
+            });
+          }
+        };
+        const onUp = () => {
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+          if (resizeFrameRef.current !== null) {
+            window.cancelAnimationFrame(resizeFrameRef.current);
+            resizeFrameRef.current = null;
+          }
+          onHeightChange(resizeHeightRef.current);
+          document.body.style.userSelect = "";
+        };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      }}
+    />
+  );
+}
+
+export default function ChangeLog({
+  changes, catalog, clockFormat, systemLocale, expanded, height,
+  arrivalToken, lastScanAt, onExpandedChange, onHeightChange, onItemClick, onChangeLogClick, onCategoryClick,
+}: ChangeLogProps) {
   const handledArrivalRef = useRef(0);
   const [showArrival, setShowArrival] = useState(false);
   const [feedIndex, setFeedIndex] = useState<number | null>(null);
   const [arrivingEntryKeys, setArrivingEntryKeys] = useState<Set<string>>(new Set());
-  const catalogById = new Map(catalog.map(item => [item.unique_name, item]));
+  const [search, setSearch] = useState("");
+  const catalogById = useMemo(() => new Map(catalog.map(item => [item.unique_name, item])), [catalog]);
+  const visibleChanges = useMemo(() => getVisibleChangeLogEntries(changes, catalog), [changes, catalog]);
+  const latestBatch = useMemo(() => getLatestChangeBatch(visibleChanges), [visibleChanges]);
+  const filteredChanges = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return visibleChanges;
+    return visibleChanges.filter(change => {
+      const item = catalogById.get(change.unique_name);
+      const name = item?.name ?? change.item_name;
+      const category = item?.category ?? "Miscellaneous";
+      return name.toLocaleLowerCase().includes(query) || category.toLocaleLowerCase().includes(query);
+    });
+  }, [visibleChanges, catalogById, search]);
   const batchKey = latestBatch.map(changeKey).join("|");
 
   useEffect(() => {
@@ -186,8 +265,12 @@ export default function ChangeLog({
     return () => window.clearTimeout(timer);
   }, [expanded, feedIndex, latestBatch.length]);
 
-  const positiveChanges = latestBatch.filter(change => change.delta > 0).length;
-  const negativeChanges = latestBatch.filter(change => change.delta < 0).length;
+  let positiveChanges = 0;
+  let negativeChanges = 0;
+  for (const change of latestBatch) {
+    if (change.delta > 0) positiveChanges++;
+    else if (change.delta < 0) negativeChanges++;
+  }
   const feedChange = feedIndex === null ? undefined : latestBatch[feedIndex];
   const feedItem = feedChange && catalogById.get(feedChange.unique_name);
 
@@ -218,7 +301,7 @@ export default function ChangeLog({
           clockFormat={clockFormat}
           systemLocale={systemLocale}
           onItemClick={() => onItemClick(feedChange.unique_name)}
-          onCategoryClick={() => onCategoryClick(feedItem?.category ?? "Miscellaneous")}
+          onCategoryClick={onCategoryClick}
           onFeedExpand={() => onExpandedChange(true)}
           feed
         />
@@ -226,64 +309,14 @@ export default function ChangeLog({
 
       {expanded && (
         <div className="log-expanded-body">
-          <div
-            className="log-resize-edge"
-            role="separator"
-            tabIndex={0}
-            aria-label="Change log height"
-            aria-controls="change-log-list"
-            aria-orientation="horizontal"
-            aria-valuenow={height}
-            aria-valuemin={100}
-            aria-valuemax={Math.max(140, Math.min(800, window.innerHeight * 0.8))}
-            onKeyDown={event => {
-              const maxHeight = Math.max(140, Math.min(800, window.innerHeight * 0.8));
-              const next = event.key === "ArrowUp" ? height + 20
-                : event.key === "ArrowDown" ? height - 20
-                : event.key === "Home" ? 100
-                : event.key === "End" ? maxHeight
-                : null;
-              if (next !== null) {
-                event.preventDefault();
-                onHeightChange(Math.max(100, Math.min(maxHeight, next)));
-              }
-            }}
-            onMouseDown={event => {
-              event.preventDefault();
-              event.stopPropagation();
-              const startY = event.clientY;
-              const startHeight = height;
-              const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ff-scale")) || 1;
-              document.body.style.userSelect = "none";
-              const onMove = (moveEvent: MouseEvent) => {
-                const maxHeight = Math.max(140, Math.min(800, window.innerHeight * 0.8));
-                const nextHeight = Math.max(100, Math.min(maxHeight, startHeight + (startY - moveEvent.clientY) / scale));
-                resizeHeightRef.current = nextHeight;
-                if (resizeFrameRef.current === null) {
-                  resizeFrameRef.current = window.requestAnimationFrame(() => {
-                    onHeightChange(resizeHeightRef.current);
-                    resizeFrameRef.current = null;
-                  });
-                }
-              };
-              const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
-                if (resizeFrameRef.current !== null) {
-                  window.cancelAnimationFrame(resizeFrameRef.current);
-                  resizeFrameRef.current = null;
-                }
-                onHeightChange(resizeHeightRef.current);
-                document.body.style.userSelect = "";
-              };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
-            }}
-          />
+          <ChangeLogResizeHandle height={height} onHeightChange={onHeightChange} />
+          <div className="log-search">
+            <SearchBar value={search} onChange={setSearch} placeholder="Search changes..." />
+          </div>
           <div className="log-list" id="change-log-list">
-            {visibleChanges.length === 0 ? (
-              <span className="log-empty">No changes recorded yet.</span>
-            ) : visibleChanges.map((change, index) => {
+            {filteredChanges.length === 0 ? (
+              <span className="log-empty">{search ? "No matching changes." : "No changes recorded yet."}</span>
+            ) : filteredChanges.map((change, index) => {
               const item = catalogById.get(change.unique_name);
               const key = change.id || index;
               const arriving = arrivingEntryKeys.has(changeKey(change));
@@ -294,8 +327,8 @@ export default function ChangeLog({
                   clockFormat={clockFormat}
                   systemLocale={systemLocale}
                   onItemClick={() => onItemClick(change.unique_name)}
-                  onCategoryClick={() => onCategoryClick(item?.category ?? "Miscellaneous")}
-                  timeBreak={index > 0 && visibleChanges[index - 1].timestamp - change.timestamp > CHANGE_BATCH_GAP_SECONDS}
+                  onCategoryClick={onCategoryClick}
+                  timeBreak={index > 0 && filteredChanges[index - 1].timestamp - change.timestamp > CHANGE_BATCH_GAP_SECONDS}
                 />
               );
               return arriving

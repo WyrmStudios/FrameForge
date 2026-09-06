@@ -80,8 +80,9 @@ import Syndicates from "./Syndicates";
 import Weapons from "./Weapons";
 import Overlay from "./Overlay";
 import ModularWindow from "./ModularWindow";
-import ChangeLog, { getLatestChangeBatch, getVisibleChangeLogEntries } from "./ChangeLog";
+import ChangeLog, { type ChangeLogEntry } from "./ChangeLog";
 import ItemImg from "./ItemImg";
+import SearchBar from "./SearchBar";
 import { HelpTip } from "./HelpTip";
 import "./App.css";
 
@@ -141,16 +142,6 @@ export interface InventoryItem {
   mastery_req: number | null;
 }
 
-interface QuantityChange {
-  id: number;
-  unique_name: string;
-  item_name: string;
-  old_qty: number;
-  new_qty: number;
-  delta: number;
-  timestamp: number;
-}
-
 interface CraftingJob {
   unique_name: string;
   item_name: string;
@@ -173,7 +164,7 @@ interface InventoryUpdate {
   crafting: CraftingJob[];
   mastery_rank?: number;
   mastery_data?: Record<string, number>;
-  changes: QuantityChange[];
+  changes: ChangeLogEntry[];
   warframe_running: boolean;
   scanned_at: number;
   consumed_suits?: string[];
@@ -782,7 +773,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const catalogRef = useRef<CatalogItem[]>([]);
   const prevApiQtyRef = useRef<Record<string, number>>({});
   const manualCredsRef = useRef<{ accountId: string; nonce: string } | null>(null);
-  const [changeLog, setChangeLog] = useState<QuantityChange[]>([]);
+  const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
   const [changeLogArrivalToken, setChangeLogArrivalToken] = useState(0);
   const [lastInventoryScanAt, setLastInventoryScanAt] = useState<number | null>(null);
   const [changeLogExpanded, setChangeLogExpanded] = useState(false);
@@ -856,15 +847,6 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [systemLocale, setSystemLocale] = useState("en-US");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
   const [imgCacheDir, setImgCacheDir] = useState("");
-
-  const visibleChangeLog = useMemo(
-    () => getVisibleChangeLogEntries(changeLog, catalog),
-    [changeLog, catalog]
-  );
-  const latestChangeBatch = useMemo(
-    () => getLatestChangeBatch(visibleChangeLog),
-    [visibleChangeLog]
-  );
 
   // ── Modular Window state ───────────────────────────────────────────────────
   const [tracked, setTracked] = useState<string[]>([]);
@@ -1088,7 +1070,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
     invoke<CatalogItem[]>("get_all_items").then(items => { setCatalog(items); catalogRef.current = items; });
     invoke<Record<string, number>>("get_current_quantities").then(setQuantities);
     invoke<number>("get_diag_folder_size").then(setDiagFolderSize).catch(() => {});
-    invoke<QuantityChange[]>("get_change_log", { limit: 200 }).then(log => {
+    invoke<ChangeLogEntry[]>("get_change_log", { limit: 200 }).then(log => {
       setChangeLog(log);
       const lc: Record<string, number> = {};
       for (const c of log) lc[c.unique_name] = Math.max(lc[c.unique_name] ?? 0, c.timestamp);
@@ -1498,7 +1480,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
     const prev = prevApiQtyRef.current;
     if (Object.keys(prev).length > 0) {
       const allKeys = new Set([...Object.keys(prev), ...Object.keys(apiQty)]);
-      const changes: QuantityChange[] = [];
+      const changes: ChangeLogEntry[] = [];
       for (const key of allKeys) {
         const oldQty = prev[key] ?? 0;
         const newQty = apiQty[key] ?? 0;
@@ -2020,7 +2002,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
   const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
 
   const changeLogMap = useMemo(() => {
-    const m = new Map<string, QuantityChange>();
+    const m = new Map<string, ChangeLogEntry>();
     for (const c of changeLog) {
       if (!m.has(c.unique_name)) m.set(c.unique_name, c);
     }
@@ -2076,7 +2058,15 @@ if (typeof s.autoDiagEnabled === "boolean") {
     return out.slice(0, 1000);
   }, [catalog, inventory, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
 
-  const resetInventoryFilters = (recent: boolean, searchTerm = "", categoryId = "all") => {
+  const resetInventoryFilters = ({
+    recent,
+    searchTerm = "",
+    categoryId = "all",
+  }: {
+    recent: boolean;
+    searchTerm?: string;
+    categoryId?: string;
+  }) => {
     setActiveModule("inventory");
     setCategory(categoryId);
     setSearch(searchTerm);
@@ -2090,11 +2080,11 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
   const openChangeLogItem = (uniqueName: string) => {
     const item = catalog.find(candidate => candidate.unique_name === uniqueName);
-    resetInventoryFilters(false, item?.name);
+    resetInventoryFilters({ recent: false, searchTerm: item?.name });
   };
 
-  const openRecentChanges = () => resetInventoryFilters(true);
-  const openRecentCategory = (categoryId: string) => resetInventoryFilters(true, "", categoryId);
+  const openRecentChanges = () => resetInventoryFilters({ recent: true });
+  const openRecentCategory = (categoryId: string) => resetInventoryFilters({ recent: true, categoryId });
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -3175,11 +3165,10 @@ if (typeof s.autoDiagEnabled === "boolean") {
               )}
 
               <div className="toolbar">
-                <input
-                  className="search-box"
+                <SearchBar
                   placeholder="Search items…"
                   value={search}
-                  onChange={e => setSearch(e.target.value)}
+                  onChange={setSearch}
                 />
               </div>
               <div className="filter-bar">
@@ -3364,8 +3353,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
         </div>
 
         <ChangeLog
-          visibleChanges={visibleChangeLog}
-          latestBatch={latestChangeBatch}
+          changes={changeLog}
           arrivalToken={changeLogArrivalToken}
           lastScanAt={lastInventoryScanAt}
           catalog={catalog}
