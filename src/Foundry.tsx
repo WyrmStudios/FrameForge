@@ -1,58 +1,17 @@
 import { useState, useEffect, useMemo, useCallback, memo, startTransition, useRef, useContext } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ImgCacheDirContext } from "./ImgCacheDir";
-import { HelpTip } from "./HelpTip";
-import type { InventoryItem, ViewMode } from "./App";
-import { ViewToggle } from "./App";
+import { HelpTip } from "./shared/HelpTip";
+import { PREFERENCE_KEYS } from "./constants/preferences";
+import { FOUNDRY_FILTERS_DEFAULT } from "./constants/filters";
+import { WARFRAME_WIKI_BASE, warframeStatImageUrl } from "./constants/urls";
+import { TAURI_COMMANDS } from "./constants/tauri";
+import type { ArchonShard, CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeComponentStatus, RecipeMap, RelicDropMap } from "./types/items";
+import type { FoundryFilters } from "./types/filters";
+import type { ViewMode } from "./types/ui";
+import { ViewToggle } from "./shared/ViewToggle";
 import sentientIcon from "./assets/SentientFactionIcon.webp";
 import formaIcon from "./assets/forma-icon.png";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface CatalogItem {
-  unique_name: string;
-  name: string;
-  category: string;
-  image_name?: string;
-  vaulted?: boolean | null;
-  mastery_req?: number | null;
-  max_level_cap?: number | null;
-  masterable?: boolean | null;
-  source_type?: string;
-}
-
-interface RecipeComponent {
-  unique_name: string;
-  name: string;
-  count: number;
-  result_count: number;
-  components: RecipeComponent[];
-}
-
-interface CraftingJob {
-  unique_name: string;
-  item_name: string;
-  completion_ms: number;
-}
-
-interface ArchonShard { type: string; tauforged: boolean; color: string; boost?: string; }
-
-export interface FoundryFilters {
-  search: string; activeCat: string;
-  filterPrime: boolean; filterNonPrime: boolean; filterVaulted: boolean; filterUnvaulted: boolean;
-  filterMastered: boolean; filterUnmastered: boolean;
-  filterOwned: boolean; filterUnowned: boolean; filterReady: boolean;
-  filterLvlCap: boolean;
-  ignoreFormaKuva: boolean;
-}
-export const FOUNDRY_FILTERS_DEFAULT: FoundryFilters = {
-  search: "", activeCat: "Warframes",
-  filterPrime: false, filterNonPrime: false, filterVaulted: false, filterUnvaulted: false,
-  filterMastered: false, filterUnmastered: false,
-  filterOwned: false, filterUnowned: false, filterReady: false,
-  filterLvlCap: false,
-  ignoreFormaKuva: false,
-};
 
 interface Props {
   inventory: Record<string, InventoryItem>;
@@ -90,9 +49,7 @@ function collectNeeds(
   }
 }
 
-type CompStatus = "none" | "blueprint" | "part";
-
-function compStatus(comp: RecipeComponent, inventory: Record<string, InventoryItem>): CompStatus {
+function compStatus(comp: RecipeComponent, inventory: Record<string, InventoryItem>): RecipeComponentStatus {
   if ((inventory[comp.unique_name]?.quantity ?? 0) >= (comp.count || 1)) return "part";
   const bpUnique = comp.components[0]?.unique_name;
   if (bpUnique && (inventory[bpUnique]?.quantity ?? 0) > 0) return "blueprint";
@@ -228,17 +185,24 @@ function ItemImg({ imageName, category, size = 40 }: { imageName?: string; categ
   const baseUrl = useContext(ImgCacheDirContext);
   const [localFailed, setLocalFailed] = useState(false);
   const [cdnFailed,   setCdnFailed]   = useState(false);
+  const ref = useRef<HTMLImageElement>(null);
   const style = { width: size, height: size, flexShrink: 0 };
+
+  useEffect(() => {
+    if (ref.current?.complete) ref.current.classList.add("img-loaded");
+  }, []);
+
   if (!imageName || cdnFailed)
-    return <span className="item-img-fallback" style={{ ...style, fontSize: size * 0.35 }}>{category[0].toUpperCase()}</span>;
+    return <span className="img-fallback" style={{ ...style, fontSize: size * 0.35 }}>{category[0].toUpperCase()}</span>;
   const useLocal = Boolean(baseUrl) && !localFailed;
   const src = useLocal
     ? `${baseUrl}/${imageName}`
-    : `https://cdn.warframestat.us/img/${imageName}`;
+    : warframeStatImageUrl(imageName);
   return (
-    <img className="item-img" style={style} src={src}
+    <img ref={ref} className="img" style={style} src={src}
       alt="" loading="lazy"
-      onError={() => useLocal ? setLocalFailed(true) : setCdnFailed(true)} />
+      onError={() => useLocal ? setLocalFailed(true) : setCdnFailed(true)}
+      onLoad={() => ref.current?.classList.add("img-loaded")} />
   );
 }
 
@@ -246,7 +210,7 @@ function ItemImg({ imageName, category, size = 40 }: { imageName?: string; categ
 
 function CompRow({ comp, inventory, relicDrops, relicNames }: {
   comp: RecipeComponent; inventory: Record<string, InventoryItem>;
-  relicDrops: Record<string, string[]>; relicNames: Record<string, string>;
+  relicDrops: RelicDropMap; relicNames: Record<string, string>;
 }) {
   const status = compStatus(comp, inventory);
   const ownedRelics = [...new Set(
@@ -410,7 +374,7 @@ function RecipeModal({ item, recipe, inventory, isTracked, onTrack, onClose, cra
 
 const CraftCard = memo(function CraftCard({ item, recipe, inventory, relicDrops, relicNames, crafting, isTracked, onTrack, onOpen, subsummedWarframes, view }: {
   item: CatalogItem; recipe: RecipeComponent[] | null;
-  inventory: Record<string, InventoryItem>; relicDrops: Record<string, string[]>;
+  inventory: Record<string, InventoryItem>; relicDrops: RelicDropMap;
   relicNames: Record<string, string>;
   crafting: CraftingJob[]; isTracked: boolean;
   onTrack: (item: CatalogItem) => void;
@@ -512,7 +476,7 @@ const CraftCard = memo(function CraftCard({ item, recipe, inventory, relicDrops,
         <button className={`cc-star ${isTracked ? "tracked" : ""}`}
           onClick={e => { e.stopPropagation(); onTrack(item); }}>{isTracked ? "★" : "☆"}</button>
         <button className="cc-wiki"
-          onClick={e => { e.stopPropagation(); invoke("plugin:opener|open_url", { url:`https://wiki.warframe.com/w/${item.name.replace(" Blueprint","").replace(/\s+/g,"_")}` }).catch(()=>{}); }}>wiki</button>
+          onClick={e => { e.stopPropagation(); invoke(TAURI_COMMANDS.OPEN_URL, { url:`${WARFRAME_WIKI_BASE}/${item.name.replace(" Blueprint","").replace(/\s+/g,"_")}` }).catch(()=>{}); }}>wiki</button>
         <span className="cc-name">{item.name}</span>
       </div>
 
@@ -597,13 +561,13 @@ const CRAFT_CATEGORIES = [
 export default function Foundry({ inventory, refreshKey, crafting, subsummedWarframes = new Set(), tracked, onTrackToggle, filters, onFiltersChange, pageSize = 30 }: Props) {
   const [craftable, setCraftable] = useState<CatalogItem[]>([]);
   const [recipes, setRecipes]     = useState<Map<string, RecipeComponent[]>>(new Map());
-  const [relicDrops, setRelicDrops] = useState<Record<string, string[]>>({});
+  const [relicDrops, setRelicDrops] = useState<RelicDropMap>({});
   const [relicNames, setRelicNames] = useState<Record<string, string>>({});
   const [modalItem, setModalItem] = useState<CatalogItem | null>(null);
   const [inputSearch, setInputSearch] = useState(filters.search);
   const [page, setPage] = useState(0);
   const [craftView, setCraftView] = useState<ViewMode>(() =>
-    (localStorage.getItem("ff-view-foundry") as ViewMode | null) ?? "cards"
+    (localStorage.getItem(PREFERENCE_KEYS.FOUNDRY_VIEW) as ViewMode | null) ?? "cards"
   );
 
   // Refs so debounce closure always reads latest values without stale captures
@@ -632,9 +596,9 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
   const isFiltered = search !== "" || filterPrime || filterNonPrime || filterVaulted || filterUnvaulted || filterMastered || filterUnmastered || filterOwned || filterUnowned || filterReady || filterLvlCap || ignoreFormaKuva;
 
   useEffect(() => {
-    invoke<CatalogItem[]>("get_craftable_items").then(setCraftable).catch(() => setCraftable([]));
-    invoke<Record<string, string[]>>("get_relic_drops").then(setRelicDrops).catch(() => {});
-    invoke<Array<{ unique_name: string; name: string; category: string }>>("get_all_items")
+    invoke<CatalogItem[]>(TAURI_COMMANDS.GET_CRAFTABLE_ITEMS).then(setCraftable).catch(() => setCraftable([]));
+    invoke<RelicDropMap>("get_relic_drops").then(setRelicDrops).catch(() => {});
+    invoke<CatalogItem[]>(TAURI_COMMANDS.GET_ALL_ITEMS)
       .then(items => {
         const map: Record<string, string> = {};
         for (const i of items) if (i.category === "Relics") map[i.unique_name] = i.name;
@@ -697,7 +661,7 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
     const toLoad = visible.filter(i => !recipes.has(i.unique_name));
     if (toLoad.length === 0) return;
     let cancelled = false;
-    invoke<Record<string, RecipeComponent[]>>("get_recipes_bulk", {
+    invoke<RecipeMap>(TAURI_COMMANDS.GET_RECIPES_BULK, {
       uniqueNames: toLoad.map(i => i.unique_name),
     }).then(result => {
       if (cancelled) return;
@@ -717,7 +681,7 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
   // Load recipe for modal item
   useEffect(() => {
     if (!modalItem || recipes.has(modalItem.unique_name)) return;
-    invoke<RecipeComponent[]>("get_recipe", { uniqueName: modalItem.unique_name })
+    invoke<RecipeComponent[]>(TAURI_COMMANDS.GET_RECIPE, { uniqueName: modalItem.unique_name })
       .then(r => setRecipes(prev => new Map(prev).set(modalItem.unique_name, r ?? [])))
       .catch(() => {});
   }, [modalItem]);
@@ -798,7 +762,7 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
           <button className={`fchip ${filterLvlCap   ? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterLvlCap: !filterLvlCap, ...(!filterLvlCap ? { activeCat: "All" } : {}) })}>Lvl &gt; 30</button>
           {isFiltered && <button className="fchip fchip-reset" onClick={() => onFiltersChange({ ...FOUNDRY_FILTERS_DEFAULT, activeCat })}>Show All</button>}
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visible.length} items</span>
-          <ViewToggle view={craftView} onChange={v => { setCraftView(v); localStorage.setItem("ff-view-foundry", v); }} />
+          <ViewToggle view={craftView} onChange={v => { setCraftView(v); localStorage.setItem(PREFERENCE_KEYS.FOUNDRY_VIEW, v); }} />
           <HelpTip items={[
             { swatch: "rgba(240,192,64,.5)", icon: "✓✓", label: "Owned",          desc: "Gold border + ✓✓ — item built and in inventory" },
             { swatch: "rgba(56,139,253,.5)", icon: "⚡",  label: "Ready to craft", desc: "Blue border + ⚡ — all parts collected" },

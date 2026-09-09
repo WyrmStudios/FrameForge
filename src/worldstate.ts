@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { WorldState } from "./TimerHelper";
+import type { WorldState } from "./types/worldstate";
 
 // One poll per window, shared by every consumer. A timer per component would
 // give the Timers tab and the modular sidebar unsynchronised views of the same

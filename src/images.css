@@ -1,0 +1,36 @@
+/* ── Generic image styles ───────────────────────────────────────────────────── */
+
+.img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 4px;
+  opacity: 0;
+  transform: translate(-4px, -4px) scale(0.9);
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.img.img-loaded {
+  opacity: 1;
+  transform: translate(0, 0) scale(1);
+}
+
+.img-fallback {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid #30363d;
+  color: var(--muted, #8b949e);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+svg.img-fallback {
+  background: transparent;
+  border: none;
+  padding: 0;
+}

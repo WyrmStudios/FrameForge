@@ -2,8 +2,9 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { collectNewMatches, matchesWatch, type FissureWatch, type SeenFissures } from "./fissureAlerts.ts";
-import type { WorldState, WsFissure } from "./TimerHelper.tsx";
+import { collectNewMatches, matchesWatch } from "./fissureAlerts.ts";
+import type { FissureWatch } from "./types/settings.ts";
+import type { SeenFissures, WorldState, WsFissure } from "./types/worldstate.ts";
 
 const fissure = (id: string, tier = "Lith", missionType = "Capture"): WsFissure => ({
   id, tier, missionType, expiry: "2030-01-01T00:00:00Z", node: "Tessera (Void)",

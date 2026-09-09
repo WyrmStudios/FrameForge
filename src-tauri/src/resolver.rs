@@ -91,6 +91,8 @@ mod tests {
             omega_attenuation: None,
             fusion_limit: None,
             max_level_cap: None,
+            tradable: None,
+            masterable: None,
         };
         vec![
             mk(

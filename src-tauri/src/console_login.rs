@@ -15,7 +15,6 @@
 ///
 /// To remove this feature entirely: delete this file, ConsoleLogin.tsx,
 /// capabilities/console-login.json, and the 6 tagged lines in lib.rs / App.tsx.
-
 use tauri::{Emitter, Manager};
 
 /// Injected into the console-login WebView before any page scripts run.
@@ -154,7 +153,7 @@ pub fn handle_ffauth(
                 _ => {}
             }
         }
-        emit_console_credentials(&app, id, nonce);
+        emit_console_credentials(app, id, nonce);
     }
     tauri::http::Response::builder()
         .status(200)

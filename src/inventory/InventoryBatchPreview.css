@@ -1,0 +1,41 @@
+.inventory-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.inventory-preview {
+  width: min(760px, 95vw);
+  max-height: min(620px, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.inventory-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inventory-preview-header > div:first-child { flex: 1; min-width: 0; }
+.inventory-preview-header strong { display: block; font-size: 13px; }
+.inventory-preview-header span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.inventory-preview-states { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.inventory-preview .item-grid { min-height: 0; }
+
+@media (max-width: 600px) {
+  .inventory-preview-overlay { padding: 8px; }
+  .inventory-preview-header { padding: 10px; }
+}

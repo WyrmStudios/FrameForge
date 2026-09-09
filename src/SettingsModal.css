@@ -1,0 +1,48 @@
+.settings-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  z-index: 300; display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.settings-modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  width: min(660px, 95vw); max-height: calc(90vh / var(--ff-scale, 1)); display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+}
+.settings-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.settings-title { font-size: 15px; font-weight: 600; }
+.settings-layout { display: flex; flex: 1; min-height: 0; }
+.settings-sidebar {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 8px; border-right: 1px solid var(--border);
+  min-width: 130px; flex-shrink: 0;
+}
+.settings-tab-item {
+  text-align: left; background: none; border: none; border-radius: 6px;
+  padding: 7px 12px; font-size: 13px; color: var(--muted); cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.settings-tab-item:hover  { background: rgba(255,255,255,.06); color: var(--text); }
+.settings-tab-item.active { background: rgba(56,139,253,.15); color: var(--accent); font-weight: 600; }
+.settings-body  { padding: 8px 0; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.settings-row-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.settings-row-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.settings-row-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.settings-select {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  font-size: 12px; border-radius: 5px; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
+}
+.settings-select:hover { border-color: rgba(56,139,253,.5); }
+.debug-table {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 12px;
+}
+.debug-table .btn-secondary { white-space: nowrap; text-align: center; }
+.debug-table-gap { grid-column: 1 / -1; height: 0; border-top: 1px solid rgba(48,54,61,.6); margin: 2px 0; }

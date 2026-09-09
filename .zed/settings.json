@@ -1,0 +1,17 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "settings": {
+        "rustc": {
+          "source": "discover"
+        },
+        "procMacro": {
+          "enable": true
+        },
+        "diagnostics": {
+          "disabled": ["unresolved-proc-macro"]
+        }
+      }
+    }
+  }
+}

@@ -46,7 +46,7 @@
 .log-arrival-notice { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; white-space: nowrap; animation: log-arrival-enter .18s ease-out both; }
 .log-status-divider { color: var(--muted); font-size: 11px; font-weight: 400; }
 .log-last-scan { color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; white-space: nowrap; }
-.log-feed { position: relative; z-index: 1; align-self: center; width: min(680px, calc(100% - 220px)); overflow: hidden; }
+.log-feed { position: relative; z-index: 1; align-self: flex-end; width: min(680px, calc(100% - 250px)); margin-right: 12px; overflow: hidden; }
 .log-feed { animation: log-feed-cycle 4.5s ease both; }
 .log-feed-row.inv-card { position: relative; border: none; background: transparent; cursor: pointer; }
 .log-feed-row.inv-card:hover { background: transparent; }
@@ -65,10 +65,11 @@
 .log-row-arrival-wrap { display: grid; grid-template-rows: minmax(0, 0fr); overflow: hidden; opacity: 0; animation: log-row-arrive .16s ease-out both; }
 .log-row-arrival-wrap > .log-item-row { min-height: 30px; }
 .log-item-row.log-time-break { border-top: 3px solid var(--border); }
-.log-item-row svg.item-img-fallback { width: 20px; height: 20px; }
+.log-item-row svg.img-fallback { width: 20px; height: 20px; }
 .log-name-group { display: flex; align-items: center; gap: 6px; }
 .log-name-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; border: none; background: none; color: var(--text); cursor: pointer; font: inherit; text-align: left; }
 .log-name-link:hover { color: var(--accent); text-decoration: underline; }
+.log-rank-badge { font-size: 9px; font-weight: 700; color: var(--accent); background: rgba(88,166,255,.12); padding: 1px 4px; border-radius: 3px; }
 .log-cat { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
 .log-category-link { padding: 0; border: none; background: none; cursor: pointer; font-family: inherit; }
 .log-category-link:hover, .log-category-link:focus-visible { color: var(--accent); text-decoration: underline; outline: none; }
@@ -89,9 +90,12 @@
 }
 @media (max-width: 600px) {
   .log-header { padding-left: 8px; padding-right: 8px; gap: 5px; }
-  .log-feed { width: min(420px, calc(100% - 132px)); }
+  .log-feed { margin-right: 8px; }
   .log-change-qty { min-width: 0; }
   .log-range { max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 480px) {
+  .log-feed { display: none; }
 }
 .log-empty { display: block; padding: 12px 16px; color: var(--muted); font-size: 12px; }
 

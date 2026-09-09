@@ -1,0 +1,192 @@
+/* ── Inventory grid ─────────────────────────────────────────────────────────── */
+
+.item-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  align-content: start;
+  /* Mod cards can have more rank rows; fill their shared grid row to keep gutters stable. */
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+/* ── Card base ─────────────────────────────────────────────────────────────── */
+
+.inv-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: default;
+  transition: border-color .12s;
+  min-width: 0;
+  position: relative;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inv-fav-star {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: rgba(255,255,255,.25);
+  line-height: 1;
+  padding: 0;
+  z-index: 2;
+  transition: color .1s;
+}
+.inv-fav-star:hover { color: rgba(240,192,64,.8); }
+.inv-fav-star.active { color: #f0c040; }
+.inv-card:hover { border-color: rgba(56, 139, 253, .5); }
+.inv-card-zero  { opacity: .35; }
+.inv-card-gained { border-left: 2px solid var(--green); background: rgba(63,185,80,.04); }
+.inv-card-lost   { border-left: 2px solid var(--red);   background: rgba(248,81,73,.04); }
+.inv-card-mixed  { border-left: 2px solid #e0973e; background: rgba(224,151,62,.04); }
+
+/* ── Mastery row ───────────────────────────────────────────────────────────── */
+
+.inv-mastery-row  { height: 18px; display: flex; align-items: center; justify-content: center; width: 100%; }
+.inv-mastery-star { font-size: 13px; color: #f0c040; line-height: 1; }
+.inv-mastery-rank { font-size: 10px; font-weight: 600; color: var(--muted); background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 5px; }
+
+/* ── Image + foundry icon ──────────────────────────────────────────────────── */
+
+.inv-card-img-wrap { position: relative; width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.inv-foundry-icon  { position: absolute; top: -5px; right: -7px; font-size: 13px; filter: drop-shadow(0 0 3px rgba(0,0,0,.9)); }
+
+/* ── Card text ─────────────────────────────────────────────────────────────── */
+
+.inv-card-name {
+  font-size: 11px; font-weight: 500; text-align: center;
+  line-height: 1.3; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  width: 100%;
+}
+.inv-card-cat {
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: rgba(139,148,158,.6); text-align: center; width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: -1px;
+}
+.inv-card-meta { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
+.inv-card-qty      { font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
+.inv-card-qty-zero { color: var(--muted); }
+
+/* ── Mod rank breakdown card ───────────────────────────────────────────────── */
+
+.inv-card-mod { align-items: flex-start; padding: 8px 10px 8px; }
+.inv-card-mod .inv-card-img-wrap { width: 40px; height: 40px; }
+.inv-card-mod .inv-card-name { text-align: left; font-size: 12px; }
+.inv-card-mod .inv-card-cat  { text-align: left; }
+.mod-rank-table {
+  width: 100%; margin-top: 5px;
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 1px 6px;
+}
+.mod-rank-row {
+  display: contents;
+}
+.mod-rank-label {
+  font-size: 10px; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mod-rank-count {
+  font-size: 10px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.mod-rank-value { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.mod-rank-delta {
+  font-size: 10px; font-weight: 600;
+  padding: 0 3px; border-radius: 2px;
+}
+.mod-rank-delta.log-positive { color: var(--green); background: rgba(63,185,80,.12); }
+.mod-rank-delta.log-negative { color: var(--red); background: rgba(248,81,73,.12); }
+.mod-rank-zero .mod-rank-label,
+.mod-rank-zero .mod-rank-count { color: rgba(139,148,158,.3); }
+.inv-card-mod .mod-total {
+  font-size: 12px; font-weight: 700; margin-top: 4px;
+  border-top: 1px solid var(--border); padding-top: 3px; width: 100%;
+  display: flex; justify-content: space-between; color: var(--text);
+}
+.inv-card-mod .mod-total::before { content: "Total"; font-size: 10px; font-weight: 600; color: var(--muted); }
+
+/* ── Empty state ───────────────────────────────────────────────────────────── */
+
+.empty-msg { padding: 40px 24px; color: var(--muted); text-align: center; line-height: 1.6; }
+
+/* ── Delta + recent indicators ─────────────────────────────────────────────── */
+
+.item-updated    { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.item-delta { font-size: 12px; font-weight: 600; flex-shrink: 0; padding: 1px 6px; border-radius: 4px; }
+.delta-pos { color: var(--green); background: rgba(63,185,80,.12); }
+.delta-neg { color: var(--red); background: rgba(248,81,73,.12); }
+
+/* ── Inventory view modes ──────────────────────────────────────────────────── */
+
+/* icons */
+.item-grid.item-grid-icons {
+  grid-template-columns: repeat(auto-fill, 76px);
+  gap: 6px;
+}
+.item-grid-icons .inv-card-icon-only {
+  width: 76px; height: 76px; padding: 6px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; border-radius: 8px;
+}
+.item-grid-icons .inv-card-icon-only img,
+.item-grid-icons .inv-card-icon-only .img { width: 56px !important; height: 56px !important; }
+
+/* text-cards: keep grid, just no image area — handled inline */
+
+/* list + list-compact */
+.item-grid.item-grid-list,
+.item-grid.item-grid-list-compact {
+  display: flex; flex-direction: column; gap: 1px; padding: 4px 0;
+  grid-template-columns: none;
+}
+.inv-card-row {
+  display: flex; flex-direction: row; align-items: center;
+  gap: 8px; padding: 4px 12px; border-radius: 0;
+  border-bottom: 1px solid rgba(48,54,61,.35);
+  min-height: 30px;
+}
+.inv-fav-star-row {
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; color: rgba(255,255,255,.25); padding: 0; flex-shrink: 0;
+  line-height: 1; transition: color .1s;
+}
+.inv-fav-star-row:hover { color: rgba(240,192,64,.8); }
+.inv-fav-star-row.active { color: #f0c040; }
+.inv-row-icon { width: 22px; height: 22px; flex-shrink: 0; position: relative; display: flex; align-items: center; }
+.inv-row-icon img, .inv-row-icon .img { width: 20px !important; height: 20px !important; }
+.inv-foundry-icon-row { position: absolute; top: -4px; right: -6px; font-size: 9px; }
+.inv-row-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inv-row-cat  { width: 90px; flex-shrink: 0; font-size: 10px; color: var(--muted); text-align: right; text-transform: uppercase; letter-spacing: .03em; }
+.inv-row-qty  { width: 60px; flex-shrink: 0; text-align: right; font-size: 13px; font-weight: 700; color: var(--text); display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+
+/* ── Loading skeleton ──────────────────────────────────────────────────────── */
+
+.inventory-skeleton {
+  min-height: 120px;
+  background: linear-gradient(90deg, var(--surface) 25%, rgba(255,255,255,.04) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

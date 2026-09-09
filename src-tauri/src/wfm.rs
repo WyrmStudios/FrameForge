@@ -216,8 +216,8 @@ impl Wfm {
     }
 
     #[tracing::instrument(level = "debug", skip_all, fields(method = %method, path = %path))]
-    fn call(&self, method: &str, path: &str, auth_header: &str) -> Result<ureq::Response, ureq::Error> {
-        self.request(method, path, auth_header).call()
+    fn call(&self, method: &str, path: &str, auth_header: &str) -> Result<ureq::Response, String> {
+        self.request(method, path, auth_header).call().map_err(|e| e.to_string())
     }
 
     #[tracing::instrument(level = "debug", skip_all, fields(method = %method, path = %path))]
@@ -227,8 +227,8 @@ impl Wfm {
         path: &str,
         auth_header: &str,
         body: impl serde::Serialize,
-    ) -> Result<ureq::Response, ureq::Error> {
-        self.request(method, path, auth_header).send_json(body)
+    ) -> Result<ureq::Response, String> {
+        self.request(method, path, auth_header).send_json(body).map_err(|e| e.to_string())
     }
 
     // ── Auth derivation (internal) ────────────────────────────────────────────
@@ -1288,14 +1288,8 @@ fn trimmed_median_from_stats(arr: &[serde_json::Value]) -> Option<u32> {
 
 /// Map a ureq auction error to the "<action>: HTTP <code>: <body>" message the
 /// v1 auction commands all report, reading the response body for the reason.
-fn auction_error(action: &'static str) -> impl Fn(ureq::Error) -> String {
-    move |e| match e {
-        ureq::Error::Status(code, r) => {
-            let body = r.into_string().unwrap_or_default();
-            format!("{}: HTTP {}: {}", action, code, body)
-        }
-        other => format!("{}: {}", action, other),
-    }
+fn auction_error(action: &'static str) -> impl Fn(String) -> String {
+    move |e| format!("{}: {}", action, e)
 }
 
 // ==============================================================================

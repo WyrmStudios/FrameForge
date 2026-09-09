@@ -46,7 +46,7 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
   background: rgba(63,185,80,.75); border: 1px solid rgba(63,185,80,.5);
   border-radius: 5px; padding: 2px 5px 2px 8px;
   flex-shrink: 0; letter-spacing: .02em;
-  cursor: pointer; user-select: none;
+  user-select: none;
 }
 .update-badge:hover { background: rgba(63,185,80,.95); }
 .update-badge-dismiss {
@@ -54,6 +54,11 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
   cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;
   display: flex; align-items: center;
 }
+.update-badge-install {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font: inherit; font-weight: inherit; letter-spacing: inherit; padding: 0;
+}
+.update-badge-install:disabled { cursor: wait; }
 .update-badge-dismiss:hover { color: #fff; }
 .header-right  { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
@@ -79,6 +84,10 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
   border: 1px solid var(--border); background: rgba(255,255,255,.03);
   color: var(--muted); white-space: nowrap; user-select: none;
 }
+.conn-chip-button { appearance: none; font: inherit; cursor: pointer; text-align: left; }
+.conn-chip-button:focus-visible, .update-badge-install:focus-visible, .update-badge-dismiss:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 .conn-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
 .conn-label { font-weight: 500; color: var(--text); opacity: .7; }
 .conn-detail { color: var(--muted); }
@@ -87,13 +96,13 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .conn-online  .conn-dot { background: #3fb950; box-shadow: 0 0 5px #3fb95066; }
 .conn-online  .conn-detail { color: #3fb950; }
 
-.conn-warn    { border-color: rgba(210,153,34,.3); cursor: pointer; }
+.conn-warn    { border-color: rgba(210,153,34,.3); }
 .conn-warn    .conn-dot { background: #d29922; }
 .conn-warn    .conn-detail { color: #d29922; }
 
 .conn-offline .conn-dot { background: #6e7681; }
 
-.conn-disabled { opacity: .45; cursor: pointer; }
+.conn-disabled { opacity: .45; }
 .conn-disabled .conn-dot { background: #6e7681; }
 
 .conn-overlay { border-color: rgba(100,160,220,.25); }
@@ -133,7 +142,7 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .update-badge {
   font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
   background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.4);
-  cursor: pointer; white-space: nowrap;
+  white-space: nowrap;
 }
 .update-badge:hover { background: rgba(63,185,80,.25); }
 
@@ -204,62 +213,13 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 }
 .btn-settings:hover { color: var(--text); }
 
-/* ── Settings modal ── */
-.settings-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.6);
-  z-index: 300; display: flex; align-items: center; justify-content: center; padding: 20px;
-}
-.settings-modal {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  width: min(660px, 95vw); max-height: calc(90vh / var(--ff-scale, 1)); display: flex; flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0,0,0,.6);
-}
-.settings-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-}
-.settings-title { font-size: 15px; font-weight: 600; }
-.settings-layout { display: flex; flex: 1; min-height: 0; }
-.settings-sidebar {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 10px 8px; border-right: 1px solid var(--border);
-  min-width: 130px; flex-shrink: 0;
-}
-.settings-tab-item {
-  text-align: left; background: none; border: none; border-radius: 6px;
-  padding: 7px 12px; font-size: 13px; color: var(--muted); cursor: pointer;
-  transition: background .12s, color .12s;
-}
-.settings-tab-item:hover  { background: rgba(255,255,255,.06); color: var(--text); }
-.settings-tab-item.active { background: rgba(56,139,253,.15); color: var(--accent); font-weight: 600; }
-.settings-body  { padding: 8px 0; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
 .settings-section { padding: 12px 20px; border-bottom: 1px solid rgba(48,54,61,.6); }
 .settings-section:last-child { border-bottom: none; }
 .settings-section-title {
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin-bottom: 10px;
 }
-.settings-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-}
-.settings-row-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.settings-row-label { font-size: 13px; font-weight: 500; color: var(--text); }
-.settings-row-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
 .settings-msg { font-size: 11px; color: var(--green); margin-top: 8px; }
-.settings-select {
-  background: var(--surface); border: 1px solid var(--border); color: var(--text);
-  font-size: 12px; border-radius: 5px; padding: 3px 8px; cursor: pointer; flex-shrink: 0;
-}
-.settings-select:hover { border-color: rgba(56,139,253,.5); }
-.debug-table {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 12px;
-}
-.debug-table .btn-secondary { white-space: nowrap; text-align: center; }
-.debug-table-gap { grid-column: 1 / -1; height: 0; border-top: 1px solid rgba(48,54,61,.6); margin: 2px 0; }
 
 .btn-secondary {
   padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
@@ -415,111 +375,25 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .cat-sep   { color: var(--border); }
 .cat-total { color: var(--muted); }
 
-/* ── Inventory card grid ── */
-.item-grid {
-  flex: 1;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 8px;
-  padding: 10px 12px;
-  align-content: start;
-}
-
-.inv-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 6px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  cursor: default;
-  transition: border-color .12s;
-  min-width: 0;
-  position: relative;
-}
-
-.inv-fav-star {
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 11px;
-  color: rgba(255,255,255,.25);
-  line-height: 1;
-  padding: 0;
-  z-index: 2;
-  transition: color .1s;
-}
-.inv-fav-star:hover { color: rgba(240,192,64,.8); }
-.inv-fav-star.active { color: #f0c040; }
-.inv-card:hover { border-color: rgba(56, 139, 253, .5); }
-.inv-card-zero  { opacity: .35; }
-.inv-card-gained { border-left: 2px solid var(--green); background: rgba(63,185,80,.04); }
-.inv-card-lost   { border-left: 2px solid var(--red);   background: rgba(248,81,73,.04); }
-
-/* Fixed-height mastery slot — always rendered so image doesn't jump position */
-.inv-mastery-row  { height: 18px; display: flex; align-items: center; justify-content: center; width: 100%; }
-.inv-mastery-star { font-size: 13px; color: #f0c040; line-height: 1; }
-.inv-mastery-rank { font-size: 10px; font-weight: 600; color: var(--muted); background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 5px; }
-
-.inv-card-img-wrap { position: relative; width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-.inv-foundry-icon  { position: absolute; top: -5px; right: -7px; font-size: 13px; filter: drop-shadow(0 0 3px rgba(0,0,0,.9)); }
-
-.inv-card-name {
-  font-size: 11px; font-weight: 500; text-align: center;
-  line-height: 1.3; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  width: 100%;
-}
-.inv-card-cat {
-  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-  color: rgba(139,148,158,.6); text-align: center; width: 100%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin-top: -1px;
-}
-.inv-card-meta { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
-.inv-card-qty      { font-size: 15px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
-.inv-card-qty-zero { color: var(--muted); }
-
-/* ── Mod rank breakdown card ── */
-.inv-card-mod { align-items: flex-start; padding: 8px 10px 8px; min-width: 140px; max-width: 200px; }
-.inv-card-mod .inv-card-img-wrap { width: 40px; height: 40px; }
-.inv-card-mod .inv-card-name { text-align: left; font-size: 12px; }
-.inv-card-mod .inv-card-cat  { text-align: left; }
-.mod-rank-table {
-  width: 100%; margin-top: 5px;
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 1px 6px;
-}
-.mod-rank-row {
-  display: contents;
-}
-.mod-rank-label {
-  font-size: 10px; font-weight: 600; color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.mod-rank-count {
-  font-size: 10px; font-weight: 700; color: var(--text);
-  font-variant-numeric: tabular-nums; text-align: right;
-}
-.mod-rank-zero .mod-rank-label,
-.mod-rank-zero .mod-rank-count { color: rgba(139,148,158,.3); }
-.inv-card-mod .mod-total {
-  font-size: 12px; font-weight: 700; margin-top: 4px;
-  border-top: 1px solid var(--border); padding-top: 3px; width: 100%;
-  display: flex; justify-content: space-between; color: var(--text);
-}
-.inv-card-mod .mod-total::before { content: "Total"; font-size: 10px; font-weight: 600; color: var(--muted); }
+/* ── Inventory card grid (see InventoryGrid.css) ── */
 
 /* ── Item list (legacy, kept for safety) ── */
 .item-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 
 .empty-msg { padding: 40px 24px; color: var(--muted); text-align: center; line-height: 1.6; }
+
+/* ── View toggle (shared across Inventory / Foundry / Relics) ── */
+
+.view-toggle { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.view-btn {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  cursor: pointer; color: var(--muted); padding: 3px 5px;
+  display: flex; align-items: center; justify-content: center;
+  transition: color .12s, border-color .12s, background .12s;
+  line-height: 0;
+}
+.view-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.view-btn-active { color: var(--accent); border-color: rgba(56,139,253,.4); background: rgba(56,139,253,.08); }
 
 .item-row {
   display: flex;
@@ -533,16 +407,8 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .item-zero       { opacity: .4; }
 .item-gained     { border-left: 2px solid var(--green); background: rgba(63,185,80,.04); }
 .item-lost       { border-left: 2px solid var(--red);   background: rgba(248,81,73,.04); }
-.item-updated    { font-size: 10px; color: var(--muted); white-space: nowrap; }
 
-.item-img { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; border-radius: 4px; }
-.item-img-fallback {
-  width: 32px; height: 32px; flex-shrink: 0; border-radius: 4px;
-  background: rgba(255,255,255,.06); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase;
-}
-svg.item-img-fallback { background: transparent; border: none; padding: 0; }
+/* .item-img, .item-img-fallback removed — now in images.css */
 .item-name { flex: 1; color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .item-rank-info { font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap; }
 
@@ -564,10 +430,6 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
   white-space: nowrap;
 }
 .crafting-done { color: var(--green); background: rgba(63,185,80,.12); border-color: rgba(63,185,80,.3); }
-
-.item-delta { font-size: 12px; font-weight: 600; flex-shrink: 0; padding: 1px 6px; border-radius: 4px; }
-.delta-pos  { color: var(--green); background: rgba(63,185,80,.12); }
-.delta-neg  { color: var(--red);   background: rgba(248,81,73,.12); }
 
 .item-qty    { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text); min-width: 70px; text-align: right; flex-shrink: 0; }
 .qty-zero    { color: var(--muted); }
@@ -891,11 +753,11 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
   background: rgba(0,0,0,.15);
   border-right: 1px solid var(--border);
 }
-.cc-image img, .cc-image .item-img {
+.cc-image img, .cc-image .img {
   width: 88px !important; height: 96px !important;
   object-fit: cover !important; border-radius: 0 !important; display: block !important;
 }
-.cc-image .item-img-fallback {
+.cc-image .img-fallback {
   width: 88px !important; height: 96px !important; border-radius: 0 !important;
 }
 .cc-subsumed-icon {
@@ -1847,64 +1709,6 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
 .wfm-auction-topbid { color: var(--accent); }
 .wfm-auction-bidder { color: var(--text); }
 
-/* ══════════════════════════════════════════════════════
-   VIEW TOGGLE — shared across Inventory / Foundry / Relics
-   ══════════════════════════════════════════════════════ */
-
-.view-toggle { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-.view-btn {
-  background: none; border: 1px solid transparent; border-radius: 4px;
-  cursor: pointer; color: var(--muted); padding: 3px 5px;
-  display: flex; align-items: center; justify-content: center;
-  transition: color .12s, border-color .12s, background .12s;
-  line-height: 0;
-}
-.view-btn:hover { color: var(--text); background: rgba(255,255,255,.06); }
-.view-btn-active { color: var(--accent); border-color: rgba(56,139,253,.4); background: rgba(56,139,253,.08); }
-
-/* ── Inventory view modes ── */
-
-/* icons */
-.item-grid.item-grid-icons {
-  grid-template-columns: repeat(auto-fill, 76px);
-  gap: 6px;
-}
-.item-grid-icons .inv-card-icon-only {
-  width: 76px; height: 76px; padding: 6px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; border-radius: 8px;
-}
-.item-grid-icons .inv-card-icon-only img,
-.item-grid-icons .inv-card-icon-only .item-img { width: 56px !important; height: 56px !important; }
-
-/* text-cards: keep grid, just no image area — handled inline */
-
-/* list + list-compact */
-.item-grid.item-grid-list,
-.item-grid.item-grid-list-compact {
-  display: flex; flex-direction: column; gap: 1px; padding: 4px 0;
-  grid-template-columns: none;
-}
-.inv-card-row {
-  display: flex; flex-direction: row; align-items: center;
-  gap: 8px; padding: 4px 12px; border-radius: 0;
-  border-bottom: 1px solid rgba(48,54,61,.35);
-  min-height: 30px;
-}
-.inv-fav-star-row {
-  background: none; border: none; cursor: pointer;
-  font-size: 11px; color: rgba(255,255,255,.25); padding: 0; flex-shrink: 0;
-  line-height: 1; transition: color .1s;
-}
-.inv-fav-star-row:hover { color: rgba(240,192,64,.8); }
-.inv-fav-star-row.active { color: #f0c040; }
-.inv-row-icon { width: 22px; height: 22px; flex-shrink: 0; position: relative; display: flex; align-items: center; }
-.inv-row-icon img, .inv-row-icon .item-img { width: 20px !important; height: 20px !important; }
-.inv-foundry-icon-row { position: absolute; top: -4px; right: -6px; font-size: 9px; }
-.inv-row-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.inv-row-cat  { width: 90px; flex-shrink: 0; font-size: 10px; color: var(--muted); text-align: right; text-transform: uppercase; letter-spacing: .03em; }
-.inv-row-qty  { width: 60px; flex-shrink: 0; text-align: right; font-size: 13px; font-weight: 700; color: var(--text); display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
-
 /* ── Foundry view modes ── */
 
 /* icons */
@@ -1921,7 +1725,7 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
 .craft-icon-card:hover { border-color: rgba(56,139,253,.5); }
 .craft-icon-card.craft-card-owned { border-color: rgba(240,192,64,.6); }
 .craft-icon-card.craft-card-ready { border-color: rgba(56,139,253,.55); }
-.craft-icon-card img, .craft-icon-card .item-img { width: 80px !important; height: 80px !important; object-fit: cover !important; }
+.craft-icon-card img, .craft-icon-card .img { width: 80px !important; height: 80px !important; object-fit: cover !important; }
 .craft-icon-badge {
   position: absolute; bottom: 2px; right: 3px;
   font-size: 9px; font-weight: 700; padding: 1px 3px; border-radius: 3px;
@@ -1945,7 +1749,7 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
 .craft-row.craft-row-owned { border-left: 2px solid rgba(240,192,64,.7); }
 .craft-row.craft-row-ready { border-left: 2px solid rgba(56,139,253,.7); }
 .craft-row-icon { width: 26px; height: 26px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-.craft-row-icon img, .craft-row-icon .item-img { width: 24px !important; height: 24px !important; object-fit: cover !important; border-radius: 3px !important; }
+.craft-row-icon img, .craft-row-icon .img { width: 24px !important; height: 24px !important; object-fit: cover !important; border-radius: 3px !important; }
 .craft-row-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .craft-row-mr { font-size: 10px; flex-shrink: 0; }
 .craft-row-status { display: flex; gap: 3px; flex-shrink: 0; }
@@ -2001,7 +1805,7 @@ svg.item-img-fallback { background: transparent; border: none; padding: 0; }
 .relic-card-row.relic-card-complete { border-left: 2px solid rgba(63,185,80,.6); }
 .relic-row-img { flex-shrink: 0; }
 .relic-list-list .relic-row-img img,
-.relic-list-list .relic-row-img .item-img { width: 24px !important; height: 24px !important; object-fit: contain !important; }
+.relic-list-list .relic-row-img .img { width: 24px !important; height: 24px !important; object-fit: contain !important; }
 .relic-row-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .relic-row-total { font-size: 12px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
 .relic-row-refs { font-size: 10px; color: var(--muted); flex-shrink: 0; letter-spacing: .02em; }

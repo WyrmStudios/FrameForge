@@ -830,7 +830,7 @@ fn build_recipe_node(
             let item_name = display_names
                 .get(item_type)
                 .cloned()
-                .unwrap_or_else(|| item_type.split('/').last().unwrap_or("Unknown").to_string());
+                .unwrap_or_else(|| item_type.split('/').next_back().unwrap_or("Unknown").to_string());
             components.push(build_recipe_node(
                 item_type.clone(), item_name, *item_count,
                 None, display_names, export_recipes, depth + 1,

@@ -1,10 +1,12 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef, memo, Component, ReactNode } from "react";
+﻿import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { applyScale, overlayScale } from "./uiScale";
-import { useContextMenu, CtxMenu, extractItemName, openWiki, copyWikiLink } from "./CtxMenu";
+import { applyScale, overlayScale } from "./lib/uiScale";
+import { useContextMenu, CtxMenu } from "./shared/CtxMenu";
+import { extractItemName } from "./lib/itemContext";
+import { openWiki, copyWikiLink } from "./lib/wiki";
 
 // ── Riven overlay — module-level window management ────────────────────────────
 // Stored OUTSIDE React so StrictMode remounts don't destroy/recreate the window.
@@ -65,27 +67,63 @@ async function ensureRivenWindow(wx: number, wy: number, wh: number): Promise<{ 
 import { getCurrentWindow, availableMonitors, LogicalSize } from "@tauri-apps/api/window";
 
 import { ImgCacheDirContext } from "./ImgCacheDir";
-import Foundry, { FoundryFilters, FOUNDRY_FILTERS_DEFAULT } from "./Foundry";
-import CacheStatusChip from "./CacheStatusChip";
-import MarketHelper, { MARKET_FILTERS_DEFAULT } from "./MarketHelper";
-import RelicHelper, { RELIC_FILTERS_DEFAULT } from "./RelicHelper";
-import RivenAnalyzer from "./RivenAnalyzer";
-import RivenOverlayWindow from "./RivenOverlayWindow";
-import RelicPickOverlay from "./RelicPickOverlay";
-import TimerHelper, { FissureWatch, fmtMs } from "./TimerHelper";
+import Foundry from "./Foundry";
+import CacheStatusChip from "./header/CacheStatusChip";
+import MarketHelper from "./market/MarketHelper";
+import RelicHelper from "./RelicHelper";
+import RivenAnalyzer from "./riven/RivenAnalyzer";
+import RivenOverlayWindow from "./riven/RivenOverlayWindow";
+import RelicPickOverlay from "./relic-overlay/RelicPickOverlay";
+import TimerHelper, { fmtMs } from "./TimerHelper";
 import { useWorldState } from "./worldstate";
-import { notify, ensurePermission } from "./notify";
-import { collectNewMatches, type SeenFissures } from "./fissureAlerts";
-import Statistics from "./Statistics";
-import Syndicates from "./Syndicates";
-import Weapons from "./Weapons";
-import Overlay from "./Overlay";
-import ModularWindow from "./ModularWindow";
-import ChangeLog, { type ChangeLogEntry } from "./ChangeLog";
-import ItemImg from "./ItemImg";
-import SearchBar from "./SearchBar";
-import { HelpTip } from "./HelpTip";
+import { notify } from "./lib/notify";
+import { collectNewMatches } from "./fissureAlerts";
+import Statistics from "./statistics/Statistics";
+import Overlay from "./relic-overlay/Overlay";
+import ModularWindow from "./modular-window/ModularWindow";
+import ModularWindowPage from "./modular-window/ModularWindowPage";
+import SettingsModal from "./SettingsModal";
+import ChangeLog from "./ChangeLog";
+import InventoryGrid from "./inventory/InventoryGrid";
+import InventoryBatchPreview from "./inventory/InventoryBatchPreview";
+import InventoryToolbar from "./inventory/InventoryToolbar";
+import AppNavigation, { type Module } from "./AppNavigation";
+import InventorySidebar from "./inventory/InventorySidebar";
+import CompletionistTabs, { type CompletionistView } from "./completionist/CompletionistTabs";
+import HeaderActions from "./header/HeaderActions";
+import ErrorBoundary from "./shared/ErrorBoundary";
+import HeaderStatusBadges from "./header/HeaderStatusBadges";
+import ConnectionStatusChip from "./header/ConnectionStatusChip";
+import KeepMountedWhenHidden from "./KeepMountedWhenHidden";
+import { FOUNDRY_FILTERS_DEFAULT, INVENTORY_FILTERS_DEFAULT, MARKET_FILTERS_DEFAULT, RELIC_FILTERS_DEFAULT, SYNDICATE_FILTERS_DEFAULT } from "./constants/filters";
+import { PREFERENCE_KEYS } from "./constants/preferences";
+import {
+  CLOCK_FORMAT_OPTIONS,
+  DEFAULT_CLOCK_FORMAT,
+  DEFAULT_FOUNDRY_PAGE_SIZE,
+  DEFAULT_RELIC_OVERLAY_PRIORITY,
+  DEFAULT_RELIC_PICK_LINES,
+  DEFAULT_RELIC_PICK_PRIORITY,
+  DEFAULT_RELIC_PICK_REFINEMENT,
+  FOUNDRY_PAGE_SIZE_OPTIONS,
+  MODULAR_SECTION_ORDER_DEFAULT,
+  RELIC_PICK_LINES_OPTIONS,
+  RELIC_PICK_PRIORITY_OPTIONS,
+  RELIC_PICK_REFINEMENT_OPTIONS,
+} from "./constants/settings";
+import { TAURI_COMMANDS, TAURI_EVENTS } from "./constants/tauri";
+import type { FoundryFilters, InventoryFilters } from "./types/filters";
+import type { ViewMode } from "./types/ui";
+import { formatUnixTime } from "./lib/formatters";
+import type { ArchonShard, CatalogItem, CraftingJob, InventoryItem, QuantityMap } from "./types/items";
+import type { ChangeLogEntry, InventoryUpdate, ModCopy } from "./types/inventory";
+import type { RivenAnalysis, RivenAnalysisUpdate } from "./types/rivens";
+import type { ClockFormat, FissureWatch, FoundryPageSize, RelicOverlayPriority, RelicPickLines, RelicPickPriority, RelicRefinement, SettingsSnapshot } from "./types/settings";
+import type { SeenFissures } from "./types/worldstate";
+import type { TradeCompletedEvent } from "./types/trades";
+import type { AddTradeArgs, AnalyzeRivenArgs, BlobStatusPayload, InventoryRewardPayload, ItemListStatus, OcrRivenScreenResult, OverlayWindowBounds, RelicRewardsPayload, SaveApiInventoryArgs, SavedApiInventory, SettingsFile, SettingsPatch, WarframeCredentials, WarframeInventoryRequest, WarframeWindowRect, WfmCredentials, WfmSession } from "./types/tauri";
 import "./App.css";
+import "./images.css";
 
 const _winLabel = getCurrentWindow().label;
 // Support all URL formats: query string (?overlay), hash (#overlay), or window label.
@@ -102,81 +140,7 @@ const IS_ANY_OVERLAY = IS_OVERLAY || IS_MODULAR || IS_RIVEN_OVERLAY || IS_RELIC_
 // Overlay windows return from the router before any hook can run, which rules
 // out applying the scale from an effect.
 applyScale(IS_ANY_OVERLAY);
-listen("settings-updated", () => applyScale(IS_ANY_OVERLAY));
-
-class ErrorBoundary extends Component<{ children: ReactNode }, { err: string | null }> {
-  constructor(props: any) { super(props); this.state = { err: null }; }
-  static getDerivedStateFromError(e: Error) { return { err: e.message }; }
-  render() {
-    if (this.state.err)
-      return <div style={{ padding: 24, color: "#f85149", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-        <strong>Render error:</strong>{"\n"}{this.state.err}
-      </div>;
-    return this.props.children;
-  }
-}
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface CatalogItem {
-  unique_name: string;
-  name: string;
-  category: string;
-  image_name?: string;
-  vaulted?: boolean | null;
-  ducats?: number | null;
-  mastery_req?: number | null;
-}
-
-export interface InventoryItem {
-  unique_name: string;
-  quantity: number;
-  mastery_rank: number;
-  archon_shards: { type: string; tauforged: boolean; color: string; boost?: string }[];
-  forma_count: number;
-  subsumed: boolean;
-  vaulted: boolean | null;
-  category: string;
-  ducat_price: number | null;
-  wfm_price: number | null;
-  image_name: string | null;
-  mastery_req: number | null;
-}
-
-interface CraftingJob {
-  unique_name: string;
-  item_name: string;
-  completion_ms: number;
-}
-
-interface ModCopy {
-  uniqueName: string;
-  rank: number | null; // null = raw (RawUpgrades), number = from Upgrades (0 = installed-unranked)
-  count: number;
-}
-
-interface ArchonShard {
-  upgrade_type: string;
-  color: string; // raw string from game JSON, e.g. "ACC_CRIMSON", "ACC_AZURE_TAUFORGED"
-}
-
-interface InventoryUpdate {
-  quantities: Record<string, number>;
-  crafting: CraftingJob[];
-  mastery_rank?: number;
-  mastery_data?: Record<string, number>;
-  changes: ChangeLogEntry[];
-  warframe_running: boolean;
-  scanned_at: number;
-  consumed_suits?: string[];
-  mods?: Record<string, { total: number; by_rank: Record<string, number> }>;
-  socketed_shards?: Record<string, ArchonShard[]>;
-  forma_counts?: Record<string, number>;
-  is_full_pass?: boolean;
-  player_name?: string;
-}
-
-type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
+listen(TAURI_EVENTS.SETTINGS_UPDATED, () => applyScale(IS_ANY_OVERLAY));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -201,433 +165,6 @@ const CATEGORIES = [
   { id: "Skins",      label: "Skins" },
   { id: "Railjack",   label: "Railjack" },
 ];
-
-function fmt(n: number) { return n.toLocaleString(); }
-function fmtBytes(n: number) {
-  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  if (n >= 1024)        return `${Math.round(n / 1024)} KB`;
-  return `${n} B`;
-}
-function deltaClass(d: number) { return d > 0 ? "delta-pos" : "delta-neg"; }
-function deltaText(d: number) { return d > 0 ? `+${fmt(d)}` : fmt(d); }
-function timeStr(ts: number, format: "auto" | "12h" | "24h" = "auto", locale = "en-US") {
-  const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
-  if (format === "12h") opts.hour12 = true;
-  else if (format === "24h") opts.hour12 = false;
-  return new Date(ts * 1000).toLocaleTimeString(locale, opts);
-}
-
-// ─── Standalone modular window page (runs in pop-out Tauri window) ────────────
-
-function ModularWindowPage() {
-  const [tracked, setTracked] = useState<string[]>([]);
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const [timerFavorites, setTimerFavorites] = useState<string[]>([]);
-  const [fissureWatches, setFissureWatches] = useState<FissureWatch[]>([]);
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const inventory = useMemo<Record<string, InventoryItem>>(() => {
-    const pathToCatalog = new Map<string, CatalogItem>();
-    for (const item of catalog) pathToCatalog.set(item.unique_name, item);
-    const inv: Record<string, InventoryItem> = {};
-    for (const [path, qty] of Object.entries(quantities)) {
-      const cat = pathToCatalog.get(path);
-      const name = cat?.name ?? path;
-      const entry: InventoryItem = {
-        unique_name:   path,
-        quantity:      qty,
-        mastery_rank:  0,
-        archon_shards: [],
-        forma_count:   0,
-        subsumed:      false,
-        vaulted:       cat?.vaulted ?? null,
-        category:      cat?.category ?? "",
-        ducat_price:   cat?.ducats ?? null,
-        wfm_price:     null,
-        image_name:    cat?.image_name ?? null,
-        mastery_req:   cat?.mastery_req ?? null,
-      };
-      inv[name] = entry;
-      if (path !== name) inv[path] = entry;
-    }
-    return inv;
-  }, [catalog, quantities]);
-  const [sectionOrder, setSectionOrder] = useState<string[]>(["tracking", "favorites", "timers", "fissures"]);
-
-  const popoutSettingsLoadedRef = useRef(false);
-  useEffect(() => {
-    invoke<string>("load_settings").then(json => {
-      // A missing file is a first launch and safe to write to.
-      if (!json) { popoutSettingsLoadedRef.current = true; return; }
-      try {
-        const s = JSON.parse(json);
-        if (Array.isArray(s.tracked)) setTracked(s.tracked);
-        if (Array.isArray(s.favorites)) setFavorites(s.favorites);
-        if (Array.isArray(s.timerFavorites)) setTimerFavorites(s.timerFavorites);
-        if (Array.isArray(s.fissureWatches)) setFissureWatches(s.fissureWatches);
-        if (Array.isArray(s.modularSectionOrder)) {
-          const order: string[] = s.modularSectionOrder;
-          if (!order.includes("timers"))   order.push("timers");
-          if (!order.includes("fissures")) order.push("fissures");
-          setSectionOrder(order);
-        }
-      } catch {}
-      // Unblock saving even if the file failed to parse, since the backend
-      // refuses to overwrite a settings.json that is not a valid JSON object.
-      popoutSettingsLoadedRef.current = true;
-    }).catch(() => {});
-    invoke<CatalogItem[]>("get_all_items").then(setCatalog).catch(() => {});
-    invoke<Record<string, number>>("get_current_quantities").then(setQuantities).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen<InventoryUpdate>("inventory-update", e => {
-      setQuantities(e.payload.quantities);
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = listen("settings-updated", () => {
-      invoke<string>("load_settings").then(json => {
-        if (!json) return;
-        try {
-          const s = JSON.parse(json);
-          if (Array.isArray(s.tracked)) setTracked(s.tracked);
-          if (Array.isArray(s.favorites)) setFavorites(s.favorites);
-          if (Array.isArray(s.timerFavorites)) setTimerFavorites(s.timerFavorites);
-          if (Array.isArray(s.fissureWatches)) setFissureWatches(s.fissureWatches);
-          if (Array.isArray(s.modularSectionOrder)) setSectionOrder(s.modularSectionOrder);
-        } catch {}
-      }).catch(() => {});
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
-  const saveModularSettings = useCallback((patch: object) => {
-    if (!popoutSettingsLoadedRef.current) {
-      console.error("save_settings skipped: settings not loaded yet in pop-out");
-      return;
-    }
-    invoke("save_settings", { json: JSON.stringify(patch) }).catch((e) => {
-      console.error("save_settings failed:", e);
-    });
-  }, []); // eslint-disable-line
-
-  useEffect(() => {
-    const win = getCurrentWindow();
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const save = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => {
-        Promise.all([win.outerPosition(), win.outerSize()]).then(([pos, size]) => {
-          saveModularSettings({
-            modularWinX: pos.x, modularWinY: pos.y,
-            modularWinWidth: size.width, modularWinHeight: size.height,
-          });
-        }).catch(() => {});
-      }, 400);
-    };
-    const unlistenMove = win.onMoved(save);
-    const unlistenResize = win.onResized(save);
-    return () => {
-      if (t) clearTimeout(t);
-      unlistenMove.then(fn => fn());
-      unlistenResize.then(fn => fn());
-    };
-  }, [saveModularSettings]);
-
-  const handleTrackedChange = (next: string[]) => {
-    setTracked(next);
-    saveModularSettings({ tracked: next });
-  };
-  const handleUntrack = (id: string) => {
-    const next = tracked.filter(i => i !== id);
-    setTracked(next);
-    saveModularSettings({ tracked: next });
-  };
-  const handleFavoritesChange = (next: string[]) => {
-    setFavorites(next);
-    saveModularSettings({ favorites: next });
-  };
-  const handleUnfavorite = (id: string) => {
-    const next = favorites.filter(i => i !== id);
-    setFavorites(next);
-    saveModularSettings({ favorites: next });
-  };
-  const handleSectionOrderChange = (next: string[]) => {
-    setSectionOrder(next);
-    saveModularSettings({ modularSectionOrder: next });
-  };
-
-  return (
-    <div style={{ display: "flex", height: "100vh", background: "var(--surface)", overflow: "hidden" }}>
-      <ModularWindow
-        tracked={tracked}
-        onTrackedChange={handleTrackedChange}
-        onUntrack={handleUntrack}
-        favorites={favorites}
-        onFavoritesChange={handleFavoritesChange}
-        onUnfavorite={handleUnfavorite}
-        timerFavorites={timerFavorites}
-        onTimerFavoritesChange={setTimerFavorites}
-        onTimerUnfavorite={id => setTimerFavorites(prev => prev.filter(x => x !== id))}
-        fissureWatches={fissureWatches}
-        inventory={inventory}
-        catalog={catalog}
-        sectionOrder={sectionOrder}
-        onSectionOrderChange={handleSectionOrderChange}
-      />
-    </div>
-  );
-}
-
-
-// ─── View mode ───────────────────────────────────────────────────────────────
-
-export type ViewMode = "cards" | "icons" | "text-cards" | "list" | "list-compact";
-
-const VIEW_LABELS: Record<ViewMode, string> = {
-  "cards":        "Cards (icon + text)",
-  "icons":        "Icon grid",
-  "text-cards":   "Text cards (no icons)",
-  "list":         "List with icon",
-  "list-compact": "Compact list (text only)",
-};
-
-function ViewIcon({ mode }: { mode: ViewMode }) {
-  switch (mode) {
-    case "cards": return (
-      <svg width="16" height="13" viewBox="0 0 16 13" fill="currentColor">
-        <rect x="0" y="0" width="3" height="3" rx="0.5"/><rect x="4" y="0.5" width="3.5" height="1.5" rx="0.4"/>
-        <rect x="9" y="0" width="3" height="3" rx="0.5"/><rect x="13" y="0.5" width="3" height="1.5" rx="0.4"/>
-        <rect x="0" y="5" width="3" height="3" rx="0.5"/><rect x="4" y="5.5" width="3.5" height="1.5" rx="0.4"/>
-        <rect x="9" y="5" width="3" height="3" rx="0.5"/><rect x="13" y="5.5" width="3" height="1.5" rx="0.4"/>
-        <rect x="0" y="10" width="3" height="3" rx="0.5"/><rect x="4" y="10.5" width="3.5" height="1.5" rx="0.4"/>
-        <rect x="9" y="10" width="3" height="3" rx="0.5"/><rect x="13" y="10.5" width="3" height="1.5" rx="0.4"/>
-      </svg>
-    );
-    case "icons": return (
-      <svg width="16" height="13" viewBox="0 0 16 13" fill="currentColor">
-        <rect x="0" y="0" width="4" height="4" rx="0.5"/><rect x="6" y="0" width="4" height="4" rx="0.5"/><rect x="12" y="0" width="4" height="4" rx="0.5"/>
-        <rect x="0" y="5" width="4" height="4" rx="0.5"/><rect x="6" y="5" width="4" height="4" rx="0.5"/><rect x="12" y="5" width="4" height="4" rx="0.5"/>
-        <rect x="0" y="10" width="4" height="4" rx="0.5"/><rect x="6" y="10" width="4" height="4" rx="0.5"/><rect x="12" y="10" width="4" height="4" rx="0.5"/>
-      </svg>
-    );
-    case "text-cards": return (
-      <svg width="16" height="13" viewBox="0 0 16 13" fill="currentColor">
-        <rect x="0" y="0" width="7" height="1.5" rx="0.4"/><rect x="0" y="2.5" width="5" height="1" rx="0.4"/>
-        <rect x="9" y="0" width="7" height="1.5" rx="0.4"/><rect x="9" y="2.5" width="5" height="1" rx="0.4"/>
-        <rect x="0" y="5" width="7" height="1.5" rx="0.4"/><rect x="0" y="7.5" width="5" height="1" rx="0.4"/>
-        <rect x="9" y="5" width="7" height="1.5" rx="0.4"/><rect x="9" y="7.5" width="5" height="1" rx="0.4"/>
-        <rect x="0" y="10" width="7" height="1.5" rx="0.4"/><rect x="0" y="12" width="5" height="1" rx="0.4"/>
-        <rect x="9" y="10" width="7" height="1.5" rx="0.4"/><rect x="9" y="12" width="5" height="1" rx="0.4"/>
-      </svg>
-    );
-    case "list": return (
-      <svg width="16" height="13" viewBox="0 0 16 13" fill="currentColor">
-        <rect x="0" y="0" width="2.5" height="2.5" rx="0.4"/><rect x="4" y="0.5" width="12" height="1.5" rx="0.4"/>
-        <rect x="0" y="3.5" width="2.5" height="2.5" rx="0.4"/><rect x="4" y="4" width="12" height="1.5" rx="0.4"/>
-        <rect x="0" y="7" width="2.5" height="2.5" rx="0.4"/><rect x="4" y="7.5" width="12" height="1.5" rx="0.4"/>
-        <rect x="0" y="10.5" width="2.5" height="2.5" rx="0.4"/><rect x="4" y="11" width="12" height="1.5" rx="0.4"/>
-      </svg>
-    );
-    case "list-compact": return (
-      <svg width="16" height="13" viewBox="0 0 16 13" fill="currentColor">
-        <rect x="0" y="0" width="16" height="1.5" rx="0.4"/>
-        <rect x="0" y="2.5" width="11" height="1.5" rx="0.4"/>
-        <rect x="0" y="5" width="16" height="1.5" rx="0.4"/>
-        <rect x="0" y="7.5" width="13" height="1.5" rx="0.4"/>
-        <rect x="0" y="10" width="16" height="1.5" rx="0.4"/>
-        <rect x="0" y="12" width="10" height="1" rx="0.4"/>
-      </svg>
-    );
-  }
-}
-
-export function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
-  const modes: ViewMode[] = ["cards", "icons", "text-cards", "list", "list-compact"];
-  return (
-    <div className="view-toggle">
-      {modes.map(m => (
-        <button key={m} className={`view-btn${view === m ? " view-btn-active" : ""}`}
-          title={VIEW_LABELS[m]} onClick={() => onChange(m)}>
-          <ViewIcon mode={m} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ─── Memoized inventory card components ──────────────────────────────────────
-
-interface InvModCardProps {
-  unique_name: string;
-  name: string;
-  category: string;
-  image_name?: string | null;
-  ranks: { rank: number; count: number }[];
-  total: number;
-  view: ViewMode;
-}
-const InvModCard = memo(function InvModCard({ unique_name, name, category, image_name, ranks, total, view }: InvModCardProps) {
-  if (view === "icons") {
-    return (
-      <div key={unique_name} className="inv-card inv-card-icon-only" title={`${name} ×${fmt(total)}`}>
-        <ItemImg imageName={image_name ?? undefined} category={category} size={52} />
-      </div>
-    );
-  }
-  if (view === "list" || view === "list-compact") {
-    return (
-      <div key={unique_name} className="inv-card inv-card-row">
-        {view === "list" && <div className="inv-row-icon"><ItemImg imageName={image_name ?? undefined} category={category} size={20} /></div>}
-        <div className="inv-row-name">{name}</div>
-        <div className="inv-row-cat">{category}</div>
-        <div className="inv-row-qty">{fmt(total)}</div>
-      </div>
-    );
-  }
-  return (
-    <div key={unique_name} className="inv-card inv-card-mod">
-      {view !== "text-cards" && (
-        <div className="inv-card-img-wrap">
-          <ItemImg imageName={image_name ?? undefined} category={category} size={40} />
-        </div>
-      )}
-      <div className="inv-card-name">{name}</div>
-      <div className="inv-card-cat">{category}</div>
-      <div className="mod-rank-table">
-        {ranks.map(r => (
-          <div key={r.rank} className={`mod-rank-row${r.count === 0 ? " mod-rank-zero" : ""}`}>
-            <span className="mod-rank-label">R{r.rank}</span>
-            <span className="mod-rank-count">{r.count}</span>
-          </div>
-        ))}
-      </div>
-      <div className="inv-card-qty mod-total">{fmt(total)}</div>
-    </div>
-  );
-}, (prev, next) =>
-  prev.view === next.view &&
-  prev.unique_name === next.unique_name &&
-  prev.name === next.name &&
-  prev.total === next.total &&
-  prev.image_name === next.image_name &&
-  prev.ranks.length === next.ranks.length &&
-  prev.ranks.every((r, i) => r.rank === next.ranks[i].rank && r.count === next.ranks[i].count)
-);
-
-interface InvCardProps {
-  unique_name: string;
-  name: string;
-  category: string;
-  image_name?: string | null;
-  qty: number;
-  isFavorite: boolean;
-  changedAt: number | undefined;
-  recentDelta: number | null;
-  craftJobName: string | null;
-  masteryRank: number | undefined;
-  onToggleFavorite: (id: string) => void;
-  view: ViewMode;
-}
-const InvCard = memo(function InvCard({
-  unique_name, name, category, image_name, qty,
-  isFavorite, changedAt, recentDelta, craftJobName, masteryRank, onToggleFavorite, view,
-}: InvCardProps) {
-  const nowSec = Date.now() / 1000;
-  const secAgo = changedAt != null ? nowSec - changedAt : null;
-  const isRecent = secAgo !== null && secAgo < 300;
-  const isZero = qty === 0 && !craftJobName;
-  const isMastered = masteryRank != null && masteryRank >= 30;
-  const showRank = masteryRank != null && masteryRank > 0;
-  const recentLabel = secAgo !== null ? (Math.floor(secAgo / 60) === 0 ? "· now" : `· ${Math.floor(secAgo / 60)}m`) : null;
-  const baseClass = `inv-card${isZero ? " inv-card-zero" : ""}${isRecent ? (recentDelta != null && recentDelta > 0 ? " inv-card-gained" : " inv-card-lost") : ""}`;
-
-  if (view === "icons") {
-    return (
-      <div className={`${baseClass} inv-card-icon-only`} title={`${name} (${fmt(qty)})`}>
-        <ItemImg imageName={image_name ?? undefined} category={category} size={52} />
-      </div>
-    );
-  }
-  if (view === "list" || view === "list-compact") {
-    return (
-      <div className={`${baseClass} inv-card-row`}>
-        <button className={`inv-fav-star-row ${isFavorite ? "active" : ""}`}
-          title={isFavorite ? "Remove from Modular Window" : "Add to Modular Window"}
-          onClick={e => { e.stopPropagation(); onToggleFavorite(unique_name); }}>
-          {isFavorite ? "★" : "☆"}
-        </button>
-        {view === "list" && (
-          <div className="inv-row-icon">
-            <ItemImg imageName={image_name ?? undefined} category={category} size={20} />
-            {craftJobName && <span className="inv-foundry-icon-row" title={`Building — ${craftJobName}`}>⚒</span>}
-          </div>
-        )}
-        <div className="inv-row-name">
-          {name}
-          {isRecent && <span className="item-updated">{recentLabel}</span>}
-        </div>
-        <div className="inv-row-cat">{category}</div>
-        <div className="inv-row-qty">
-          {fmt(qty)}
-          {isRecent && recentDelta != null && <span className={`item-delta ${deltaClass(recentDelta)}`}>{deltaText(recentDelta)}</span>}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className={baseClass}>
-      <button
-        className={`inv-fav-star ${isFavorite ? "active" : ""}`}
-        title={isFavorite ? "Remove from Modular Window" : "Add to Modular Window"}
-        onClick={e => { e.stopPropagation(); onToggleFavorite(unique_name); }}
-      >{isFavorite ? "★" : "☆"}</button>
-      <div className="inv-mastery-row">
-        {isMastered
-          ? <span className="inv-mastery-star" title="Mastered">★</span>
-          : showRank
-            ? <span className="inv-mastery-rank" title={`Rank ${masteryRank}`}>R{masteryRank}</span>
-            : null}
-      </div>
-      {view !== "text-cards" && (
-        <div className="inv-card-img-wrap">
-          <ItemImg imageName={image_name ?? undefined} category={category} size={48} />
-          {craftJobName && <span className="inv-foundry-icon" title={`Building — ${craftJobName}`}>⚒</span>}
-        </div>
-      )}
-      <div className="inv-card-name">
-        {name}
-        {isRecent && <span className="item-updated">{recentLabel}</span>}
-      </div>
-      <div className="inv-card-cat">{category}</div>
-      <div className={`inv-card-qty ${isZero ? "inv-card-qty-zero" : ""}`}>
-        {fmt(qty)}
-        {isRecent && recentDelta != null && (
-          <span className={`item-delta ${deltaClass(recentDelta)}`}>{deltaText(recentDelta)}</span>
-        )}
-      </div>
-    </div>
-  );
-}, (prev, next) => {
-  if (prev.view !== next.view) return false;
-  if (
-    prev.unique_name !== next.unique_name ||
-    prev.qty !== next.qty ||
-    prev.isFavorite !== next.isFavorite ||
-    prev.image_name !== next.image_name ||
-    prev.masteryRank !== next.masteryRank ||
-    prev.craftJobName !== next.craftJobName ||
-    prev.recentDelta !== next.recentDelta ||
-    prev.changedAt !== next.changedAt
-  ) return false;
-  // Recently-changed items must re-render so elapsed time stays fresh
-  const nowSec = Date.now() / 1000;
-  if (prev.changedAt != null && nowSec - prev.changedAt < 300) return false;
-  return true;
-});
 
 // Feature 3 — api.warframe.com/api/inventory.php
 // DE confirmed third-party tools are used "at your own risk" but could not clarify
@@ -671,48 +208,6 @@ function OverlayTestPage() {
   );
 }
 
-function FactoryResetButton() {
-  const [confirm, setConfirm] = useState(false);
-  const [resetting, setResetting] = useState(false);
-
-  if (!confirm) {
-    return (
-      <button className="btn-danger" onClick={() => setConfirm(true)}>
-        Factory Reset
-      </button>
-    );
-  }
-  return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <span style={{ fontSize: 12, color: "var(--red)" }}>Are you sure? This cannot be undone.</span>
-      <button
-        className="btn-danger"
-        disabled={resetting}
-        onClick={() => { setResetting(true); invoke("factory_reset").catch(() => setResetting(false)); }}
-      >{resetting ? "Resetting…" : "Yes, reset"}</button>
-      <button className="btn-secondary" onClick={() => setConfirm(false)}>Cancel</button>
-    </div>
-  );
-}
-
-function BulkPriceRefreshButton() {
-  const [state, setState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
-  const label = state === 'loading' ? 'Fetching…' : state === 'ok' ? 'Done!' : state === 'err' ? 'Failed' : 'Refresh Now';
-  return (
-    <button
-      className="btn-secondary"
-      disabled={state === 'loading'}
-      style={{ minWidth: 100, borderColor: state === 'ok' ? 'var(--accent)' : state === 'err' ? '#e05252' : undefined }}
-      onClick={() => {
-        setState('loading');
-        invoke('refresh_bulk_prices')
-          .then(() => { setState('ok'); setTimeout(() => setState('idle'), 3000); })
-          .catch(() => { setState('err'); setTimeout(() => setState('idle'), 4000); });
-      }}
-    >{label}</button>
-  );
-}
-
 export default function App() {
   // Isolated overlay test — no data, no events, just proves the window appears.
   if (IS_OVERLAY_TEST) return <OverlayTestPage />;
@@ -727,8 +222,8 @@ export default function App() {
   const { ctxMenu, open: openCtx, close: closeCtx } = useContextMenu();
 
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [apiQuantities, setApiQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<QuantityMap>({});
+  const [apiQuantities, setApiQuantities] = useState<QuantityMap>({});
   const [apiModCopies, setApiModCopies] = useState<ModCopy[]>([]);
   const [scannerMods, setScannerMods] = useState<Record<string, { total: number; by_rank: Record<string, number> }>>({});
   const [crafting, setCrafting] = useState<CraftingJob[]>([]);
@@ -764,7 +259,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [wfmAutoInvisibleMins,  setWfmAutoInvisibleMins]  = useState(30);
   const [overlayStatus, setOverlayStatus] = useState("");
   const [subsummedWarframes, setSubsummedWarframes] = useState<Set<string>>(new Set());
-  const [archonShards, setArchonShards] = useState<Record<string, {type: string; tauforged: boolean; color: string; boost?: string}[]>>({});
+  const [archonShards, setArchonShards] = useState<Record<string, ArchonShard[]>>({});
   const [formaData, setFormaData] = useState<Record<string, number>>({});
   const [lastApiRefresh, setLastApiRefresh] = useState<number | null>(null);
   const wfConnectedRef = useRef(false);
@@ -773,38 +268,38 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const wfmInvisibleOnCloseRef  = useRef(false);
   const wfmLoggedInRef          = useRef(false);
   const catalogRef = useRef<CatalogItem[]>([]);
-  const prevApiQtyRef = useRef<Record<string, number>>({});
+  const prevApiQtyRef = useRef<QuantityMap>({});
   const manualCredsRef = useRef<{ accountId: string; nonce: string } | null>(null);
   const [changeLog, setChangeLog] = useState<ChangeLogEntry[]>([]);
   const [changeLogArrivalToken, setChangeLogArrivalToken] = useState(0);
   const [lastInventoryScanAt, setLastInventoryScanAt] = useState<number | null>(null);
+  const [inventoryReady, setInventoryReady] = useState(false);
+  const inventoryReadyRef = useRef(false);
   const [changeLogExpanded, setChangeLogExpanded] = useState(false);
   const [changeLogHeight, setChangeLogHeight] = useState(270);
-  const [category, setCategory] = useState("all");
-  const [search, setSearch] = useState("");
-  const [filterOwned,    setFilterOwned]    = useState(false);
-  const [filterRecent,   setFilterRecent]   = useState(false);
-  const [filterPrime,    setFilterPrime]    = useState(false);
-  const [filterVaulted,  setFilterVaulted]  = useState(false);
-  const [filterUnvaulted,setFilterUnvaulted]= useState(false);
-  const [sortMode, setSortMode] = useState<"qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "recent">("qty-desc");
+  const [inventoryFilters, setInventoryFilters] = useState<InventoryFilters>(INVENTORY_FILTERS_DEFAULT);
+  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode } = inventoryFilters;
   const prevSortRef = useRef(sortMode);
   useEffect(() => { if (sortMode !== "recent") prevSortRef.current = sortMode; }, [sortMode]);
-  const [filterRank, setFilterRank] = useState<number | "unranked" | null>(null);
+  const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => {
+    const filterRecent = !previous.filterRecent;
+    return { ...previous, filterRecent, sortMode: filterRecent ? "recent" : prevSortRef.current };
+  }), []);
   const [inventoryView, setInventoryView] = useState<ViewMode>(() =>
-    (localStorage.getItem("ff-view-inventory") as ViewMode | null) ?? "cards"
+    (localStorage.getItem(PREFERENCE_KEYS.INVENTORY_VIEW) as ViewMode | null) ?? "cards"
   );
+  const setInventoryViewPreference = useCallback((view: ViewMode) => {
+    setInventoryView(view);
+    localStorage.setItem(PREFERENCE_KEYS.INVENTORY_VIEW, view);
+  }, []);
 
   // ── Per-tab persisted filter state ────────────────────────────────────────
   const [foundryFilters, setFoundryFilters] = useState<FoundryFilters>(FOUNDRY_FILTERS_DEFAULT);
   const [marketFilters, setMarketFilters] = useState(MARKET_FILTERS_DEFAULT);
   const [relicFilters, setRelicFilters] = useState(RELIC_FILTERS_DEFAULT);
-  const [completionistView, setCompletionistView] = useState<"syndicates" | "weapons">("syndicates");
+  const [completionistView, setCompletionistView] = useState<CompletionistView>("syndicates");
   const [weaponsTab, setWeaponsTab] = useState<"Primary" | "Secondary" | "Melee" | "Operator">("Primary");
-  const [syndicateFilters, setSyndicateFilters] = useState({
-    activeGroup: "main" as "main" | "openworld" | "other" | "lab",
-    activeTab: "Steel Meridian", missingOnly: false, search: "",
-  });
+  const [syndicateFilters, setSyndicateFilters] = useState(SYNDICATE_FILTERS_DEFAULT);
   const [statsTab, setStatsTab] = useState<"trade" | "item">("trade");
   const [reportsDateRange, setReportsDateRange] = useState<number | "all">(30);
   const [lastChanged, setLastChanged] = useState<Record<string, number>>({});
@@ -816,18 +311,18 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [fetchMsg, setFetchMsg] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general' | 'overlays' | 'market' | 'accessibility' | 'data' | 'debugging'>('general');
-  const [foundryPageSize, setFoundryPageSize] = useState<30 | 60 | 100>(30);
+  const [foundryPageSize, setFoundryPageSize] = useState<FoundryPageSize>(DEFAULT_FOUNDRY_PAGE_SIZE);
   const [overlayEnabled, setOverlayEnabled] = useState<boolean>(
-    () => localStorage.getItem("ff-overlay-enabled") !== "false"
+    () => localStorage.getItem(PREFERENCE_KEYS.OVERLAY_ENABLED) !== "false"
   );
-  const [overlayPriority, setOverlayPriority] = useState<string>(
-    () => localStorage.getItem("ff-overlay-priority") ?? "completion"
+  const [overlayPriority, setOverlayPriority] = useState<RelicOverlayPriority>(
+    () => (localStorage.getItem(PREFERENCE_KEYS.OVERLAY_PRIORITY) ?? DEFAULT_RELIC_OVERLAY_PRIORITY) as RelicOverlayPriority
   );
   const [relicPickEnabled,    setRelicPickEnabled]    = useState<boolean>(true);
   const [memTriggerEnabled,   setMemTriggerEnabled]   = useState<boolean>(false);
-  const [relicPickPriority,   setRelicPickPriority]   = useState<"unowned" | "ducat" | "platinum">("unowned");
-  const [relicPickRefinement, setRelicPickRefinement] = useState<"intact" | "exceptional" | "flawless" | "radiant">("radiant");
-  const [relicPickLines,      setRelicPickLines]      = useState<"all" | "best" | "estimated">("all");
+  const [relicPickPriority,   setRelicPickPriority]   = useState<RelicPickPriority>(DEFAULT_RELIC_PICK_PRIORITY);
+  const [relicPickRefinement, setRelicPickRefinement] = useState<RelicRefinement>(DEFAULT_RELIC_PICK_REFINEMENT);
+  const [relicPickLines,      setRelicPickLines]      = useState<RelicPickLines>(DEFAULT_RELIC_PICK_LINES);
   const [clearMsg, setClearMsg] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [blobLogSize,    setBlobLogSize]    = useState(0);
@@ -835,19 +330,20 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [rawScanSize,    setRawScanSize]    = useState(0);
   const [probeSize,      setProbeSize]      = useState(0);
   const [debugCatEnabled,    setDebugCatEnabled]    = useState(false);
+  const [showInventoryBatchPreview, setShowInventoryBatchPreview] = useState(false);
   const [unmatchedPathsSize, setUnmatchedPathsSize] = useState(0);
   // "scanning" while blob capture is running, "done" briefly after it finishes
   const [blobStage, setBlobStage] = useState<"scanning" | "done" | null>(null);
   const blobDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [textScale, setTextScale] = useState(() => {
-    const s = parseFloat(localStorage.getItem("ff-text-scale") ?? "1");
+    const s = parseFloat(localStorage.getItem(PREFERENCE_KEYS.TEXT_SCALE) ?? "1");
     document.documentElement.style.setProperty("--ff-scale", s.toString());
     return s;
   });
   const [colorblindMode, setColorblindMode] = useState(() =>
-    localStorage.getItem("ff-colorblind") === "true"
+    localStorage.getItem(PREFERENCE_KEYS.COLORBLIND_MODE) === "true"
   );
-  const [clockFormat, setClockFormat] = useState<"auto" | "12h" | "24h">("auto");
+  const [clockFormat, setClockFormat] = useState<ClockFormat>(DEFAULT_CLOCK_FORMAT);
   const [systemLocale, setSystemLocale] = useState("en-US");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
   const [imgCacheDir, setImgCacheDir] = useState("");
@@ -859,7 +355,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [fissureWatches, setFissureWatches] = useState<FissureWatch[]>([]);
   const [fissureNotifications, setFissureNotifications] = useState(true);
   const [modularWidth, setModularWidth] = useState(240);
-  const [modularSectionOrder, setModularSectionOrder] = useState<string[]>(["tracking", "favorites", "timers", "fissures"]);
+  const [modularSectionOrder, setModularSectionOrder] = useState<string[]>([...MODULAR_SECTION_ORDER_DEFAULT]);
   const [modularPopout, setModularPopout] = useState(false);
   const modularWinRef = useRef<WebviewWindow | null>(null);
   const modularWinGeomRef = useRef<{ x?: number; y?: number; w?: number; h?: number }>({});
@@ -872,13 +368,13 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   // ── Settings helpers ──────────────────────────────────────────────────────
   // Refs so we can read the latest state in the save callback without stale closures
   const settingsLoadedRef = useRef(false);
-  const settingsRef = useRef({
-    overlayEnabled: true, overlayPriority: "completion", textScale: 1, colorblindMode: false, clockFormat: "auto" as "auto" | "12h" | "24h", companionApiEnabled: false, memoryScannerEnabled: false, blobLogEnabled: false, apiLogEnabled: false, autoDiagEnabled: false,
+  const settingsRef = useRef<SettingsSnapshot>({
+    overlayEnabled: true, overlayPriority: DEFAULT_RELIC_OVERLAY_PRIORITY, textScale: 1, colorblindMode: false, clockFormat: DEFAULT_CLOCK_FORMAT, companionApiEnabled: false, memoryScannerEnabled: false, blobLogEnabled: false, apiLogEnabled: false, autoDiagEnabled: false,
     tracked: [] as string[], favorites: [] as string[], timerFavorites: [] as string[], fissureWatches: [] as FissureWatch[], fissureNotifications: true, modularWidth: 240,
     modularSectionOrder: ["tracking", "favorites", "timers"] as string[], modularPopout: false,
     wfmInvisibleOnStart: false, wfmInvisibleOnClose: false, wfmAutoInvisible: false, wfmAutoInvisibleMins: 30,
-    relicPickEnabled: true, relicPickPriority: "unowned" as "unowned" | "ducat" | "platinum", relicPickRefinement: "radiant" as "intact" | "exceptional" | "flawless" | "radiant", relicPickLines: "all" as "all" | "best" | "estimated",
-    foundryPageSize: 30 as 30 | 60 | 100,
+    relicPickEnabled: true, relicPickPriority: DEFAULT_RELIC_PICK_PRIORITY, relicPickRefinement: DEFAULT_RELIC_PICK_REFINEMENT, relicPickLines: DEFAULT_RELIC_PICK_LINES,
+    foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
     memTriggerEnabled: false,
   });
   settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled };
@@ -891,7 +387,8 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
       console.error("save_settings skipped: settings not loaded yet, saving now would clobber the file");
       return;
     }
-    invoke("save_settings", { json: JSON.stringify(settingsRef.current) }).catch((e) => {
+    const settings: SettingsPatch = { ...settingsRef.current };
+    invoke(TAURI_COMMANDS.SAVE_SETTINGS, { json: JSON.stringify(settings) }).catch((e) => {
       console.error("save_settings failed:", e);
     });
   }, []); // eslint-disable-line
@@ -943,21 +440,22 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   // loads instantly rather than running ~2 minutes of API calls on first open.
   useEffect(() => {
     (async () => {
-      const creds = await invoke<[string, string] | null>("wfm_load_credentials").catch(() => null);
+      const creds = await invoke<WfmCredentials | null>(TAURI_COMMANDS.WFM_LOAD_CREDENTIALS).catch(() => null);
       if (creds) {
-        const session = await invoke<[string, string] | null>("wfm_set_jwt", { jwt: creds[1] }).catch(() => null);
+        const session = await invoke<WfmSession | null>(TAURI_COMMANDS.WFM_SET_JWT, { jwt: creds[1] }).catch(() => null);
         if (session) {
           setWfmLoggedIn(true);
           wfmLoggedInRef.current = true;
           if (wfmInvisibleOnStartRef.current) {
-            invoke("wfm_set_status", { status: "invisible" }).catch(() => {});
+            invoke(TAURI_COMMANDS.WFM_SET_STATUS, { status: "invisible" }).catch(() => {});
           }
         }
       }
     })();
     // Fire-and-forget: populates WFM_TOP_CACHE so the Statistics tab is instant
-    invoke("get_wfm_top_items").catch(() => {});
+    invoke(TAURI_COMMANDS.GET_WFM_TOP_ITEMS).catch(() => {});
     invoke<string>("get_img_cache_dir").then(setImgCacheDir).catch(() => {});
+    invoke("prewarm_image_cache").catch(() => {});
   }, []); // eslint-disable-line
 
   // ── WFM: intercept window close to go invisible first ─────────────────────
@@ -969,7 +467,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
       event.preventDefault();
       if (wfmInvisibleOnCloseRef.current && wfmLoggedInRef.current) {
         await Promise.race([
-          invoke("wfm_set_status", { status: "invisible" }).catch(() => {}),
+          invoke(TAURI_COMMANDS.WFM_SET_STATUS, { status: "invisible" }).catch(() => {}),
           new Promise<void>(resolve => setTimeout(resolve, 8000)),
         ]);
       }
@@ -982,7 +480,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   useEffect(() => {
     if (!wfmAutoInvisible || !wfmLoggedIn) return;
     const id = setTimeout(() => {
-      invoke("wfm_set_status", { status: "invisible" }).catch(() => {});
+      invoke(TAURI_COMMANDS.WFM_SET_STATUS, { status: "invisible" }).catch(() => {});
     }, wfmAutoInvisibleMins * 60 * 1000);
     return () => clearTimeout(id);
   }, [wfmAutoInvisible, wfmAutoInvisibleMins, wfmLoggedIn]);
@@ -991,7 +489,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
 
   useEffect(() => {
     // Restore all inventory data from the single Rust-side cache file
-    invoke<{ apiQuantities: Record<string, number>; apiModCopies: ModCopy[]; consumedSuits: string[] }>("get_saved_inventory")
+    invoke<SavedApiInventory>("get_saved_inventory")
       .then(data => {
         if (Object.keys(data.apiQuantities).length > 0) setApiQuantities(data.apiQuantities);
         if (data.apiModCopies.length > 0) setApiModCopies(data.apiModCopies);
@@ -1001,38 +499,38 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
       .finally(() => { inventoryRestoredRef.current = true; });
 
     // Load user settings from file — survives reinstalls unlike localStorage
-    invoke<string>("load_settings").then(json => {
+    invoke<string>(TAURI_COMMANDS.LOAD_SETTINGS).then(json => {
       // A missing file is a first launch: nothing to clobber, saving is safe.
       if (!json) { settingsLoadedRef.current = true; return; }
       try {
-        const s = JSON.parse(json);
+        const s = JSON.parse(json) as SettingsFile;
         // companionApiEnabled intentionally not loaded — feature suspended pending DE clarification
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled  === "boolean") setApiLogEnabled(s.apiLogEnabled);
 if (typeof s.autoDiagEnabled === "boolean") {
           setAutoDiagEnabled(s.autoDiagEnabled);
-          localStorage.setItem("ff-auto-diag", String(s.autoDiagEnabled));
+          localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(s.autoDiagEnabled));
         }
         if (typeof s.overlayEnabled === "boolean") {
           setOverlayEnabled(s.overlayEnabled);
-          localStorage.setItem("ff-overlay-enabled", String(s.overlayEnabled));
+          localStorage.setItem(PREFERENCE_KEYS.OVERLAY_ENABLED, String(s.overlayEnabled));
         }
         if (typeof s.overlayPriority === "string") {
-          setOverlayPriority(s.overlayPriority);
-          localStorage.setItem("ff-overlay-priority", s.overlayPriority);
+          setOverlayPriority(s.overlayPriority as RelicOverlayPriority);
+          localStorage.setItem(PREFERENCE_KEYS.OVERLAY_PRIORITY, s.overlayPriority);
         }
         if (typeof s.textScale === "number") {
           setTextScale(s.textScale);
           document.documentElement.style.setProperty("--ff-scale", s.textScale.toString());
-          localStorage.setItem("ff-text-scale", s.textScale.toString());
+          localStorage.setItem(PREFERENCE_KEYS.TEXT_SCALE, s.textScale.toString());
         }
         if (typeof s.colorblindMode === "boolean") {
           setColorblindMode(s.colorblindMode);
-          localStorage.setItem("ff-colorblind", String(s.colorblindMode));
+          localStorage.setItem(PREFERENCE_KEYS.COLORBLIND_MODE, String(s.colorblindMode));
         }
-        if (typeof s.clockFormat === "string" && ["auto", "12h", "24h"].includes(s.clockFormat)) {
-          setClockFormat(s.clockFormat as "auto" | "12h" | "24h");
+        if (typeof s.clockFormat === "string" && CLOCK_FORMAT_OPTIONS.includes(s.clockFormat)) {
+          setClockFormat(s.clockFormat as ClockFormat);
         }
         if (Array.isArray(s.tracked)) setTracked(s.tracked);
         if (Array.isArray(s.favorites)) setFavorites(s.favorites);
@@ -1058,12 +556,12 @@ if (typeof s.autoDiagEnabled === "boolean") {
         if (typeof s.wfmInvisibleOnClose === "boolean") { setWfmInvisibleOnClose(s.wfmInvisibleOnClose); wfmInvisibleOnCloseRef.current = s.wfmInvisibleOnClose; }
         if (typeof s.wfmAutoInvisible    === "boolean") setWfmAutoInvisible(s.wfmAutoInvisible);
         if (typeof s.wfmAutoInvisibleMins === "number") setWfmAutoInvisibleMins(s.wfmAutoInvisibleMins);
-        if (typeof s.relicPickEnabled    === "boolean") { setRelicPickEnabled(s.relicPickEnabled); invoke("set_relic_pick_enabled", { enabled: s.relicPickEnabled }); }
-        if (typeof s.memTriggerEnabled   === "boolean") { setMemTriggerEnabled(s.memTriggerEnabled); invoke("set_mem_trigger_enabled", { enabled: s.memTriggerEnabled }); }
-        if (["unowned","ducat","platinum"].includes(s.relicPickPriority)) setRelicPickPriority(s.relicPickPriority);
-        if (["intact","exceptional","flawless","radiant"].includes(s.relicPickRefinement)) setRelicPickRefinement(s.relicPickRefinement);
-        if (["all","best","estimated"].includes(s.relicPickLines)) setRelicPickLines(s.relicPickLines);
-        if ([30, 60, 100].includes(s.foundryPageSize)) setFoundryPageSize(s.foundryPageSize);
+        if (typeof s.relicPickEnabled    === "boolean") { setRelicPickEnabled(s.relicPickEnabled); invoke(TAURI_COMMANDS.SET_RELIC_PICK_ENABLED, { enabled: s.relicPickEnabled }); }
+        if (typeof s.memTriggerEnabled   === "boolean") { setMemTriggerEnabled(s.memTriggerEnabled); invoke(TAURI_COMMANDS.SET_MEM_TRIGGER_ENABLED, { enabled: s.memTriggerEnabled }); }
+        if (RELIC_PICK_PRIORITY_OPTIONS.includes(s.relicPickPriority)) setRelicPickPriority(s.relicPickPriority);
+        if (RELIC_PICK_REFINEMENT_OPTIONS.includes(s.relicPickRefinement)) setRelicPickRefinement(s.relicPickRefinement);
+        if (RELIC_PICK_LINES_OPTIONS.includes(s.relicPickLines)) setRelicPickLines(s.relicPickLines);
+        if (FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) setFoundryPageSize(s.foundryPageSize);
       } catch {}
       // Unblock saving even if the file failed to parse, since the backend
       // refuses to overwrite a settings.json that is not a valid JSON object.
@@ -1071,8 +569,17 @@ if (typeof s.autoDiagEnabled === "boolean") {
     }).catch(() => {});
 
     invoke<string>("get_system_locale").then(loc => { if (loc) setSystemLocale(loc); }).catch(() => {});
-    invoke<CatalogItem[]>("get_all_items").then(items => { setCatalog(items); catalogRef.current = items; });
-    invoke<Record<string, number>>("get_current_quantities").then(setQuantities);
+    invoke<string | null>("get_player_name").then(name => { if (name) setPlayerName(name); }).catch(() => {});
+    invoke<CatalogItem[]>(TAURI_COMMANDS.GET_ALL_ITEMS).then(items => { setCatalog(items); catalogRef.current = items; });
+    invoke<QuantityMap>(TAURI_COMMANDS.GET_CURRENT_QUANTITIES)
+      .then(setQuantities)
+      .catch(() => {})
+      .finally(() => {
+        if (!inventoryReadyRef.current) {
+          inventoryReadyRef.current = true;
+          setInventoryReady(true);
+        }
+      });
     invoke<number>("get_diag_folder_size").then(setDiagFolderSize).catch(() => {});
     invoke<ChangeLogEntry[]>("get_change_log", { limit: 200 }).then(log => {
       setChangeLog(log);
@@ -1080,7 +587,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       for (const c of log) lc[c.unique_name] = Math.max(lc[c.unique_name] ?? 0, c.timestamp);
       setLastChanged(lc);
     });
-    invoke<{ count: number; recipe_count: number }>("get_item_list_status").then(s => {
+    invoke<ItemListStatus>("get_item_list_status").then(s => {
       setItemCount(s.count);
       setRecipeCount(s.recipe_count);
     });
@@ -1111,9 +618,13 @@ if (typeof s.autoDiagEnabled === "boolean") {
   // ── Inventory update events ────────────────────────────────────────────────
 
   useEffect(() => {
-    const unlisten = listen<InventoryUpdate>("inventory-update", (e) => {
+    const unlisten = listen<InventoryUpdate>(TAURI_EVENTS.INVENTORY_UPDATE, (e) => {
       const p = e.payload;
       setLastInventoryScanAt(p.scanned_at);
+      if (!inventoryReadyRef.current) {
+        inventoryReadyRef.current = true;
+        setInventoryReady(true);
+      }
       // Only replace quantities if the content actually changed.
       // The monitor loop re-emits cached state periodically; without this guard
       // every emit triggers a full 17k-item useMemo rebuild cascade.
@@ -1207,7 +718,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
   // ── Blob processing status ────────────────────────────────────────────────
   useEffect(() => {
-    const unlisten = listen<{ stage: string; detail: string }>("blob-status", e => {
+    const unlisten = listen<BlobStatusPayload>("blob-status", e => {
       const { stage } = e.payload;
       if (stage === "scanning") {
         if (blobDoneTimerRef.current) clearTimeout(blobDoneTimerRef.current);
@@ -1232,11 +743,11 @@ if (typeof s.autoDiagEnabled === "boolean") {
   // When the pop-out saves (unstar, reorder), Rust emits settings-updated.
   // Compare before setting to avoid a save → emit → re-read → save loop.
   useEffect(() => {
-    const unlisten = listen("settings-updated", () => {
-      invoke<string>("load_settings").then(json => {
+    const unlisten = listen(TAURI_EVENTS.SETTINGS_UPDATED, () => {
+      invoke<string>(TAURI_COMMANDS.LOAD_SETTINGS).then(json => {
         if (!json) return;
         try {
-          const s = JSON.parse(json);
+          const s = JSON.parse(json) as SettingsFile;
           const cur = settingsRef.current;
           if (Array.isArray(s.favorites) && JSON.stringify(s.favorites) !== JSON.stringify(cur.favorites))
             setFavorites(s.favorites);
@@ -1261,10 +772,11 @@ if (typeof s.autoDiagEnabled === "boolean") {
       if (t) clearTimeout(t);
       t = setTimeout(() => {
         Promise.all([win.outerPosition(), win.outerSize()]).then(([pos, size]) => {
-          invoke("save_settings", { json: JSON.stringify({
+          const patch: SettingsPatch = {
             windowX: pos.x, windowY: pos.y,
             windowWidth: size.width, windowHeight: size.height,
-          }) }).catch(() => {});
+          };
+          invoke(TAURI_COMMANDS.SAVE_SETTINGS, { json: JSON.stringify(patch) }).catch(() => {});
         }).catch(() => {});
       }, 400);
     };
@@ -1306,10 +818,10 @@ if (typeof s.autoDiagEnabled === "boolean") {
     try {
       const count = await invoke<number>("fetch_item_list", { force: true });
       setItemCount(count);
-      const items = await invoke<CatalogItem[]>("get_all_items");
+      const items = await invoke<CatalogItem[]>(TAURI_COMMANDS.GET_ALL_ITEMS);
       setCatalog(items);
       catalogRef.current = items;
-      const status = await invoke<{ count: number; recipe_count: number }>("get_item_list_status");
+      const status = await invoke<ItemListStatus>("get_item_list_status");
       setRecipeCount(status.recipe_count);
       setFetchMsg(`Loaded ${count.toLocaleString()} items, ${status.recipe_count.toLocaleString()} recipes`);
       setItemsRefreshKey(k => k + 1);
@@ -1331,8 +843,10 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
   // ── Warframe API: process inventory response ──────────────────────────────
 
-  const applyInventoryData = useCallback((data: any) => {
-    const apiQty: Record<string, number> = {};
+  const applyInventoryData = useCallback((raw: unknown) => {
+    // Companion inventory is an evolving external payload; keep it untyped at the transport boundary.
+    const data: any = raw;
+    const apiQty: QuantityMap = {};
     const ownedArrayKeys = [
       "Suits", "LongGuns", "Pistols", "Melee",
       "Sentinels", "SentinelWeapons",
@@ -1512,11 +1026,12 @@ if (typeof s.autoDiagEnabled === "boolean") {
   useEffect(() => {
     if (!inventoryRestoredRef.current) return;
     if (Object.keys(apiQuantities).length === 0 && apiModCopies.length === 0 && subsummedWarframes.size === 0) return;
-    invoke("save_api_inventory", {
+    const args: SaveApiInventoryArgs = {
       apiQuantities,
       apiModCopies,
       consumedSuits: [...subsummedWarframes],
-    }).catch(() => {});
+    };
+    invoke(TAURI_COMMANDS.SAVE_API_INVENTORY, args).catch(() => {});
   }, [apiQuantities, apiModCopies, subsummedWarframes]);
 
   useEffect(() => {
@@ -1647,7 +1162,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       if (cancelled) return;
       let accountId = "", nonce = "", steamId = "";
       try {
-        [accountId, nonce, steamId] = await invoke<[string, string, string]>("scan_warframe_credentials");
+        [accountId, nonce, steamId] = await invoke<WarframeCredentials>("scan_warframe_credentials");
         // Cache successful auto-scan so fallback works if scan fails next time
         manualCredsRef.current = { accountId, nonce };
       } catch {
@@ -1657,7 +1172,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
         accountId = mc.accountId; nonce = mc.nonce; steamId = "";
       }
       try {
-        const data = await invoke<any>("fetch_warframe_inventory", { accountId, nonce, steamId });
+        const args: WarframeInventoryRequest = { accountId, nonce, steamId };
+        const data = await invoke<unknown>("fetch_warframe_inventory", args);
         if (!cancelled) {
           applyInventoryData(data);
           setWfConnected(true);
@@ -1695,38 +1211,38 @@ if (typeof s.autoDiagEnabled === "boolean") {
       _rivenRollCount++;
       const { emit } = await import("@tauri-apps/api/event");
 
-      let rect: [number, number, number, number] = [0, 0, 0, 800];
-      try { rect = await invoke<[number, number, number, number]>("get_warframe_window_rect"); } catch {}
+      let rect: WarframeWindowRect = [0, 0, 0, 800];
+      try { rect = await invoke<WarframeWindowRect>("get_warframe_window_rect"); } catch {}
       const [wx, wy, , wh] = rect;
       const result = await ensureRivenWindow(wx, wy, wh);
-      let pendingPayload: object | null = null;
+      let pendingPayload: RivenAnalysisUpdate | null = null;
       let windowReady = false;
 
       if (result && !result.fresh) {
         // Existing window — reset overlay state
-        await emit("riven-scanning-start", {}).catch(() => {});
+        await emit(TAURI_EVENTS.RIVEN_SCANNING_START, {}).catch(() => {});
         windowReady = true;
       } else if (result?.fresh) {
         // Fresh window — send data once its listener signals ready
-        const unsubReady = await listen("riven-window-ready", async () => {
+        const unsubReady = await listen(TAURI_EVENTS.RIVEN_WINDOW_READY, async () => {
           unsubReady();
           windowReady = true;
-          if (pendingPayload) { await emit("riven-analysis-update", pendingPayload).catch(() => {}); pendingPayload = null; }
+          if (pendingPayload) { await emit(TAURI_EVENTS.RIVEN_ANALYSIS_UPDATE, pendingPayload).catch(() => {}); pendingPayload = null; }
         });
       }
 
       try {
-        const ocrResult = await invoke<{ weapon: string; positives: string[]; negatives: string[]; rolled_stats: {name:string;value:string;positive:boolean}[]; is_comparison: boolean; original_rolled_stats: {name:string;value:string;positive:boolean}[]; raw: string }>("ocr_riven_screen");
-        const analysis = (ocrResult.weapon || ocrResult.positives.length > 0)
-          ? await invoke("analyze_riven", { weapon: ocrResult.weapon, positives: ocrResult.positives, negatives: ocrResult.negatives }).catch(() => null)
+        const ocrResult = await invoke<OcrRivenScreenResult>("ocr_riven_screen");
+        const analysis: RivenAnalysis | null = (ocrResult.weapon || ocrResult.positives.length > 0)
+          ? await invoke<RivenAnalysis | null>(TAURI_COMMANDS.ANALYZE_RIVEN, { weapon: ocrResult.weapon, positives: ocrResult.positives, negatives: ocrResult.negatives } satisfies AnalyzeRivenArgs).catch(() => null)
           : null;
-        const payload = { analysis, ocrRaw: ocrResult.raw, weapon: ocrResult.weapon, positives: ocrResult.positives, negatives: ocrResult.negatives, rolledStats: ocrResult.rolled_stats, isComparison: ocrResult.is_comparison, originalStats: ocrResult.original_rolled_stats, rollCount: _rivenRollCount };
-        if (windowReady) { await emit("riven-analysis-update", payload).catch(() => {}); }
+        const payload: RivenAnalysisUpdate = { analysis, ocrRaw: ocrResult.raw, weapon: ocrResult.weapon, positives: ocrResult.positives, negatives: ocrResult.negatives, rolledStats: ocrResult.rolled_stats, isComparison: ocrResult.is_comparison, originalStats: ocrResult.original_rolled_stats, rollCount: _rivenRollCount };
+        if (windowReady) { await emit(TAURI_EVENTS.RIVEN_ANALYSIS_UPDATE, payload).catch(() => {}); }
         else              { pendingPayload = payload; }
       } catch (e) {
         await invoke("ocr_riven_log_error", { error: String(e) }).catch(() => {});
-        const payload = { analysis: null, ocrRaw: `OCR ERROR: ${e}`, weapon: "", positives: [], negatives: [], rolledStats: [], isComparison: false, originalStats: [], rollCount: _rivenRollCount };
-        if (windowReady) { await emit("riven-analysis-update", payload).catch(() => {}); }
+        const payload: RivenAnalysisUpdate = { analysis: null, ocrRaw: `OCR ERROR: ${e}`, weapon: "", positives: [], negatives: [], rolledStats: [], isComparison: false, originalStats: [], rollCount: _rivenRollCount };
+        if (windowReady) { await emit(TAURI_EVENTS.RIVEN_ANALYSIS_UPDATE, payload).catch(() => {}); }
         else              { pendingPayload = payload; }
       }
     };
@@ -1735,7 +1251,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
     _rivenManualTrigger = () => { runRivenCheck().catch(() => {}); };
 
     // overlay "Start Comparison" button emits this event
-    const unsubManual = listen("riven-manual-check", () => runRivenCheck().catch(() => {}));
+    const unsubManual = listen(TAURI_EVENTS.RIVEN_MANUAL_CHECK, () => runRivenCheck().catch(() => {}));
 
     // Open trigger: EE.log watcher fires "riven-screen-open" via FindFirstChangeNotificationW
     // (instant file-write notification — no polling delay).
@@ -1749,7 +1265,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
     // Close triggers: EE.log (DiegeticArtifactCards HudVis 0) + manual dismiss.
     const unsubClose   = listen("riven-screen-close",   () => rivenWinHide("screen-close"));
-    const unsubHideReq = listen<{ reason?: string }>("riven-overlay-hide", e => rivenWinHide(e.payload?.reason ?? "overlay-hide"));
+    const unsubHideReq = listen<{ reason?: string }>(TAURI_EVENTS.RIVEN_OVERLAY_HIDE, e => rivenWinHide(e.payload?.reason ?? "overlay-hide"));
 
     return () => {
       unsubManual.then(fn => fn());
@@ -1771,7 +1287,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
     const closeOverlay = async () => {
       overlayVisible = false;
-      await invoke("move_overlay_offscreen").catch(() => {});
+      await invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
     };
 
     const unsubStatus = listen<string>("ff-status", (e) => {
@@ -1791,54 +1307,55 @@ if (typeof s.autoDiagEnabled === "boolean") {
       const stripH  = Math.min(Math.round(wh * hFrac * overlayScale()), wh - offsetY);
       const stripY  = wy + offsetY;
       try {
-        await invoke("show_overlay_window", { x: wx, y: stripY, w: ww, h: stripH });
+        const bounds: OverlayWindowBounds = { x: wx, y: stripY, w: ww, h: stripH };
+        await invoke("show_overlay_window", bounds);
         overlayVisible = true;
         return true;
       } catch { return false; }
     };
 
-    const unsubTrigger = listen<null>("relic-trigger", async () => {
-      const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
+    const unsubTrigger = listen<null>(TAURI_EVENTS.RELIC_TRIGGER, async () => {
+      const enabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAY_ENABLED) !== "false";
       if (!enabled) return;
       try {
-        const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
-        invoke("log_relic_fe", { msg: `[APP] relic-trigger: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
+        const [wx, wy, ww, wh] = await invoke<WarframeWindowRect>("get_warframe_window_rect");
+        invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[APP] relic-trigger: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
         await openOverlay(wx, wy, ww, wh, 0.60, 0.30);
       } catch (e) {
         // get_warframe_window_rect failed (Warframe may be in a different state).
         // Fall back to screen dimensions so the overlay still moves on-screen and
         // WebView2 un-freezes its JS before relic-rewards arrives.
-        invoke("log_relic_fe", { msg: `[APP] relic-trigger: wf-rect failed (${e}), falling back to screen dims` }).catch(() => {});
+        invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[APP] relic-trigger: wf-rect failed (${e}), falling back to screen dims` }).catch(() => {});
         const sw = window.screen.width, sh = window.screen.height;
         await openOverlay(0, 0, sw, sh, 0.60, 0.30);
       }
     });
 
-    const unsubRelic = listen<boolean>("relic-screen", () => { closeOverlay(); });
+    const unsubRelic = listen<boolean>(TAURI_EVENTS.RELIC_SCREEN, () => { closeOverlay(); });
 
-    const unsub = listen<{ items: string[]; positions: number[] } | null>("relic-rewards", async (e) => {
+    const unsub = listen<RelicRewardsPayload | null>(TAURI_EVENTS.RELIC_REWARDS, async (e) => {
       const rewards = e.payload;
       if (!rewards || rewards.items.length === 0) { closeOverlay(); return; }
-      const enabled = localStorage.getItem("ff-overlay-enabled") !== "false";
+      const enabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAY_ENABLED) !== "false";
       if (!enabled) return;
-      invoke("log_relic_fe", { msg: `[APP] relic-rewards: ${rewards.items.length} items, overlayVisible=${overlayVisible}` }).catch(() => {});
+      invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[APP] relic-rewards: ${rewards.items.length} items, overlayVisible=${overlayVisible}` }).catch(() => {});
       // Overlay.tsx already receives this event directly from Rust's global emit.
       // We only need to ensure the overlay window is on-screen; no forwarding needed
       // (forwarding via emitTo caused an infinite feedback loop in Tauri 2).
       if (!overlayVisible) {
         try {
-          const [wx, wy, ww, wh] = await invoke<[number, number, number, number]>("get_warframe_window_rect");
-          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
+          const [wx, wy, ww, wh] = await invoke<WarframeWindowRect>("get_warframe_window_rect");
+          invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[APP] relic-rewards fallback: wf(${wx},${wy} ${ww}×${wh})` }).catch(() => {});
           await openOverlay(wx, wy, ww, wh, 0.54, 0.28);
         } catch (err) {
-          invoke("log_relic_fe", { msg: `[APP] relic-rewards fallback: wf-rect failed (${err}), using screen dims` }).catch(() => {});
+          invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[APP] relic-rewards fallback: wf-rect failed (${err}), using screen dims` }).catch(() => {});
           const sw = window.screen.width, sh = window.screen.height;
           await openOverlay(0, 0, sw, sh, 0.54, 0.28);
         }
       }
     });
 
-    const unsubReward = listen<{ path: string; qty: number }>("inventory-reward", (e) => {
+    const unsubReward = listen<InventoryRewardPayload>("inventory-reward", (e) => {
       const { path, qty } = e.payload;
       setQuantities(prev => ({ ...prev, [path]: qty }));
     });
@@ -1849,7 +1366,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       unsubTrigger.then(fn => fn());
       unsubStatus.then(fn => fn());
       unsubReward.then(fn => fn());
-      invoke("move_overlay_offscreen").catch(() => {});
+      invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
     };
   }, []);
 
@@ -1857,19 +1374,10 @@ if (typeof s.autoDiagEnabled === "boolean") {
   // Rust emits "trade-completed" when "The trade was successful!" is detected in
   // EE.log. One event covers ALL items from both sides of the trade session.
   useEffect(() => {
-    const unlisten = listen<{
-      sessionId: string;
-      withPlayer: string;
-      tradeType: "sale" | "purchase" | "trade";
-      offeredItems: { name: string; qty: number }[];
-      offeredPlat: number;
-      receivedItems: { name: string; qty: number }[];
-      receivedPlat: number;
-      timestamp: string;
-    }>("trade-completed", async (e) => {
+    const unlisten = listen<TradeCompletedEvent>(TAURI_EVENTS.TRADE_COMPLETED, async (e) => {
       const p = e.payload;
-      const save = (dir: string, name: string, qty: number, plat: number) =>
-        invoke("add_trade", {
+      const save = (dir: string, name: string, qty: number, plat: number) => {
+        const args: AddTradeArgs = {
           withPlayer: p.withPlayer,
           direction:  dir,
           itemName:   name,
@@ -1881,7 +1389,9 @@ if (typeof s.autoDiagEnabled === "boolean") {
           sessionId:  p.sessionId,
           tradeType:  p.tradeType,
           timestamp:  p.timestamp,
-        }).catch(() => {});
+        };
+        return invoke(TAURI_COMMANDS.ADD_TRADE, args).catch(() => {});
+      };
 
       if (p.tradeType === "sale") {
         // Gave items, received platinum — put plat on the first row only
@@ -2006,9 +1516,11 @@ if (typeof s.autoDiagEnabled === "boolean") {
   const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
 
   const changeLogMap = useMemo(() => {
-    const m = new Map<string, ChangeLogEntry>();
+    const m = new Map<string, ChangeLogEntry[]>();
     for (const c of changeLog) {
-      if (!m.has(c.unique_name)) m.set(c.unique_name, c);
+      const arr = m.get(c.unique_name);
+      if (arr) arr.push(c);
+      else m.set(c.unique_name, [c]);
     }
     return m;
   }, [changeLog]);
@@ -2021,6 +1533,9 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
   const visibleItems = useMemo(() => {
     const q = search.toLowerCase();
+    // Changelog order map: lower index = more recent position in changelog
+    const changeOrder = new Map<string, number>();
+    changeLog.forEach((c, i) => { if (!changeOrder.has(c.unique_name)) changeOrder.set(c.unique_name, i); });
     const out: (CatalogItem & { qty: number })[] = [];
     for (const i of catalog) {
       if (i.name === "Blueprint") continue;
@@ -2046,10 +1561,14 @@ if (typeof s.autoDiagEnabled === "boolean") {
       out.push({ ...i, qty });
     }
     out.sort((a, b) => {
-      if (sortMode === "recent") {
+      if (sortMode === "recent" || filterRecent) {
         const at = lastChanged[a.unique_name] ?? 0;
         const bt = lastChanged[b.unique_name] ?? 0;
-        return bt - at || a.name.localeCompare(b.name);
+        if (bt !== at) return bt - at;
+        // Tiebreak by changelog arrival order (lower index = more recent)
+        const ai = changeOrder.get(a.unique_name) ?? Infinity;
+        const bi = changeOrder.get(b.unique_name) ?? Infinity;
+        return ai - bi || a.name.localeCompare(b.name);
       }
       const aOwned = a.qty > 0 ? 1 : 0;
       const bOwned = b.qty > 0 ? 1 : 0;
@@ -2060,7 +1579,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
       return b.qty - a.qty || a.name.localeCompare(b.name);
     });
     return out.slice(0, 1000);
-  }, [catalog, inventory, category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode, lastChanged, modCopiesMap]); // eslint-disable-line
+  }, [catalog, inventory, inventoryFilters, lastChanged, modCopiesMap, changeLog]);
 
   const resetInventoryFilters = ({
     recent,
@@ -2072,14 +1591,13 @@ if (typeof s.autoDiagEnabled === "boolean") {
     categoryId?: string;
   }) => {
     setActiveModule("inventory");
-    setCategory(categoryId);
-    setSearch(searchTerm);
-    setFilterOwned(false);
-    setFilterRecent(recent);
-    setFilterPrime(false);
-    setFilterVaulted(false);
-    setFilterUnvaulted(false);
-    setFilterRank(null);
+    setInventoryFilters(previous => ({
+      ...INVENTORY_FILTERS_DEFAULT,
+      category: categoryId,
+      search: searchTerm,
+      filterRecent: recent,
+      sortMode: recent ? "recent" : previous.sortMode,
+    }));
   };
 
   // Navigate to an item from the changelog — only switches module and sets search,
@@ -2087,11 +1605,22 @@ if (typeof s.autoDiagEnabled === "boolean") {
   const openChangeLogItem = (uniqueName: string) => {
     const item = catalog.find(candidate => candidate.unique_name === uniqueName);
     setActiveModule("inventory");
-    setSearch(item?.name ?? "");
+    setInventoryFilters(previous => ({ ...previous, search: item?.name ?? "" }));
   };
 
   const openRecentChanges = () => resetInventoryFilters({ recent: true });
   const openRecentCategory = (categoryId: string) => resetInventoryFilters({ recent: true, categoryId });
+  const closeInventoryBatchPreview = useCallback(() => setShowInventoryBatchPreview(false), []);
+  const handleInventoryContextMenu = useCallback((e: React.MouseEvent) => {
+    const name = extractItemName(e);
+    if (name) {
+      e.preventDefault();
+      openCtx(e.clientX, e.clientY, [
+        { label: "Open Wiki", action: () => openWiki(name) },
+        { label: "Copy Wiki Link", action: () => copyWikiLink(name) },
+      ]);
+    }
+  }, [openCtx]);
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -2102,33 +1631,19 @@ if (typeof s.autoDiagEnabled === "boolean") {
       {/* ── Header ── */}
       <header className="header">
         <span className="header-title">FrameForge</span>
-        {masteryRank !== null && (
-          <span className="mastery-badge" title="Mastery Rank">MR {masteryRank}</span>
-        )}
-        {playerName && (
-          <span className="player-name-badge" title="Logged-in Warframe account">{playerName}</span>
-        )}
-        {pendingUpdate && (
-          <span
-            className="update-badge"
-            title={updateInstalling ? "Installing update…" : `v${pendingUpdate} is available — click to install`}
-            onClick={() => {
-              if (updateInstalling) return;
-              setUpdateInstalling(true);
-              invoke("install_update").catch(() => setUpdateInstalling(false));
-            }}
-          >
-            {updateInstalling ? "Installing…" : `v${pendingUpdate} ↑`}
-            {!updateInstalling && (
-              <button className="update-badge-dismiss" title="Dismiss" onClick={e => { e.stopPropagation(); setPendingUpdate(null); }}>×</button>
-            )}
-          </span>
-        )}
-        {blobStage === "done" && (
-          <span className="blob-status-badge blob-status-done" title="Inventory loaded from Warframe memory">
-            Inventory Loaded
-          </span>
-        )}
+        <HeaderStatusBadges
+          masteryRank={masteryRank}
+          playerName={playerName}
+          pendingUpdate={pendingUpdate}
+          updateInstalling={updateInstalling}
+          inventoryLoaded={blobStage === "done"}
+          onInstallUpdate={() => {
+            if (updateInstalling) return;
+            setUpdateInstalling(true);
+            invoke("install_update").catch(() => setUpdateInstalling(false));
+          }}
+          onDismissUpdate={() => setPendingUpdate(null)}
+        />
         <div className="header-right">
           {/* ── Connection status chips ── */}
           {(() => {
@@ -2152,15 +1667,16 @@ if (typeof s.autoDiagEnabled === "boolean") {
               : "offline";
             const wfApiDetail =
               !companionApiEnabled                    ? "OFF"
-              : wfConnected && lastApiRefresh         ? timeStr(lastApiRefresh, clockFormat, systemLocale)
+              : wfConnected && lastApiRefresh         ? formatUnixTime(lastApiRefresh, clockFormat, systemLocale)
               : wfConnected                           ? "Connected"
               : warframeRunning                       ? "Connecting…"
               : "Waiting";
             const wfApiClick = (!wfConnected && warframeRunning && companionApiEnabled)
               ? async () => {
                   try {
-                    const [accountId, nonce, steamId] = await invoke<[string, string, string]>("scan_warframe_credentials");
-                    const data = await invoke<any>("fetch_warframe_inventory", { accountId, nonce, steamId });
+                    const [accountId, nonce, steamId] = await invoke<WarframeCredentials>("scan_warframe_credentials");
+                    const args: WarframeInventoryRequest = { accountId, nonce, steamId };
+                    const data = await invoke<unknown>("fetch_warframe_inventory", args);
                     applyInventoryData(data);
                     setWfConnected(true);
                     wfConnectedRef.current = true;
@@ -2177,10 +1693,11 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
             return (
               <>
-                <span
-                  className={`conn-chip conn-${scanState}`}
+                <ConnectionStatusChip
+                  label="Memory"
+                  state={scanState}
+                  detail={scanDetail}
                   title={!memoryScannerEnabled ? "Memory scanner disabled — enable in Settings" : warframeRunning ? "Warframe detected — scanning memory" : "Click to recheck for Warframe"}
-                  style={{ cursor: memoryScannerEnabled && !warframeRunning ? "pointer" : undefined }}
                   onClick={
                     !memoryScannerEnabled ? () => setShowSettings(true)
                     : !warframeRunning && monitoring ? () => {
@@ -2189,31 +1706,21 @@ if (typeof s.autoDiagEnabled === "boolean") {
                       }
                     : undefined
                   }
-                >
-                  <span className="conn-dot" />
-                  <span className="conn-label">Memory</span>
-                  <span className="conn-detail">{scanDetail}</span>
-                </span>
-                <span
-                  className={`conn-chip conn-${wfApiState}`}
+                />
+                <ConnectionStatusChip
+                  label="WF API"
+                  state={wfApiState}
+                  detail={wfApiDetail}
                   title={!companionApiEnabled ? "Warframe API disabled — enable in Settings" : wfConnected ? "Warframe API connected — auto-refreshes every 30s" : warframeRunning ? "Click to retry credential scan" : "Waiting for Warframe to start"}
                   onClick={!companionApiEnabled ? () => setShowSettings(true) : wfApiClick}
-                  style={wfApiClick ? { cursor: "pointer" } : undefined}
-                >
-                  <span className="conn-dot" />
-                  <span className="conn-label">WF API</span>
-                  <span className="conn-detail">{wfApiDetail}</span>
-                </span>
-                <span
-                  className={`conn-chip conn-${wfmState}`}
+                />
+                <ConnectionStatusChip
+                  label="WFM"
+                  state={wfmState}
+                  detail={wfmDetail}
                   title={wfmLoggedIn ? "Logged in to warframe.market" : "Not logged in to warframe.market — open the Market tab to log in"}
                   onClick={!wfmLoggedIn ? () => setActiveModule("market") : undefined}
-                  style={!wfmLoggedIn ? { cursor: "pointer" } : undefined}
-                >
-                  <span className="conn-dot" />
-                  <span className="conn-label">WFM</span>
-                  <span className="conn-detail">{wfmDetail}</span>
-                </span>
+                />
                 {overlayStatus && (
                   <span className="conn-chip conn-overlay">
                     <span className="conn-dot" />
@@ -2224,945 +1731,41 @@ if (typeof s.autoDiagEnabled === "boolean") {
               </>
             );
           })()}
-          <button
-            className="btn-icon-brand btn-discord"
-            title="Join our Discord"
-            onClick={() => invoke("plugin:opener|open_url", { url: "https://discord.gg/7NMsN9J8vy" }).catch(() => {})}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/>
-            </svg>
-          </button>
-          <button
-            className="btn-icon-brand btn-kofi"
-            title="Support on Ko-Fi"
-            onClick={() => invoke("plugin:opener|open_url", { url: "https://ko-fi.com/sikewyrm" }).catch(() => {})}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 2.833.723 4.311zm6.173.478c-.928.116-1.218-.443-1.218-.443s.001-1.929 0-2.535c-.003-.434-.423-.782-.857-.782-.434 0-.836.348-.836.782v3.09c0 .434.402.782.836.782.434 0 .857-.026.857-.026s-.038.639.525.98c.562.341 1.423.231 1.423.231 1.302-.269 2.023-1.63 1.27-2.079z"/>
-            </svg>
-          </button>
-          <button
-            className="btn-icon-brand btn-report"
-            title="Report a bug or suggest a feature"
-            onClick={() => invoke("plugin:opener|open_url", { url: "https://github.com/WyrmStudios/FrameForge/issues/new/choose" }).catch(() => {})}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/>
-            </svg>
-          </button>
-          <button className="btn-settings" title="Settings" onClick={() => {
-              setShowSettings(true); setClearMsg("");
-              getVersion().then(v => setAppVersion(v)).catch(() => {});
-            }}>⚙</button>
+          <HeaderActions
+            onOpenExternalUrl={url => invoke(TAURI_COMMANDS.OPEN_URL, { url }).catch(() => {})}
+            onOpenSettings={() => {
+              setShowSettings(true);
+              setClearMsg("");
+              getVersion().then(version => setAppVersion(version)).catch(() => {});
+            }}
+          />
         </div>
       </header>
 
-      {/* ── Settings modal ── */}
-      {showSettings && (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
-          <div className="settings-modal" onClick={e => e.stopPropagation()}>
-            <div className="settings-header">
-              <span className="settings-title">Settings</span>
-              <button className="craft-detail-close" onClick={() => setShowSettings(false)}>✕</button>
-            </div>
+      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} {...{ settingsTab, setSettingsTab, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion }} />
 
-            <div className="settings-layout">
-              {/* ── Sidebar nav ── */}
-              <nav className="settings-sidebar">
-                {(["general", "overlays", "market", "accessibility", "data", "debugging"] as const).map(tab => (
-                  <button
-                    key={tab}
-                    className={`settings-tab-item${settingsTab === tab ? " active" : ""}`}
-                    onClick={() => setSettingsTab(tab)}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </nav>
-
-              {/* ── Tab content ── */}
-              <div className="settings-body">
-
-                {/* ════════════ GENERAL ════════════ */}
-                {settingsTab === "general" && <>
-
-                  {/* Foundry */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Foundry</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Items per page</span>
-                        <span className="settings-row-desc">How many items to show per page in the Foundry browser.</span>
-                      </div>
-                      <select className="settings-select" value={foundryPageSize}
-                        onChange={e => {
-                          const next = Number(e.target.value) as 30 | 60 | 100;
-                          setFoundryPageSize(next);
-                          settingsRef.current = { ...settingsRef.current, foundryPageSize: next };
-                          saveAllSettings();
-                        }}>
-                        <option value={30}>30</option>
-                        <option value={60}>60</option>
-                        <option value={100}>100</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Memory Scanner */}
-                  <div className="settings-section" style={{ borderColor: memoryScannerEnabled ? "rgba(240,192,64,.3)" : undefined }}>
-                    <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      Memory Scanner
-                      <span style={{ fontSize: 10, background: "rgba(240,192,64,.15)", color: "#f0c040", border: "1px solid rgba(240,192,64,.35)", borderRadius: 3, padding: "1px 6px", fontWeight: 700 }}>
-                        EULA GREY AREA
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, lineHeight: 1.5 }}>
-                      Reads live inventory, crafting jobs, and mod ranks from Warframe's process memory via <code style={{ fontSize: 10 }}>ReadProcessMemory</code>. DE has historically tolerated read-only tools, but has not given explicit permission. Enable at your own risk.
-                    </div>
-                    <div className="settings-row">
-                      <div>
-                        <span className="settings-row-label">Enable</span>
-                        <span className="settings-row-desc">Required for live inventory, quantity tracking, and mod ranks</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: memoryScannerEnabled ? "rgba(240,192,64,.15)" : undefined, borderColor: memoryScannerEnabled ? "#f0c040" : undefined, color: memoryScannerEnabled ? "#f0c040" : undefined }}
-                        onClick={() => setMemoryScannerEnabled(v => !v)}
-                      >
-                        {memoryScannerEnabled ? "Enabled" : "Disabled"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Warframe API */}
-                  <div className="settings-section">
-                    <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      Warframe API
-                      <span style={{ fontSize: 10, background: "rgba(240,192,64,.15)", color: "#f0c040", border: "1px solid rgba(240,192,64,.35)", borderRadius: 3, padding: "1px 6px", fontWeight: 700 }}>
-                        SUSPENDED
-                      </span>
-                    </div>
-                    <div style={{
-                      fontSize: 11, color: "var(--muted)", lineHeight: 1.6,
-                      background: "rgba(240,192,64,.06)", border: "1px solid rgba(240,192,64,.25)",
-                      borderRadius: 6, padding: "8px 10px",
-                    }}>
-                      <strong style={{ color: "#f0c040" }}>Temporarily unavailable.</strong>
-                      {" "}This feature connects to an undocumented DE endpoint (<code style={{ fontSize: 10 }}>api.warframe.com/api/inventory.php</code>).
-                      {" "}DE confirmed third-party tools run at your own risk but could not clarify whether this specific endpoint is permitted.
-                      {" "}The feature is disabled until we receive clearer guidance.
-                    </div>
-                  </div>
-
-                  {/* Account Login */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Account Login</div>
-                    <div style={{
-                      fontSize: 11, color: "var(--muted)", lineHeight: 1.6,
-                      background: "rgba(255,100,100,.07)", border: "1px solid rgba(255,100,100,.2)",
-                      borderRadius: 6, padding: "8px 10px",
-                    }}>
-                      <strong style={{ color: "#ff8080" }}>Login is temporarily unavailable.</strong>
-                      {" "}Digital Extremes encrypted their login API in March 2026, which blocked all third-party tools — including FrameForge — from authenticating on your behalf.
-                      {" "}PC players are not affected: inventory is synced automatically while the game is running.
-                    </div>
-                    <div style={{
-                      marginTop: 8, fontSize: 11, color: "var(--muted)", lineHeight: 1.6,
-                      background: "rgba(100,180,255,.06)", border: "1px solid rgba(100,180,255,.18)",
-                      borderRadius: 6, padding: "8px 10px",
-                    }}>
-                      FrameForge is actively exploring ways to restore inventory access for console and non-PC players.
-                      {" "}Follow the project for updates.
-                    </div>
-                  </div>
-
-                  {/* Modular Window */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Modular Window</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Pop-out</span>
-                        <span className="settings-row-desc">Detach the Modular Window into its own floating window.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: modularPopout ? "rgba(56,139,253,.15)" : undefined, borderColor: modularPopout ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !modularPopout;
-                          setModularPopout(next);
-                          settingsRef.current = { ...settingsRef.current, modularPopout: next };
-                          saveAllSettings();
-                        }}
-                      >{modularPopout ? "On" : "Off"}</button>
-                    </div>
-                  </div>
-
-                </>}
-
-                {/* ════════════ OVERLAYS ════════════ */}
-                {settingsTab === "overlays" && <>
-
-                  {/* Relic Overlay */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Relic Overlay</div>
-                    {overlayStatus && (
-                      <div style={{ fontSize: 12, padding: '4px 8px', marginBottom: 6,
-                        background: 'rgba(255,255,255,0.05)', borderRadius: 4,
-                        color: '#9ecaed', fontFamily: 'monospace' }}>
-                        {overlayStatus}
-                      </div>
-                    )}
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Overlay</span>
-                        <span className="settings-row-desc">Auto-shows reward cards when a Void Fissure screen is detected.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: overlayEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: overlayEnabled ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !overlayEnabled;
-                          setOverlayEnabled(next);
-                          localStorage.setItem("ff-overlay-enabled", String(next));
-                          settingsRef.current = { ...settingsRef.current, overlayEnabled: next };
-                          saveAllSettings();
-                          if (!next) {
-                            import("@tauri-apps/api/event").then(({ emit }) =>
-                              emit("relic-screen", true).catch(() => {})
-                            );
-                          }
-                        }}
-                      >{overlayEnabled ? "On" : "Off"}</button>
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8 }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Pick priority</span>
-                        <span className="settings-row-desc">Which card the overlay highlights as the best pick.</span>
-                      </div>
-                      <select
-                        className="settings-select"
-                        value={overlayPriority}
-                        disabled={!overlayEnabled}
-                        onChange={e => {
-                          const next = e.target.value;
-                          setOverlayPriority(next);
-                          localStorage.setItem("ff-overlay-priority", next);
-                          settingsRef.current = { ...settingsRef.current, overlayPriority: next };
-                          saveAllSettings();
-                        }}
-                      >
-                        <option value="completion">Item Completion</option>
-                        <option value="setPlat">Most Set Value (plat)</option>
-                        <option value="plat">Most Plat (item)</option>
-                        <option value="ducat">Most Ducats</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Relic Overlay — Memory Trigger */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Memory Trigger <span style={{ fontSize: 11, opacity: 0.55, fontWeight: 400, marginLeft: 6 }}>in development</span></div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Use memory scan</span>
-                        <span className="settings-row-desc">
-                          Still in development — for testing only. Polls Warframe's process memory for the reward screen event in parallel with EE.log.
-                          Timing for both paths is written to the session log so they can be compared.
-                          The EE.log overlay is unaffected regardless of this setting.
-                        </span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: memTriggerEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: memTriggerEnabled ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !memTriggerEnabled;
-                          setMemTriggerEnabled(next);
-                          settingsRef.current = { ...settingsRef.current, memTriggerEnabled: next };
-                          saveAllSettings();
-                          invoke("set_mem_trigger_enabled", { enabled: next });
-                        }}
-                      >{memTriggerEnabled ? "On" : "Off"}</button>
-                    </div>
-                  </div>
-
-                  {/* Relic Pick Overlay */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Relic Pick Overlay</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Enable Overlay</span>
-                        <span className="settings-row-desc">Show the relic pick overlay when opening the relic selection screen.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: relicPickEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: relicPickEnabled ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !relicPickEnabled;
-                          setRelicPickEnabled(next);
-                          settingsRef.current = { ...settingsRef.current, relicPickEnabled: next };
-                          saveAllSettings();
-                          invoke("set_relic_pick_enabled", { enabled: next });
-                        }}
-                      >{relicPickEnabled ? "Enabled" : "Disabled"}</button>
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8, opacity: relicPickEnabled ? 1 : 0.45, pointerEvents: relicPickEnabled ? "auto" : "none" }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Recommendation Base</span>
-                        <span className="settings-row-desc">How relics are ranked in the overlay.</span>
-                      </div>
-                      <select className="settings-select" value={relicPickPriority}
-                        onChange={e => {
-                          const next = e.target.value as "unowned" | "ducat" | "platinum";
-                          setRelicPickPriority(next);
-                          settingsRef.current = { ...settingsRef.current, relicPickPriority: next };
-                          saveAllSettings();
-                        }}>
-                        <option value="unowned">Unowned / Mastery</option>
-                        <option value="ducat">Most Ducats (EV)</option>
-                        <option value="platinum">Most Platinum (EV)</option>
-                      </select>
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8, opacity: relicPickEnabled ? 1 : 0.45, pointerEvents: relicPickEnabled ? "auto" : "none" }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Shown Lines Per Relic</span>
-                        <span className="settings-row-desc">How much reward detail to show per relic card.</span>
-                      </div>
-                      <select className="settings-select" value={relicPickLines}
-                        onChange={e => {
-                          const next = e.target.value as "all" | "best" | "estimated";
-                          setRelicPickLines(next);
-                          settingsRef.current = { ...settingsRef.current, relicPickLines: next };
-                          saveAllSettings();
-                        }}>
-                        <option value="all">All items</option>
-                        <option value="best">Only most valuable</option>
-                        <option value="estimated">Score summary only</option>
-                      </select>
-                    </div>
-                  </div>
-
-                </>}
-
-                {/* ════════════ MARKET ════════════ */}
-                {settingsTab === "market" && <>
-                  <div className="settings-section">
-                    <div className="settings-section-title">Bulk Prices</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Force Refresh</span>
-                        <span className="settings-row-desc">Re-download price data from FrameForgePricing right now. Use this if prices look stale or missing.</span>
-                      </div>
-                      <BulkPriceRefreshButton />
-                    </div>
-                  </div>
-                  <div className="settings-section">
-                    <div className="settings-section-title">Status Automation</div>
-                    {!wfmLoggedIn && (
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, lineHeight: 1.5,
-                        padding: "6px 10px", background: "rgba(255,255,255,.04)", borderRadius: 5 }}>
-                        Log in to warframe.market in the <strong>Market</strong> tab to enable these features.
-                      </div>
-                    )}
-                    <div className="settings-row" style={{ opacity: wfmLoggedIn ? 1 : 0.45, pointerEvents: wfmLoggedIn ? "auto" : "none" }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Go Invisible on startup</span>
-                        <span className="settings-row-desc">When FrameForge opens, immediately set your WFM status to Invisible.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: wfmInvisibleOnStart ? "rgba(56,139,253,.15)" : undefined, borderColor: wfmInvisibleOnStart ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !wfmInvisibleOnStart;
-                          setWfmInvisibleOnStart(next);
-                          wfmInvisibleOnStartRef.current = next;
-                          settingsRef.current = { ...settingsRef.current, wfmInvisibleOnStart: next };
-                          saveAllSettings();
-                        }}
-                      >{wfmInvisibleOnStart ? "On" : "Off"}</button>
-                    </div>
-
-                    <div className="settings-row" style={{ marginTop: 8, opacity: wfmLoggedIn ? 1 : 0.45, pointerEvents: wfmLoggedIn ? "auto" : "none" }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Go Invisible on close</span>
-                        <span className="settings-row-desc">Before FrameForge exits (X button or taskbar close), set your WFM status to Invisible.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: wfmInvisibleOnClose ? "rgba(56,139,253,.15)" : undefined, borderColor: wfmInvisibleOnClose ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !wfmInvisibleOnClose;
-                          setWfmInvisibleOnClose(next);
-                          wfmInvisibleOnCloseRef.current = next;
-                          settingsRef.current = { ...settingsRef.current, wfmInvisibleOnClose: next };
-                          saveAllSettings();
-                        }}
-                      >{wfmInvisibleOnClose ? "On" : "Off"}</button>
-                    </div>
-
-                    <div className="settings-row" style={{ marginTop: 8, opacity: wfmLoggedIn ? 1 : 0.45, pointerEvents: wfmLoggedIn ? "auto" : "none" }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Auto-invisible timer</span>
-                        <span className="settings-row-desc">
-                          After{" "}
-                          <input
-                            type="number" min={1} max={480} value={wfmAutoInvisibleMins}
-                            disabled={!wfmAutoInvisible}
-                            style={{ width: 48, fontSize: 12, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", padding: "1px 4px", textAlign: "center" }}
-                            onChange={e => {
-                              const v = Math.max(1, Math.min(480, parseInt(e.target.value) || 30));
-                              setWfmAutoInvisibleMins(v);
-                              settingsRef.current = { ...settingsRef.current, wfmAutoInvisibleMins: v };
-                              saveAllSettings();
-                            }}
-                          />{" "}
-                          minutes, automatically set status to Invisible.
-                        </span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: wfmAutoInvisible ? "rgba(56,139,253,.15)" : undefined, borderColor: wfmAutoInvisible ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !wfmAutoInvisible;
-                          setWfmAutoInvisible(next);
-                          settingsRef.current = { ...settingsRef.current, wfmAutoInvisible: next };
-                          saveAllSettings();
-                        }}
-                      >{wfmAutoInvisible ? "On" : "Off"}</button>
-                    </div>
-                  </div>
-                </>}
-
-                {/* ════════════ ACCESSIBILITY ════════════ */}
-                {settingsTab === "accessibility" && <>
-                  <div className="settings-section">
-                    <div className="settings-section-title">Appearance</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Colorblind Mode</span>
-                        <span className="settings-row-desc">Adds ✓ / ✓✓ symbols to relic reward boxes so status doesn't rely on color alone.</span>
-                      </div>
-                      <button
-                        className="btn-secondary"
-                        style={{ minWidth: 64, background: colorblindMode ? "rgba(56,139,253,.15)" : undefined, borderColor: colorblindMode ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !colorblindMode;
-                          setColorblindMode(next);
-                          localStorage.setItem("ff-colorblind", String(next));
-                          settingsRef.current = { ...settingsRef.current, colorblindMode: next };
-                          saveAllSettings();
-                        }}
-                      >{colorblindMode ? "On" : "Off"}</button>
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8 }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Text Size</span>
-                        <span className="settings-row-desc">{Math.round(textScale * 100)}%</span>
-                      </div>
-                      <input type="range" min="0.8" max="2.0" step="0.1" value={textScale}
-                        style={{ width: 120 }}
-                        onChange={e => {
-                          const v = parseFloat(e.target.value);
-                          setTextScale(v);
-                          document.documentElement.style.setProperty("--ff-scale", v.toString());
-                          localStorage.setItem("ff-text-scale", v.toString());
-                          settingsRef.current = { ...settingsRef.current, textScale: v };
-                          saveAllSettings();
-                        }} />
-                    </div>
-                    <div className="settings-row" style={{ marginTop: 8 }}>
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Clock Format</span>
-                        <span className="settings-row-desc">How times are displayed throughout the app.{clockFormat === "auto" ? ` System locale: ${systemLocale}` : ""}</span>
-                      </div>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        {(["auto", "12h", "24h"] as const).map(f => (
-                          <button key={f} className="btn-secondary" style={{ minWidth: 44, background: clockFormat === f ? "rgba(56,139,253,.15)" : undefined, borderColor: clockFormat === f ? "var(--accent)" : undefined }}
-                            onClick={() => {
-                              setClockFormat(f);
-                              settingsRef.current = { ...settingsRef.current, clockFormat: f };
-                              saveAllSettings();
-                            }}>
-                            {f === "auto" ? "Auto" : f}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </>}
-
-                {/* ════════════ DATA ════════════ */}
-                {settingsTab === "data" && <>
-                  <div className="settings-section">
-                    <div className="settings-section-title">Item Database</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Catalog</span>
-                        <span className="settings-row-desc">{itemCount.toLocaleString()} items · {recipeCount.toLocaleString()} recipes cached</span>
-                      </div>
-                      <button className="btn-secondary" onClick={() => { setShowSettings(false); handleFetch(); }} disabled={fetching}>
-                        {fetching ? "Fetching…" : "Refresh"}
-                      </button>
-                    </div>
-                    {fetchMsg && <div className="settings-msg">{fetchMsg}</div>}
-                  </div>
-                  <div className="settings-section">
-                    <div className="settings-section-title">Inventory Cache</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Clear Cache</span>
-                        <span className="settings-row-desc">Reset all scanned quantities and changelog.</span>
-                      </div>
-                      <button
-                        className="btn-danger"
-                        onClick={async () => {
-                          try {
-                            await invoke("clear_cache");
-                            setQuantities({});
-                            setApiQuantities({});
-                            setApiModCopies([]);
-                            setScannerMods({});
-                            setMasteryData({});
-                            setArchonShards({});
-                            setFormaData({});
-                            setChangeLog([]);
-                            setLastChanged({});
-                            setWfConnected(false);
-                            wfConnectedRef.current = false;
-                            invoke("save_api_inventory", { apiQuantities: {}, apiModCopies: [], consumedSuits: [] }).catch(() => {});
-                            setItemsRefreshKey(k => k + 1);
-                            setClearMsg("Cache cleared.");
-                          } catch (e) { setClearMsg(`Error: ${e}`); }
-                        }}
-                      >Clear Cache</button>
-                    </div>
-                    {clearMsg && <div className="settings-msg">{clearMsg}</div>}
-                  </div>
-                  <div className="settings-section" style={{ borderColor: "rgba(224,82,82,.3)" }}>
-                    <div className="settings-section-title" style={{ color: "var(--red)" }}>Factory Reset</div>
-                    <div className="settings-row">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Reset Everything</span>
-                        <span className="settings-row-desc">Delete all app data — settings, inventory cache, trade log, market prices, WFM login — and restart. Cannot be undone.</span>
-                      </div>
-                      <FactoryResetButton />
-                    </div>
-                  </div>
-                </>}
-
-                {/* ════════════ DEBUGGING ════════════ */}
-                {settingsTab === "debugging" && <>
-
-                  <div className="settings-section">
-                    <div className="settings-section-title">Loggers</div>
-                    <div className="debug-table">
-
-                      {/* Inventory Snapshots */}
-                      <div className="settings-row-info" style={{ opacity: memoryScannerEnabled ? 1 : 0.4 }}>
-                        <span className="settings-row-label">Inventory Snapshots</span>
-                        <span className="settings-row-desc">Saves a JSON snapshot on each memory scan.</span>
-                      </div>
-                      <button className="btn-secondary" style={{ opacity: memoryScannerEnabled ? 1 : 0.4, pointerEvents: memoryScannerEnabled ? "auto" : "none" }}
-                        onClick={() => invoke("open_debug_folder", { which: "blobs" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary"
-                        style={{ background: blobLogEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: blobLogEnabled ? "var(--accent)" : undefined, opacity: memoryScannerEnabled ? 1 : 0.4, pointerEvents: memoryScannerEnabled ? "auto" : "none" }}
-                        onClick={() => setBlobLogEnabled(v => !v)}>{blobLogEnabled ? "On" : "Off"}</button>
-                      <button className="btn-secondary"
-                        style={{ color: blobLogSize > 0 ? "var(--red)" : undefined, borderColor: blobLogSize > 0 ? "var(--red)" : undefined, opacity: memoryScannerEnabled ? 1 : 0.4, pointerEvents: memoryScannerEnabled ? "auto" : "none" }}
-                        disabled={blobLogSize === 0}
-                        onClick={async () => { await invoke("clear_debug_data", { which: "blobs" }); setBlobLogSize(0); }}
-                      >{blobLogSize > 0 ? `Clear (${fmtBytes(blobLogSize)})` : "Clear"}</button>
-
-                      {/* API Responses */}
-                      <div className="settings-row-info" style={{ opacity: companionApiEnabled ? 1 : 0.4 }}>
-                        <span className="settings-row-label">API Responses</span>
-                        <span className="settings-row-desc">Records raw DE API responses on each inventory fetch.</span>
-                      </div>
-                      <button className="btn-secondary" style={{ opacity: companionApiEnabled ? 1 : 0.4, pointerEvents: companionApiEnabled ? "auto" : "none" }}
-                        onClick={() => invoke("open_debug_folder", { which: "api_logs" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary"
-                        style={{ background: apiLogEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: apiLogEnabled ? "var(--accent)" : undefined, opacity: companionApiEnabled ? 1 : 0.4, pointerEvents: companionApiEnabled ? "auto" : "none" }}
-                        onClick={() => setApiLogEnabled(v => !v)}>{apiLogEnabled ? "On" : "Off"}</button>
-                      <button className="btn-secondary"
-                        style={{ color: apiLogSize > 0 ? "var(--red)" : undefined, borderColor: apiLogSize > 0 ? "var(--red)" : undefined, opacity: companionApiEnabled ? 1 : 0.4, pointerEvents: companionApiEnabled ? "auto" : "none" }}
-                        disabled={apiLogSize === 0}
-                        onClick={async () => { await invoke("clear_debug_data", { which: "api_logs" }); setApiLogSize(0); }}
-                      >{apiLogSize > 0 ? `Clear (${fmtBytes(apiLogSize)})` : "Clear"}</button>
-
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <div className="settings-section-title">Diagnostics</div>
-                    <div className="debug-table">
-
-                      {/* Test Notification */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Test Notification</span>
-                        <span className="settings-row-desc">
-                          Send a desktop notification now, to check the OS delivers them at all.
-                          {notifyTestResult && <span style={{ display: "block", marginTop: 2, color: notifyTestResult.startsWith("Sent") ? "var(--green)" : "var(--red)", fontSize: 11 }}>{notifyTestResult}</span>}
-                        </span>
-                      </div>
-                      <div />{/* Go To Folder placeholder */}
-                      <button className="btn-secondary" onClick={async () => {
-                        setNotifyTestResult("");
-                        if (!(await ensurePermission())) {
-                          setNotifyTestResult("Permission denied — notifications are blocked for FrameForge in your system settings.");
-                          return;
-                        }
-                        await notify("FrameForge", "Test notification — watched fissure alerts will look like this.");
-                        setNotifyTestResult("Sent. If nothing appeared, the OS notification daemon is dropping it.");
-                      }}>Send</button>
-                      <div />{/* Clear placeholder */}
-
-                      {/* Overlay Log */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Overlay Log</span>
-                        <span className="settings-row-desc">Step-by-step log of the last relic overlay attempt.</span>
-                      </div>
-                      <div />{/* Go To Folder placeholder */}
-                      <button className="btn-secondary" onClick={async () => {
-                        try { alert(await invoke<string>("get_overlay_session_log")); }
-                        catch (e) { alert(`Error: ${e}`); }
-                      }}>View</button>
-                      <button className="btn-secondary" onClick={async () => {
-                        try {
-                          const log = await invoke<string>("get_overlay_session_log");
-                          navigator.clipboard.writeText(log).then(() => {
-                            setOverlayLogCopied(true);
-                            setTimeout(() => setOverlayLogCopied(false), 1500);
-                          }).catch(() => {});
-                        }
-                        catch (e) { alert(`Error: ${e}`); }
-                      }}>{overlayLogCopied ? "✓ Copied" : "Copy"}</button>
-
-                      {/* Auto-capture */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Auto-capture</span>
-                        <span className="settings-row-desc">Automatically saves a screenshot and OCR session log for every relic reward screen. One folder is created per relic in the diagnostics directory.</span>
-                      </div>
-                      <button className="btn-secondary" onClick={() => invoke("open_debug_folder", { which: "diag" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary"
-                        style={{ background: autoDiagEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: autoDiagEnabled ? "var(--accent)" : undefined }}
-                        onClick={() => {
-                          const next = !autoDiagEnabled;
-                          setAutoDiagEnabled(next);
-                          localStorage.setItem("ff-auto-diag", String(next));
-                          settingsRef.current = { ...settingsRef.current, autoDiagEnabled: next };
-                          saveAllSettings();
-                        }}>{autoDiagEnabled ? "On" : "Off"}</button>
-                      <button className="btn-secondary"
-                        style={{ color: diagFolderSize > 0 ? "var(--red)" : undefined, borderColor: diagFolderSize > 0 ? "var(--red)" : undefined }}
-                        disabled={diagFolderSize === 0}
-                        onClick={async () => { await invoke("clear_diag_folder"); setDiagFolderSize(0); }}
-                      >{diagFolderSize > 0 ? `Clear (${fmtBytes(diagFolderSize)})` : "Clear"}</button>
-
-                      {/* Manual Capture */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Manual Capture</span>
-                        <span className="settings-row-desc">
-                          Take a diagnostic screenshot + scan log right now.
-                          {diagPath && <span style={{ display: "block", marginTop: 2, color: "var(--green)", fontSize: 11 }}>Saved.</span>}
-                        </span>
-                      </div>
-                      <button className="btn-secondary" onClick={() => invoke("open_debug_folder", { which: "manual_capture" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary" disabled={diagCapturing}
-                        onClick={async () => {
-                          setDiagCapturing(true); setDiagPath(null);
-                          try { const p = await invoke<string>("capture_diagnostics"); setDiagPath(p); reloadDebugSizes(); }
-                          catch (e) { setDiagPath(`Error: ${e}`); }
-                          finally { setDiagCapturing(false); }
-                        }}>{diagCapturing ? "Working…" : "Capture"}</button>
-                      <div />{/* Clear placeholder */}
-
-                      {/* Memory Probe */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Memory Probe</span>
-                        <span className="settings-row-desc">Dumps inventory strings from Warframe's memory.</span>
-                      </div>
-                      <button className="btn-secondary" onClick={() => invoke("open_debug_folder", { which: "probe" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary" disabled={memoryProbing} onClick={() => {
-                        setMemoryProbing(true);
-                        invoke<string>("dump_memory_probe")
-                          .then(result => {
-                            alert(`Probe complete — ${result.split("\n").filter(l => l.trim()).length} entries written.`);
-                            reloadDebugSizes();
-                          })
-                          .catch(e => alert("Probe failed: " + String(e)))
-                          .finally(() => setMemoryProbing(false));
-                      }}>{memoryProbing ? "Running…" : "Run"}</button>
-                      <button className="btn-secondary"
-                        style={{ color: probeSize > 0 ? "var(--red)" : undefined, borderColor: probeSize > 0 ? "var(--red)" : undefined }}
-                        disabled={probeSize === 0}
-                        onClick={async () => { await invoke("clear_debug_data", { which: "probe" }); setProbeSize(0); }}
-                      >{probeSize > 0 ? `Clear (${fmtBytes(probeSize)})` : "Clear"}</button>
-
-                      {/* Raw Memory Record */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Raw Memory Record</span>
-                        <span className="settings-row-desc">{rawScanning ? "Recording — navigate in-game, then click Stop." : "Records all readable memory strings while you navigate in-game."}</span>
-                      </div>
-                      <button className="btn-secondary" onClick={() => invoke("open_debug_folder", { which: "raw_scan" }).catch(() => {})}>Go To Folder</button>
-                      <button className={rawScanning ? "btn-danger" : "btn-secondary"}
-                        onClick={() => {
-                          invoke<string>("toggle_raw_scan")
-                            .then(status => { const active = status === "started"; setRawScanning(active); if (!active) reloadDebugSizes(); })
-                            .catch(e => alert("Error: " + String(e)));
-                        }}>{rawScanning ? "Stop" : "Record"}</button>
-                      <button className="btn-secondary"
-                        style={{ color: rawScanSize > 0 ? "var(--red)" : undefined, borderColor: rawScanSize > 0 ? "var(--red)" : undefined }}
-                        disabled={rawScanSize === 0 || rawScanning}
-                        onClick={async () => { await invoke("clear_debug_data", { which: "raw_scan" }); setRawScanSize(0); }}
-                      >{rawScanSize > 0 ? `Clear (${fmtBytes(rawScanSize)})` : "Clear"}</button>
-
-                      {/* Memory Relic Debug */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Memory Relic Debug</span>
-                        <span className="settings-row-desc">{memRelicDebugRunning ? "Running — tailing EE.log and scanning Warframe memory. Log at %TEMP%\\frameforge_mem_relic_debug.log." : "Tails EE.log and scans Warframe memory for relic reward patterns. Writes everything to a log file."}</span>
-                      </div>
-                      <div />{/* no folder button */}
-                      <button className={memRelicDebugRunning ? "btn-danger" : "btn-secondary"}
-                        onClick={async () => {
-                          if (memRelicDebugRunning) {
-                            await invoke("stop_memory_relic_debug").catch(() => {});
-                            setMemRelicDebugRunning(false);
-                          } else {
-                            try {
-                              const path = await invoke<string>("start_memory_relic_debug");
-                              setMemRelicDebugRunning(true);
-                              alert(`Memory relic debug started.\nLog: ${path}`);
-                            } catch (e) { alert("Error: " + String(e)); }
-                          }
-                        }}>{memRelicDebugRunning ? "End" : "Start"}</button>
-                      <div />{/* no clear button */}
-
-                    </div>
-                  </div>
-
-                  <div className="settings-section">
-                    <div className="settings-section-title">Relic Pick Overlay</div>
-                    <div className="debug-table">
-
-                      {/* OCR Era Test */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">OCR Era Detect</span>
-                        <span className="settings-row-desc">
-                          Reads the top-left quarter of the Warframe window and reports which fissure era OCR finds.
-                          {relicPickOcrResult && <span style={{ display: "block", marginTop: 2, color: "var(--accent)", fontSize: 11 }}>{relicPickOcrResult}</span>}
-                        </span>
-                      </div>
-                      <div />
-                      <button className="btn-secondary" disabled={relicPickOcrTesting} onClick={async () => {
-                        setRelicPickOcrTesting(true); setRelicPickOcrResult(null);
-                        try { setRelicPickOcrResult(await invoke<string>("debug_detect_fissure_era")); }
-                        catch (e) { setRelicPickOcrResult(`Error: ${e}`); }
-                        finally { setRelicPickOcrTesting(false); }
-                      }}>{relicPickOcrTesting ? "Running…" : "Test OCR"}</button>
-                      <div />
-
-                      {/* Test Overlay */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Test Overlay</span>
-                        <span className="settings-row-desc">
-                          Manually fire the relic pick overlay with a specific era.
-                          {relicPickTestResult && <span style={{ display: "block", marginTop: 2, color: "var(--accent)", fontSize: 11 }}>{relicPickTestResult}</span>}
-                        </span>
-                      </div>
-                      <div />
-                      <select
-                        value={relicPickTestEra}
-                        onChange={e => setRelicPickTestEra(e.target.value)}
-                        style={{ fontSize: 12, padding: "3px 6px", borderRadius: 4, background: "var(--bg2)", border: "1px solid var(--border)", color: "var(--text)" }}
-                      >
-                        {["LITH","MESO","NEO","AXI","ALL"].map(e => <option key={e} value={e}>{e}</option>)}
-                      </select>
-                      <button className="btn-secondary" onClick={async () => {
-                        setRelicPickTestResult(null);
-                        try { setRelicPickTestResult(await invoke<string>("test_relic_pick_overlay", { era: relicPickTestEra })); }
-                        catch (e) { setRelicPickTestResult(`Error: ${e}`); }
-                      }}>Launch</button>
-
-                      {/* EE.log tail — reveals what string to trigger on */}
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">EE.log Tail</span>
-                        <span className="settings-row-desc">
-                          Open the relic screen in-game, then click this to see what EE.log wrote.
-                          Paste the result here so we can find the correct trigger string.
-                        </span>
-                      </div>
-                      <div />
-                      <button className="btn-secondary" onClick={async () => {
-                        setEeLogTail(null);
-                        try { setEeLogTail(await invoke<string>("debug_ee_log_tail")); }
-                        catch (e) { setEeLogTail(`Error: ${e}`); }
-                      }}>Tail Log</button>
-                      <div />
-                      {eeLogTail && (
-                        <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
-                          <textarea
-                            readOnly
-                            value={eeLogTail}
-                            style={{
-                              width: "100%", height: 160, fontSize: 10, fontFamily: "monospace",
-                              background: "var(--bg2)", border: "1px solid var(--border)",
-                              color: "var(--text)", borderRadius: 4, padding: 6,
-                              resize: "vertical", boxSizing: "border-box"
-                            }}
-                          />
-                        </div>
-                      )}
-
-                    </div>
-                  </div>
-
-                  {/* ── Categorization Debug ── */}
-                  <div className="settings-section">
-                    <div className="settings-section-title">Categorization Debug</div>
-                    <div className="debug-table">
-                      <div className="settings-row-info">
-                        <span className="settings-row-label">Unmatched Paths</span>
-                        <span className="settings-row-desc">
-                          When on, writes a JSON file per scan to the Unmatched Paths folder for any inventory path with no WFCD match or that fell to the Misc catch-all.
-                        </span>
-                      </div>
-                      <button className="btn-secondary"
-                        onClick={() => invoke("open_debug_folder", { which: "unmatched_paths" }).catch(() => {})}>Go To Folder</button>
-                      <button className="btn-secondary"
-                        style={{ background: debugCatEnabled ? "rgba(56,139,253,.15)" : undefined, borderColor: debugCatEnabled ? "var(--accent)" : undefined }}
-                        onClick={() => invoke<boolean>("toggle_debug_categorization").then(setDebugCatEnabled).catch(() => {})}>
-                        {debugCatEnabled ? "On" : "Off"}
-                      </button>
-                      <button className="btn-secondary"
-                        style={{ color: unmatchedPathsSize > 0 ? "var(--red)" : undefined, borderColor: unmatchedPathsSize > 0 ? "var(--red)" : undefined }}
-                        disabled={unmatchedPathsSize === 0}
-                        onClick={async () => { await invoke("clear_debug_data", { which: "unmatched_paths" }); setUnmatchedPathsSize(0); }}>
-                        {unmatchedPathsSize > 0 ? `Clear (${fmtBytes(unmatchedPathsSize)})` : "Clear"}
-                      </button>
-                    </div>
-                  </div>
-
-                </>}
-
-                {/* ════ Shared About footer — always visible ════ */}
-                <div className="settings-section" style={{ marginTop: "auto", borderTop: "1px solid var(--border)", borderBottom: "none" }}>
-                  <div className="settings-row">
-                    <div className="settings-row-info">
-                      <span className="settings-row-label">FrameForge</span>
-                      <span className="settings-row-desc">Version <strong>{appVersion}</strong></span>
-                    </div>
-                  </div>
-                </div>
-
-              </div>{/* end settings-body */}
-            </div>{/* end settings-layout */}
-          </div>
-        </div>
-      )}
+      {showInventoryBatchPreview && <InventoryBatchPreview onClose={closeInventoryBatchPreview} />}
 
       <div className="body">
 
-        {/* ── Module navigation ── */}
-        <nav className="module-nav">
-          <button
-            className={`module-btn ${activeModule === "inventory" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("inventory")}
-            title="Inventory"
-          >
-            <img src="/inventory-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Inventory</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "foundry" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("foundry")}
-            title="Foundry"
-          >
-            <img src="/foundry-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Foundry</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "market" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("market")}
-            title="Market Helper"
-          >
-            <img src="/market-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Market</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "relics" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("relics")}
-            title="Relic Helper"
-          >
-            <img src="/relic-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Relics</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "timers" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("timers")}
-            title="Timers"
-          >
-            <img src="/timers-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Timers</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "statistics" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("statistics")}
-            title="Statistics"
-          >
-            <img src="/statistics-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Statistics</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "rivens" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("rivens")}
-            title="Riven Analyzer"
-          >
-            <img src="/riven-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Rivens</span>
-          </button>
-          <button
-            className={`module-btn ${activeModule === "completionist" ? "module-active" : ""}`}
-            onClick={() => setActiveModule("completionist")}
-            title="Completionist"
-          >
-            <img src="/completionist-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-            <span className="module-label">Completionist</span>
-          </button>
-        </nav>
+        <AppNavigation activeModule={activeModule} onModuleChange={setActiveModule} />
 
         <div className="app-content">
         <div className="module-content">
         {/* ── Inventory module ── */}
         {activeModule === "inventory" && (
           <>
-            <aside className="sidebar">
-              <div className="sidebar-section-label">Categories</div>
-              {CATEGORIES.map(cat => {
-                const owned = categoryCounts.owned[cat.id] ?? 0;
-                const total = categoryCounts.total[cat.id] ?? 0;
-                return (
-                  <button
-                    key={cat.id}
-                    className={`cat-btn ${category === cat.id ? "cat-active" : ""}`}
-                    onClick={() => setCategory(cat.id)}
-                  >
-                    <span className="cat-label">{cat.label}</span>
-                    <span className="cat-count">
-                      {owned > 0 ? <span className="cat-owned">{owned}</span> : null}
-                      {owned > 0 && <span className="cat-sep">/</span>}
-                      <span className="cat-total">{total}</span>
-                    </span>
-                  </button>
-                );
-              })}
-              <div className="sidebar-divider" />
-              <div className="sidebar-section-label">Item Database</div>
-              <div className="db-count">{itemCount.toLocaleString()} items · {recipeCount.toLocaleString()} recipes</div>
-              <button className="btn-fetch" onClick={handleFetch} disabled={fetching}>
-                {fetching ? "Fetching…" : "Refresh item list"}
-              </button>
-              {fetchMsg && <div className="fetch-msg">{fetchMsg}</div>}
-            </aside>
+            <InventorySidebar
+              categories={CATEGORIES}
+              category={category}
+              categoryCounts={categoryCounts}
+              onCategoryChange={category => setInventoryFilters(previous => ({ ...previous, category }))}
+              itemCount={itemCount}
+              recipeCount={recipeCount}
+              onFetch={handleFetch}
+              fetching={fetching}
+              fetchMsg={fetchMsg}
+            />
 
             <div className="main">
               {monitoring && warframeRunning && !inventorySynced && (
@@ -3171,100 +1774,32 @@ if (typeof s.autoDiagEnabled === "boolean") {
                 </div>
               )}
 
-              <div className="toolbar">
-                <SearchBar
-                  placeholder="Search items…"
-                  value={search}
-                  onChange={setSearch}
-                />
-              </div>
-              <div className="filter-bar">
-                <button className={`fchip ${filterOwned?"fchip-on":""}`} onClick={()=>setFilterOwned(v=>!v)}>Owned</button>
-                <button className={`fchip ${filterRecent?"fchip-on":""}`} onClick={()=>setFilterRecent(v=>{ const next = !v; if (next) { setSortMode("recent"); } else { setSortMode(prevSortRef.current); } return next; })}>Changed recently</button>
-                <button className={`fchip ${filterPrime?"fchip-on":""}`} onClick={()=>setFilterPrime(v=>!v)}>Prime</button>
-                <button className={`fchip ${filterVaulted?"fchip-on":""}`} onClick={()=>setFilterVaulted(v=>!v)}>🔒 Vaulted</button>
-                <button className={`fchip ${filterUnvaulted?"fchip-on":""}`} onClick={()=>setFilterUnvaulted(v=>!v)}>🔓 Unvaulted</button>
-                {apiModCopies.length > 0 && (<>
-                  <span className="fbar-sep"/>
-                  <span className="fbar-label">Rank:</span>
-                  <button className={`fchip ${filterRank==="unranked"?"fchip-on":""}`} onClick={()=>setFilterRank(v=>v==="unranked"?null:"unranked")}>Unranked</button>
-                  {availableRanks.map(r=>(
-                    <button key={r} className={`fchip ${filterRank===r?"fchip-on":""}`} onClick={()=>setFilterRank(v=>v===r?null:r)}>R{r}</button>
-                  ))}
-                </>)}
-                <span className="fbar-sep"/>
-                <span className="fbar-label">Sort:</span>
-                <button className={`fchip ${sortMode==="qty-desc"?"fchip-on":""}`} onClick={()=>setSortMode("qty-desc")}>Qty ↓</button>
-                <button className={`fchip ${sortMode==="qty-asc"?"fchip-on":""}`} onClick={()=>setSortMode("qty-asc")}>Qty ↑</button>
-                <button className={`fchip ${sortMode==="name-asc"?"fchip-on":""}`} onClick={()=>setSortMode("name-asc")}>A-Z</button>
-                <button className={`fchip ${sortMode==="name-desc"?"fchip-on":""}`} onClick={()=>setSortMode("name-desc")}>Z-A</button>
-                <span className="item-count-label" style={{marginLeft:"auto"}}>{visibleItems.length} item{visibleItems.length!==1?"s":""}{visibleItems.length===1000?" (capped)":""}</span>
-                <ViewToggle view={inventoryView} onChange={v => { setInventoryView(v); localStorage.setItem("ff-view-inventory", v); }} />
-                <HelpTip items={[
-                  { icon: "★",  label: "★  Mastered",  desc: "Shown above image — item levelled to rank 30" },
-                  { icon: "R5", label: "R{n}  Rank",   desc: "Shown above image — current rank, not yet mastered" },
-                  { icon: "⚒",  label: "⚒  Building",  desc: "Shown on image — currently crafting in Foundry" },
-                  { swatch: "rgba(63,185,80,.5)",  label: "Green border", desc: "Item recently gained" },
-                  { swatch: "rgba(248,81,73,.5)",  label: "Red border",   desc: "Item recently lost or consumed" },
-                ]} />
-              </div>
+              <InventoryToolbar
+                filters={inventoryFilters}
+                onFiltersChange={setInventoryFilters}
+                onToggleRecent={toggleInventoryRecent}
+                availableRanks={availableRanks}
+                showRankFilters={apiModCopies.length > 0}
+                itemCount={visibleItems.length}
+                view={inventoryView}
+                onViewChange={setInventoryViewPreference}
+              />
 
-              <div className={`item-grid item-grid-${inventoryView}`}
-                   onContextMenu={e => {
-                     const name = extractItemName(e);
-                     if (name) { e.preventDefault(); openCtx(e.clientX, e.clientY, [
-                       { label: "Open Wiki", action: () => openWiki(name) },
-                       { label: "Copy Wiki Link", action: () => copyWikiLink(name) },
-                     ]); }
-                   }}>
-                {visibleItems.length === 0 ? (
-                  <div className="empty-msg" style={{gridColumn:"1/-1"}}>
-                    {monitoring
-                      ? "No items found. Complete a mission or visit a relay to sync inventory."
-                      : "Start the monitor to begin tracking your inventory."}
-                  </div>
-                ) : (
-                  visibleItems.flatMap(item => {
-                    // Mods & Arcanes: single card with inline rank breakdown
-                    if ((item.category === "Mods" || item.category === "Arcanes") && modCopiesMap[item.unique_name]) {
-                      const copies = modCopiesMap[item.unique_name];
-                      const byRank: Record<number, number> = {};
-                      for (const c of copies) byRank[c.rank ?? 0] = (byRank[c.rank ?? 0] ?? 0) + c.count;
-                      const maxRank = Math.max(...Object.keys(byRank).map(Number));
-                      const ranks = Array.from({ length: maxRank + 1 }, (_, r) => ({ rank: r, count: byRank[r] ?? 0 })).filter(r => r.count > 0);
-                      if (filterRank !== null) {
-                        const targetRank = filterRank === "unranked" ? 0 : filterRank as number;
-                        if ((byRank[targetRank] ?? 0) === 0) return [];
-                      }
-                      const total = Object.values(byRank).reduce((a, b) => a + b, 0);
-                      return [(
-                        <InvModCard key={item.unique_name}
-                          unique_name={item.unique_name} name={item.name}
-                          category={item.category} image_name={item.image_name}
-                          ranks={ranks} total={total} view={inventoryView} />
-                      )];
-                    }
-
-                    // Normal item card
-                    const changedAt = lastChanged[item.unique_name];
-                    const recentChange = changedAt != null ? changeLogMap.get(item.unique_name) : undefined;
-                    const craftJob = craftingMap.get(item.unique_name);
-                    return [(
-                      <InvCard key={item.unique_name}
-                        unique_name={item.unique_name} name={item.name}
-                        category={item.category} image_name={item.image_name}
-                        qty={item.qty}
-                        isFavorite={favoritesSet.has(item.unique_name)}
-                        changedAt={changedAt}
-                        recentDelta={recentChange?.delta ?? null}
-                        craftJobName={craftJob?.item_name ?? null}
-                        masteryRank={inventory[item.unique_name]?.mastery_rank}
-                        onToggleFavorite={toggleFavorite}
-                        view={inventoryView} />
-                    )];
-                  })
-                )}
-              </div>
+              <InventoryGrid
+                items={visibleItems}
+                loading={!inventoryReady}
+                monitoring={monitoring}
+                view={inventoryView}
+                inventory={inventory}
+                modCopies={modCopiesMap}
+                favorites={favoritesSet}
+                lastChanged={lastChanged}
+                changes={changeLogMap}
+                crafting={craftingMap}
+                filterRank={filterRank}
+                onToggleFavorite={toggleFavorite}
+                onContextMenu={handleInventoryContextMenu}
+              />
 
             </div>
           </>
@@ -3282,9 +1817,9 @@ if (typeof s.autoDiagEnabled === "boolean") {
         {/* ── Market Helper module ── */}
         {/* Keep mounted at all times so WfmTrading's trade-completed listener
             (auto listing update) fires regardless of which tab is active. */}
-        <div style={{ display: activeModule === "market" ? "contents" : "none" }}>
+        <KeepMountedWhenHidden active={activeModule === "market"}>
           <MarketHelper inventory={inventory} refreshKey={itemsRefreshKey} crafting={crafting} onWfmLoginChange={handleWfmLoginChange} filters={marketFilters} onFiltersChange={setMarketFilters} modCopiesMap={modCopiesMap} />
-        </div>
+        </KeepMountedWhenHidden>
 
         {/* ── Relics module ── */}
         {activeModule === "relics" && (
@@ -3330,39 +1865,12 @@ if (typeof s.autoDiagEnabled === "boolean") {
         {/* ── Completionist module ── */}
         {activeModule === "completionist" && (
           <ErrorBoundary>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-              {/* Top-level view switcher */}
-              <div style={{ display: "flex", gap: 2, padding: "8px 12px 0", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-                {(["syndicates", "weapons"] as const).map(v => (
-                  <button
-                    key={v}
-                    onClick={() => setCompletionistView(v)}
-                    style={{
-                      padding: "5px 16px",
-                      border: "none",
-                      borderRadius: "6px 6px 0 0",
-                      borderBottom: `3px solid ${completionistView === v ? "var(--accent, #888)" : "transparent"}`,
-                      background: completionistView === v ? "var(--bg-card)" : "transparent",
-                      color: completionistView === v ? "var(--text)" : "var(--text-dim)",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 500,
-                      marginBottom: -1,
-                      transition: "background 0.15s, color 0.15s",
-                      textTransform: "capitalize",
-                    }}
-                  >
-                    {v === "syndicates" ? "Syndicates" : "Weapons"}
-                  </button>
-                ))}
-              </div>
-              {completionistView === "syndicates" && (
-                <Syndicates inventory={inventory} filters={syndicateFilters} onFiltersChange={setSyndicateFilters} />
-              )}
-              {completionistView === "weapons" && (
-                <Weapons inventory={inventory} activeTab={weaponsTab} onTabChange={setWeaponsTab} />
-              )}
-            </div>
+            <CompletionistTabs
+              view={completionistView}
+              onViewChange={setCompletionistView}
+              syndicates={{ inventory, filters: syndicateFilters, onFiltersChange: setSyndicateFilters }}
+              weapons={{ inventory, activeTab: weaponsTab, onTabChange: setWeaponsTab }}
+            />
           </ErrorBoundary>
         )}
 

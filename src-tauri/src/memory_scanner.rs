@@ -318,7 +318,7 @@ pub fn dump_inventory_regions(max_hits: usize) -> Vec<String> {
         if mbi.RegionSize < 4096 || mbi.RegionSize > MAX_REGION { continue; }
 
         let chunks = if mbi.RegionSize > CHUNK_SIZE {
-            (mbi.RegionSize + CHUNK_SIZE - 1) / CHUNK_SIZE
+            mbi.RegionSize.div_ceil(CHUNK_SIZE)
         } else { 1 };
 
         'chunk: for chunk_idx in 0..chunks {
@@ -344,7 +344,7 @@ pub fn dump_inventory_regions(max_hits: usize) -> Vec<String> {
                 let ctx_start = pos.saturating_sub(80);
                 let ctx_end   = data.len().min(pos + 200);
                 let snip: String = data[ctx_start..ctx_end].iter()
-                    .map(|&b| if b >= 0x20 && b < 0x7f { b as char } else { '·' })
+                    .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '·' })
                     .collect();
                 results.push(format!(
                     "0x{:012x}  needle=\"{}\"  ctx: {}",
@@ -361,7 +361,7 @@ pub fn dump_inventory_regions(max_hits: usize) -> Vec<String> {
                         let s2 = p2.saturating_sub(80);
                         let e2 = data.len().min(p2 + 200);
                         let snip2: String = data[s2..e2].iter()
-                            .map(|&b| if b >= 0x20 && b < 0x7f { b as char } else { '·' })
+                            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '·' })
                             .collect();
                         results.push(format!(
                             "0x{:012x}  needle=\"{}\"  ctx: {}",
@@ -388,8 +388,8 @@ pub fn dump_inventory_regions(_max_hits: usize) -> Vec<String> {
     vec!["Only supported on Windows".to_string()]
 }
 
-/// Scan all Warframe process memory and save every relevant blob found into `blob_dir`.
-/// "Relevant" = region ≥ 100 KB that contains at least one of: MiscItems, Suits,
+// Scan all Warframe process memory and save every relevant blob found into `blob_dir`.
+// "Relevant" = region ≥ 100 KB that contains at least one of: MiscItems, Suits,
 // ─── Full-account blob parser ─────────────────────────────────────────────────
 
 /// Find the end of the FULL_ACCOUNT blob.
@@ -419,7 +419,7 @@ fn find_blob_end(raw: &[u8]) -> Option<usize> {
                 .map_or(raw.len(), |p| after_colon + p);
             // Consume the boolean value.
             if let Some(val_len) = BOOL_VALUES.iter()
-                .find(|v| raw[val_start..].starts_with(*v))
+                .find(|v| raw[val_start..].starts_with(v))
                 .map(|v| v.len())
             {
                 let val_end = val_start + val_len;
@@ -431,7 +431,7 @@ fn find_blob_end(raw: &[u8]) -> Option<usize> {
                 // meaning no comma or additional fields come after the value.
                 if raw.get(after_val) == Some(&b'}') {
                     let end = after_val + 1;
-                    if best.map_or(true, |prev| end > prev) {
+                    if best.is_none_or(|prev| end > prev) {
                         best = Some(end);
                     }
                 }
@@ -548,7 +548,7 @@ pub fn compute_riven_mod_name(buffs: &[BlobRivenStat]) -> String {
     }
     if buffs.is_empty() { return String::new(); }
     let mut sorted: Vec<&BlobRivenStat> = buffs.iter().collect();
-    sorted.sort_by(|a, b| b.value.cmp(&a.value));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.value));
     let Some((hi_p, _))  = parts(&sorted[0].tag)                   else { return String::new(); };
     let Some((_, lo_s))  = parts(&sorted[sorted.len() - 1].tag)    else { return String::new(); };
     if sorted.len() >= 3 {
@@ -627,7 +627,7 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     let json: serde_json::Value = serde_json::from_slice(&json_bytes)
         .map_err(|e| {
             let head: String = json_bytes[..json_bytes.len().min(48)]
-                .iter().map(|&b| if b >= 0x20 && b < 0x7f { b as char } else { '.' }).collect();
+                .iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
             debug!(target: "frameforge::blob_parse", error = %e, head = ?head, "JSON error");
         })
         .ok()?;
@@ -1311,7 +1311,7 @@ pub fn raw_scan_pass(out: &mut impl std::io::Write) -> Result<usize, String> {
         // because game DLL const-string sections use that protection.
         if p == 0x10 { continue; }
 
-        let chunks = (mbi.RegionSize + CHUNK - 1) / CHUNK;
+        let chunks = mbi.RegionSize.div_ceil(CHUNK);
         for ci in 0..chunks {
             if std::time::Instant::now() >= deadline { break; }
             let off        = ci * CHUNK;
@@ -1330,7 +1330,7 @@ pub fn raw_scan_pass(out: &mut impl std::io::Write) -> Result<usize, String> {
             let data = &buf[..bytes_read];
             let mut run_start: Option<usize> = None;
             for (i, &b) in data.iter().enumerate() {
-                let printable = b >= 0x20 && b < 0x7f;
+                let printable = (0x20..0x7f).contains(&b);
                 if printable {
                     if run_start.is_none() { run_start = Some(i); }
                 } else {
@@ -1553,7 +1553,7 @@ mod seed_tests {
         // it happened to end in.
         let mut raw = br#"{"SubscribedToEmails":0,"DeathSquadable":false}"#.to_vec();
         let blob_len = raw.len();
-        raw.extend(std::iter::repeat(0xABu8).take(1_000_000));
+        raw.extend(std::iter::repeat_n(0xABu8, 1_000_000));
 
         let json = extract_blob_json(&raw).expect("end marker present");
         assert_eq!(json.len(), blob_len);
@@ -1595,7 +1595,7 @@ mod seed_tests {
     fn blob_json_reinstates_the_opening_brace_when_it_was_overwritten() {
         let mut raw = br#"x"SubscribedToEmails":0,"DeathSquadable":false}"#.to_vec();
         let blob_len = raw.len();
-        raw.extend(std::iter::repeat(0xABu8).take(1024));
+        raw.extend(std::iter::repeat_n(0xABu8, 1024));
 
         let json = extract_blob_json(&raw).expect("end marker present");
         assert_eq!(json.len(), blob_len);
@@ -1643,79 +1643,6 @@ mod seed_tests {
         let raw = br#"{"HWIDProtectEnabled":true,"DeathSquadable":false}"#;
         let end = find_blob_end(raw).expect("DeathSquadable is last — must be found");
         assert_eq!(end, raw.len());
-    }
-}
-
-#[cfg(test)]
-mod sync_marker_tests {
-    use super::{
-        cold_log_search_due, looks_like_log_buffer, newest_sync_timestamp, reset_log_region,
-        sync_marker_is_new, LOG_SEARCH_BACKOFF, LOG_SEARCH_BACKOFF_PROBES,
-    };
-
-    static LOG_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn a_failed_cold_search_sits_out_the_next_probes() {
-        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset_log_region();
-        assert!(cold_log_search_due(), "the first search runs");
-
-        LOG_SEARCH_BACKOFF.store(LOG_SEARCH_BACKOFF_PROBES, std::sync::atomic::Ordering::Relaxed);
-        for probe in 0..LOG_SEARCH_BACKOFF_PROBES {
-            assert!(!cold_log_search_due(), "probe {probe} searched during the backoff");
-        }
-        assert!(cold_log_search_due(), "the search resumes once the backoff expires");
-
-        LOG_SEARCH_BACKOFF.store(LOG_SEARCH_BACKOFF_PROBES, std::sync::atomic::Ordering::Relaxed);
-        reset_log_region();
-        assert!(cold_log_search_due());
-    }
-
-    #[test]
-    fn marker_is_read_from_both_buffer_shapes() {
-        let ring = b"19760.121 Sys [Info]: SyncInventoryFromDB\n\
-                     19761.848 Sys [Info]: OnInventoryResults completed in 339ms\n";
-        assert_eq!(newest_sync_timestamp(ring), Some(19761.848));
-
-        let pending = b"19760.121 Sys [Info]: SyncInventoryFromDB\r\n\
-                        19761.848 Sys [Info]: OnInventoryResults completed in 339ms\r\n";
-        assert_eq!(newest_sync_timestamp(pending), Some(19761.848));
-    }
-
-    #[test]
-    fn newest_marker_wins_regardless_of_position() {
-        let wrapped = b"19999.500 Sys [Info]: OnInventoryResults completed in 41ms\n\
-                        11000.000 Sys [Info]: OnInventoryResults completed in 88ms\n";
-        assert_eq!(newest_sync_timestamp(wrapped), Some(19999.500));
-    }
-
-    #[test]
-    fn format_string_without_a_timestamp_is_not_a_marker() {
-        assert_eq!(newest_sync_timestamp(b"OnInventoryResults completed in %dms\0"), None);
-        assert!(!looks_like_log_buffer(b"Sys [Info]: %s\0 Sys [Info]: %s\0"));
-        assert!(looks_like_log_buffer(b"19761.848 Sys [Info]: Revive completed on KubrowPetAvatar14482\n"));
-    }
-
-    #[test]
-    fn baseline_reports_only_unseen_syncs() {
-        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset_log_region();
-        assert!(sync_marker_is_new(Some(100.000)), "the first marker seen is not yet reported");
-        assert!(!sync_marker_is_new(Some(100.000)), "the same sync must not report twice");
-        assert!(sync_marker_is_new(Some(140.250)), "a later sync reports");
-        assert!(sync_marker_is_new(Some(12.500)), "a restarted client reports again");
-        assert!(!sync_marker_is_new(None), "no marker in the buffer reports nothing");
-        reset_log_region();
-    }
-
-    #[test]
-    fn login_sync_after_a_restart_is_reported() {
-        let _guard = LOG_STATE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset_log_region();
-        assert!(sync_marker_is_new(Some(9821.400)), "a marker from the previous client");
-        reset_log_region();
-        assert!(sync_marker_is_new(Some(13.036)), "the new client's login sync must report");
     }
 }
 

@@ -18,7 +18,8 @@
         "height": 600,
         "minWidth": 640,
         "minHeight": 480,
-        "visible": false
+        "visible": false,
+        "backgroundColor": "#161b22"
       },
       {
         "label": "relic-overlay",

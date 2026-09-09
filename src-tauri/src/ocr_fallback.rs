@@ -151,7 +151,7 @@ pub fn run_ocrs(
     bmp: &[u8],
     img_w: u32,
     img_h: u32,
-) -> Result<(String, Vec<(String, f32, f32)>), String> {
+) -> Result<crate::ocr::OcrResult, String> {
     let engine_arc = get_engine()?;
     let engine = engine_arc
         .lock()

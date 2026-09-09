@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { ConsoleLoginSuccessPayload } from "./types/tauri";
 
 interface Props {
   onLogin: (accountId: string, nonce: string) => void;
@@ -12,7 +13,7 @@ export default function ConsoleLogin({ onLogin }: Props) {
   const [msg, setMsg]       = useState<string | null>(null);
 
   useEffect(() => {
-    const ul = listen<{ accountId: string; nonce: string }>("console-login-success", e => {
+    const ul = listen<ConsoleLoginSuccessPayload>("console-login-success", e => {
       setStatus("done");
       setMsg("Session captured — inventory access active.");
       onLogin(e.payload.accountId, e.payload.nonce);
