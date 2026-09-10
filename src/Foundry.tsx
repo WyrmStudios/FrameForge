@@ -5,7 +5,6 @@ import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
 import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
-import { FOUNDRY_FILTERS_DEFAULT } from "./constants/filters";
 import { WARFRAME_WIKI_BASE, warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
 import type { ArchonShard, CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeComponentStatus, RecipeMap, RelicDropMap } from "./types/items";
@@ -584,7 +583,7 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
 
   const trackedSet = useMemo(() => new Set(tracked), [tracked]);
 
-  // Sync local input when parent resets search (e.g. "Show All" button)
+  // Sync local input when parent resets search through Clear filters.
   useEffect(() => { setInputSearch(filters.search); }, [filters.search]); // eslint-disable-line
 
   // Wait 150 ms after last keystroke before propagating to parent filters
@@ -599,7 +598,6 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
 
   const { search, activeCat, filterPrime, filterNonPrime, filterVaulted, filterUnvaulted, filterMastered, filterUnmastered, filterOwned, filterUnowned, filterReady, filterLvlCap, ignoreFormaKuva } = filters;
   const set = <K extends keyof FoundryFilters>(k: K, v: FoundryFilters[K]) => onFiltersChange({ ...filters, [k]: v });
-  const isFiltered = search !== "" || filterPrime || filterNonPrime || filterVaulted || filterUnvaulted || filterMastered || filterUnmastered || filterOwned || filterUnowned || filterReady || filterLvlCap || ignoreFormaKuva;
 
   useEffect(() => {
     invoke<CatalogItem[]>(TAURI_COMMANDS.GET_CRAFTABLE_ITEMS).then(setCraftable).catch(() => setCraftable([]));
@@ -768,7 +766,6 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
            <button className={`fchip ${filterLvlCap   ? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterLvlCap: !filterLvlCap, ...(!filterLvlCap ? { activeCat: "All" } : {}) })}>Lvl &gt; 30</button>
            <span className="fbar-sep"/>
            <FilterPresets module="foundry" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
-           {isFiltered && <button className="fchip fchip-reset" onClick={() => onFiltersChange({ ...FOUNDRY_FILTERS_DEFAULT, activeCat })}>Show All</button>}
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visible.length} items</span>
           <ViewToggle view={craftView} onChange={v => { setCraftView(v); localStorage.setItem(PREFERENCE_KEYS.FOUNDRY_VIEW, v); }} />
           <HelpTip items={[

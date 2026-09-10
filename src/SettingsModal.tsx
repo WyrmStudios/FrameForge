@@ -453,6 +453,13 @@ export default function SettingsModal(props: SettingsModalProps) {
                       <option value="relics">Relic Browser</option>
                     </select>
                   </div>
+                  <div className="settings-row" style={{ marginTop: 12 }}>
+                    <div className="settings-row-info">
+                      <span className="settings-row-label">Restore previous filters on active preset click</span>
+                      <span className="settings-row-desc">When clicking an active pinned preset again, restore the filters from before it was applied instead of clearing filters.</span>
+                    </div>
+                    <button className="btn-secondary" style={{ minWidth: 64, background: filterPresets.restorePreviousFiltersOnPresetClick ? "rgba(56,139,253,.15)" : undefined, borderColor: filterPresets.restorePreviousFiltersOnPresetClick ? "var(--accent)" : undefined }} onClick={() => setFilterPresets(current => ({ ...current, restorePreviousFiltersOnPresetClick: !current.restorePreviousFiltersOnPresetClick }))}>{filterPresets.restorePreviousFiltersOnPresetClick ? "On" : "Off"}</button>
+                  </div>
                 </div>
                 {settingsFilterModule === "inventory" && <FilterPresets variant="settings" module="inventory" filters={inventoryFilters} onFiltersChange={setInventoryFilters} filterPresets={filterPresets} onFilterPresetsChange={setFilterPresets} />}
                 {settingsFilterModule === "foundry" && <FilterPresets variant="settings" module="foundry" filters={foundryFilters} onFiltersChange={setFoundryFilters} filterPresets={filterPresets} onFilterPresetsChange={setFilterPresets} />}

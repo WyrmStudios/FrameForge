@@ -4,7 +4,6 @@ import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
 import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
-import { RELIC_FILTERS_DEFAULT } from "./constants/filters";
 import { RELIC_DROP_RATES, RELIC_REFINEMENT_LABELS, RELIC_REFINEMENT_ORDER } from "./constants/relics";
 import { warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
@@ -836,7 +835,6 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
           <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
           <button className={`fchip ${sortMode === "za"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "za")}>Z–A</button>
           <span className="fbar-sep"/>
-          <button className="fchip fchip-reset" onClick={() => onFiltersChange(RELIC_FILTERS_DEFAULT)}>Show All</button>
           {dropError && <button className="btn-secondary" style={{ marginLeft: 4 }} onClick={() => loadDrops(true)}>↺ Retry</button>}
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
             {dropLoading ? "Loading…" : `${visibleDrops.length} relics · ${ownedCount} owned`}

@@ -7,7 +7,6 @@ import FilterPresets from "../shared/FilterPresets";
 import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { warframeStatImageUrl } from "../constants/urls";
-import { MARKET_FILTERS_DEFAULT } from "../constants/filters";
 import { matchesSearchTerms, splitSearchTerms } from "../lib/search";
 import { TAURI_COMMANDS } from "../constants/tauri";
 import type { CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeMap } from "../types/items";
@@ -588,7 +587,6 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
           <button className={`fchip ${sortMode === "za"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "za")}>Z–A</button>
           <span className="fbar-sep"/>
-          <button className="fchip fchip-reset" onClick={() => onFiltersChange(MARKET_FILTERS_DEFAULT)}>Show All</button>
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visibleSets.length} sets</span>
           <HelpTip items={[
             { swatch: "rgba(240,192,64,.5)", icon: "✓", label: "Complete set", desc: "Gold border + ✓ — all parts in inventory" },

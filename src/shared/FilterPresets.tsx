@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
+import { FOUNDRY_FILTERS_DEFAULT, INVENTORY_FILTERS_DEFAULT, MARKET_FILTERS_DEFAULT, RELIC_FILTERS_DEFAULT } from "../constants/filters";
 import type { FilterPreset, FilterPresetFiltersByModule, FilterPresetModule, FilterPresetSettings } from "../types/filterPresets";
 import type { FoundryFilters, InventoryFilters, MarketFilters, RelicFilters } from "../types/filters";
 
@@ -21,6 +22,13 @@ function presetFilters<M extends FilterPresetModule>(module: M, filters: Current
     return preset as FilterPresetFiltersByModule[M];
   }
   return filters as FilterPresetFiltersByModule[M];
+}
+
+function defaultFilters<M extends FilterPresetModule>(module: M, filters: CurrentFiltersByModule[M]): CurrentFiltersByModule[M] {
+  if (module === "foundry") return { ...FOUNDRY_FILTERS_DEFAULT, activeCat: (filters as FoundryFilters).activeCat } as CurrentFiltersByModule[M];
+  if (module === "market") return { ...MARKET_FILTERS_DEFAULT, activeMarketTab: (filters as MarketFilters).activeMarketTab } as CurrentFiltersByModule[M];
+  if (module === "relics") return RELIC_FILTERS_DEFAULT as CurrentFiltersByModule[M];
+  return INVENTORY_FILTERS_DEFAULT as CurrentFiltersByModule[M];
 }
 
 interface PresetDrag {
@@ -59,6 +67,8 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
   const sectionRefs = useRef(new Map<boolean, HTMLElement>());
   const dragRef = useRef<PresetDrag | null>(null);
   const [drag, setDrag] = useState<PresetDrag | null>(null);
+  const [filtersBeforeClear, setFiltersBeforeClear] = useState<CurrentFiltersByModule[M] | null>(null);
+  const [filtersBeforePreset, setFiltersBeforePreset] = useState<CurrentFiltersByModule[M] | null>(null);
   const modulePresets = filterPresets.presets.filter((preset): preset is ModulePreset<M> => preset.module === module);
   const pinnedPresets = modulePresets.filter(preset => preset.pinned);
   const unpinnedPresets = modulePresets.filter(preset => !preset.pinned);
@@ -204,8 +214,29 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
     if (saving || editingId) inputRef.current?.focus();
   }, [saving, editingId]);
 
-  const apply = (preset: ModulePreset<M>) => {
+  const clearFilters = () => {
+    if (filtersBeforeClear) {
+      onFiltersChange(filtersBeforeClear);
+      setFiltersBeforeClear(null);
+      return;
+    }
+    setFiltersBeforeClear({ ...filters });
+    onFiltersChange(current => defaultFilters(module, current));
+  };
+
+  const apply = (preset: ModulePreset<M>, activeChip = false) => {
+    if (activeChip && isPresetActive(preset)) {
+      if (filterPresets.restorePreviousFiltersOnPresetClick && filtersBeforePreset) {
+        onFiltersChange(filtersBeforePreset);
+        setFiltersBeforePreset(null);
+      } else {
+        clearFilters();
+      }
+      return;
+    }
     // The module-specific preset payload excludes UI state that must stay local.
+    setFiltersBeforeClear(null);
+    setFiltersBeforePreset({ ...filters });
     onFiltersChange(current => ({ ...current, ...preset.filters }) as CurrentFiltersByModule[M]);
     close();
   };
@@ -323,8 +354,9 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
 
   if (variant === "settings") return manager;
   return <>
-    {pinnedPresets.map(preset => <button key={preset.id} className={`fchip inventory-preset-chip ${isPresetActive(preset) ? "fchip-on" : ""}`} onClick={() => apply(preset)}>{preset.name}</button>)}
+    {pinnedPresets.map(preset => <button key={preset.id} className={`fchip inventory-preset-chip ${isPresetActive(preset) ? "fchip-on" : ""}`} onClick={() => apply(preset, true)}>{preset.name}</button>)}
     <button ref={triggerRef} className={`fchip inventory-preset-custom ${open ? "fchip-on" : ""}`} onClick={() => open ? close() : setOpen(true)} aria-expanded={open} aria-haspopup="dialog">Custom</button>
+    <button className="fchip fchip-reset" onClick={clearFilters}>{filtersBeforeClear ? "Restore filters" : "Clear filters"}</button>
     {open && createPortal(manager, document.body)}
   </>;
 }
