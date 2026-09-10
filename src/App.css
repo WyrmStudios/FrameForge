@@ -390,6 +390,7 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .inventory-presets-row { display: flex; align-items: center; gap: 4px; padding: 3px; }
 .inventory-presets-pinned-row { cursor: grab; touch-action: none; }
 .inventory-presets-pinned-row:active { cursor: grabbing; }
+.inventory-presets-drag-grip { width: 12px; color: var(--muted); font: 700 13px/9px monospace; letter-spacing: -2px; white-space: pre-wrap; }
 .inventory-presets-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .inventory-presets-inline-form { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
 .inventory-presets-inline-form input { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--accent); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; }
