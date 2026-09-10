@@ -6,6 +6,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { applyScale, overlayScale } from "./lib/uiScale";
 import { useContextMenu, CtxMenu } from "./shared/CtxMenu";
 import { extractItemName } from "./lib/itemContext";
+import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
 import { openWiki, copyWikiLink } from "./lib/wiki";
 
 // ── Riven overlay — module-level window management ────────────────────────────
@@ -1535,7 +1536,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
   }, [crafting]);
 
   const visibleItems = useMemo(() => {
-    const q = search.toLowerCase();
+    const searchTerms = splitSearchTerms(search);
     // Changelog order map: lower index = more recent position in changelog
     const changeOrder = new Map<string, number>();
     changeLog.forEach((c, i) => { if (!changeOrder.has(c.unique_name)) changeOrder.set(c.unique_name, i); });
@@ -1543,7 +1544,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
     for (const i of catalog) {
       if (i.name === "Blueprint") continue;
       if (category !== "all" && i.category !== category) continue;
-      if (q && !i.name.toLowerCase().includes(q)) continue;
+      if (!matchesSearchTerms(searchTerms, i.name)) continue;
       const qty = inventory[i.unique_name]?.quantity ?? 0;
       if (filterOwned    && qty === 0) continue;
       if (filterRecent   && lastChanged[i.unique_name] == null) continue;

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
+import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
 import { RELIC_FILTERS_DEFAULT } from "./constants/filters";
 import { RELIC_DROP_RATES, RELIC_REFINEMENT_LABELS, RELIC_REFINEMENT_ORDER } from "./constants/relics";
 import { warframeStatImageUrl } from "./constants/urls";
@@ -171,12 +172,12 @@ function isFormaOrKuva(itemName: string): boolean {
   return itemName.includes("Forma") || itemName === "Kuva";
 }
 
-function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchQ, nameMap, colorblindMode, view, ignoreFormaKuva }: {
+function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchTerms, nameMap, colorblindMode, view, ignoreFormaKuva }: {
   drop: RelicDrop;
   catalogRelicByName: Map<string, CatalogItem>;
   inventory: Record<string, InventoryItem>;
   ownedPrimeNames: Set<string>;
-  searchQ: string;
+  searchTerms: readonly string[];
   nameMap: Map<string, CatalogItem>;
   colorblindMode: boolean;
   view: ViewMode;
@@ -374,7 +375,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
               imageSrcs={imageSrcs}
               isOwned={isOwned}
               isComplete={isComplete}
-              isHighlighted={searchQ.length > 1 && r.itemName.toLowerCase().includes(searchQ)}
+              isHighlighted={searchTerms.length > 0 && matchesSearchTerms(searchTerms, r.itemName)}
               colorblindMode={colorblindMode}
             />
           );
@@ -726,14 +727,11 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
     }, 0);
   }, [catalogRelicByName, inventory]);
 
-  const searchQ = search.toLowerCase();
+  const searchTerms = useMemo(() => splitSearchTerms(search), [search]);
 
   const visibleDrops = useMemo(() => drops
     .filter(d => {
-      if (!searchQ) return true;
-      return (d.fullName ?? "").toLowerCase().includes(searchQ)
-        || (d.relicName ?? "").toLowerCase().includes(searchQ)
-        || d.rewards.some(r => (r.itemName ?? "").toLowerCase().includes(searchQ));
+      return matchesSearchTerms(searchTerms, d.fullName ?? "", d.relicName ?? "", ...d.rewards.map(reward => reward.itemName ?? ""));
     })
     .filter(d => {
       if (tiers.length === 0) return true;
@@ -777,7 +775,7 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
       if (sortMode === "za") return (b.fullName ?? "").localeCompare(a.fullName ?? "");
       return (a.fullName ?? "").localeCompare(b.fullName ?? ""); // az + plat fallback
     }),
-  [drops, searchQ, tiers, ownership, vault, completion, sortMode, getTotal, catalogRelicByName, nameMap, inventory, ownedPrimeNames]);
+  [drops, searchTerms, tiers, ownership, vault, completion, sortMode, getTotal, catalogRelicByName, nameMap, inventory, ownedPrimeNames]);
 
   const ownedCount = useMemo(() =>
     drops.filter(d => getTotal(d) > 0).length,
@@ -788,8 +786,8 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
   const pagedDrops = visibleDrops.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.ceil(visibleDrops.length / PAGE_SIZE);
 
-  const searchMatchesReward = searchQ.length > 1
-    && drops.some(d => d.rewards.some(r => (r.itemName ?? "").toLowerCase().includes(searchQ)));
+  const searchMatchesReward = searchTerms.length > 0
+    && drops.some(d => d.rewards.some(reward => matchesSearchTerms(searchTerms, reward.itemName ?? "")));
 
   return (
     <div className="relic-helper">
@@ -810,7 +808,7 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
       <div className="market-header">
         <input
           className="foundry-search" style={{ width: 220 }}
-          placeholder="Relic name or item name…"
+          placeholder="Relic or item names (comma-separated)…"
           value={search} onChange={e => set("search", e.target.value)}
         />
         <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
@@ -856,7 +854,7 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
 
       {searchMatchesReward && (
         <div style={{ padding: "4px 14px", fontSize: 11, color: "var(--accent)" }}>
-          Showing relics that drop "<strong>{search}</strong>" — highlighted in blue
+          Showing relics with reward drops matching one or more search terms — highlighted in blue
         </div>
       )}
 
@@ -880,7 +878,7 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
             catalogRelicByName={catalogRelicByName}
             inventory={inventory}
             ownedPrimeNames={ownedPrimeNames}
-            searchQ={searchQ}
+            searchTerms={searchTerms}
             nameMap={nameMap}
             colorblindMode={colorblindMode}
             view={relicView}

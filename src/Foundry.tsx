@@ -4,6 +4,7 @@ import { ImgCacheDirContext } from "./ImgCacheDir";
 import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
+import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
 import { FOUNDRY_FILTERS_DEFAULT } from "./constants/filters";
 import { WARFRAME_WIKI_BASE, warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
@@ -612,10 +613,10 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
   }, [refreshKey]);
 
   const visible = useMemo(() => {
-    const q = search.toLowerCase();
+    const searchTerms = splitSearchTerms(search);
     return craftable
       .filter(i => i.category === activeCat || activeCat === "All")
-      .filter(i => !q || i.name.toLowerCase().includes(q))
+      .filter(i => matchesSearchTerms(searchTerms, i.name))
       .filter(i => !filterPrime    || i.name.includes("Prime") || i.vaulted != null)
       .filter(i => !filterNonPrime || (!i.name.includes("Prime") && i.vaulted == null))
       .filter(i => !filterVaulted   || i.vaulted === true)
@@ -734,7 +735,7 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
       {/* ── Col 1: Category sidebar ── */}
       <div className="foundry-sidebar">
         <div className="foundry-search-wrap">
-          <input className="foundry-search" placeholder="Search…" value={inputSearch}
+          <input className="foundry-search" placeholder="Search (comma-separated)…" value={inputSearch}
             onChange={e => setInputSearch(e.target.value)} />
         </div>
         {CRAFT_CATEGORIES.map(cat => (

@@ -29,7 +29,7 @@ export default function InventoryToolbar({
     <>
       <div className="toolbar">
         <SearchBar
-          placeholder="Search items…"
+          placeholder="Search items (comma-separated)…"
           value={search}
           onChange={search => onFiltersChange(previous => ({ ...previous, search }))}
         />

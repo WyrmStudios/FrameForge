@@ -8,6 +8,7 @@ import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { warframeStatImageUrl } from "../constants/urls";
 import { MARKET_FILTERS_DEFAULT } from "../constants/filters";
+import { matchesSearchTerms, splitSearchTerms } from "../lib/search";
 import { TAURI_COMMANDS } from "../constants/tauri";
 import type { CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeMap } from "../types/items";
 import type { MarketFilters } from "../types/filters";
@@ -447,9 +448,9 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   }, [wfmLookup.size, sets.size]); // eslint-disable-line
 
   const visibleSets = useMemo(() => {
-    const q = search.toLowerCase();
+    const searchTerms = splitSearchTerms(search);
     return Array.from(sets.entries())
-      .filter(([key]) => !q || key.toLowerCase().includes(q))
+      .filter(([key]) => matchesSearchTerms(searchTerms, key))
       .filter(([key, parts]) => {
         const ownedAny    = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
         const parent      = parentItems.get(key);
@@ -565,7 +566,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
 
       {activeMarketTab === "sets" && <>
       <div className="market-header">
-        <input className="foundry-search" style={{ width: 200 }} placeholder="Search sets…"
+        <input className="foundry-search" style={{ width: 200 }} placeholder="Search sets (comma-separated)…"
           value={search} onChange={e => set("search", e.target.value)} />
         <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
           <button className={`fchip ${ownership.includes("owned")    ? "fchip-on" : ""}`} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</button>
