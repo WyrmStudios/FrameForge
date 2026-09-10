@@ -384,10 +384,17 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .inventory-presets-form button:disabled { opacity: .5; cursor: default; }
 .inventory-presets-list { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 4px; }
 .inventory-presets-empty { padding: 8px 6px; color: var(--muted); font-size: 11px; }
+.inventory-presets-section { padding: 3px 0; }
+.inventory-presets-section h2 { padding: 3px 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.inventory-presets-table { display: flex; flex-direction: column; }
 .inventory-presets-row { display: flex; align-items: center; gap: 4px; padding: 3px; }
 .inventory-presets-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; background: none; color: var(--text); cursor: pointer; padding: 4px 3px; text-align: left; font: inherit; }
 .inventory-presets-name:hover { color: var(--accent); }
-.inventory-presets-icon { flex-shrink: 0; padding: 3px 5px; font-size: 10px; }
+.inventory-presets-icon, .inventory-presets-drag-handle { flex-shrink: 0; padding: 3px 5px; font-size: 10px; }
+.inventory-presets-drag-handle { cursor: grab; touch-action: none; }
+.inventory-presets-drag-handle:active { cursor: grabbing; }
+.inventory-presets-icon:disabled { opacity: .45; cursor: default; }
+.inventory-presets-insertion { height: 2px; margin: 1px 3px; background: var(--accent); border-radius: 1px; }
 .inventory-presets-delete:hover { border-color: var(--red); color: var(--red); }
 .inventory-presets-confirm { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 11px; }
 .inventory-presets-confirm span { flex: 1; }

@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import type { FilterPreset, FilterPresetSettings } from "../types/filterPresets";
 import type { InventoryFilters } from "../types/filters";
 
 type InventoryPreset = Extract<FilterPreset, { module: "inventory" }>;
+
+interface PinnedPresetDrag {
+  id: string;
+  pointerId: number;
+  pinnedIds: string[];
+  dropIndex: number;
+}
 
 interface InventoryPresetsProps {
   filters: InventoryFilters;
@@ -23,8 +30,48 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
   const popupRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pinnedRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const dragRef = useRef<PinnedPresetDrag | null>(null);
+  const [drag, setDrag] = useState<PinnedPresetDrag | null>(null);
   const inventoryPresets = filterPresets.presets.filter((preset): preset is InventoryPreset => preset.module === "inventory");
   const pinnedPresets = inventoryPresets.filter(preset => preset.pinned);
+  const unpinnedPresets = inventoryPresets.filter(preset => !preset.pinned);
+
+  const setPinnedOrder = (pinnedIds: string[]) => onFilterPresetsChange(current => {
+    const pinnedById = new Map(current.presets.filter((preset): preset is InventoryPreset => preset.module === "inventory" && preset.pinned === true).map(preset => [preset.id, preset]));
+    let index = 0;
+    return {
+      ...current,
+      presets: current.presets.map(preset => preset.module === "inventory" && preset.pinned ? pinnedById.get(pinnedIds[index++])! : preset),
+    };
+  });
+
+  const finishPinnedDrag = (commit: boolean) => {
+    const activeDrag = dragRef.current;
+    if (!activeDrag) return;
+    dragRef.current = null;
+    setDrag(null);
+    if (!commit) return;
+    const pinnedIds = activeDrag.pinnedIds.filter(id => id !== activeDrag.id);
+    pinnedIds.splice(activeDrag.dropIndex, 0, activeDrag.id);
+    if (pinnedIds.some((id, index) => id !== activeDrag.pinnedIds[index])) setPinnedOrder(pinnedIds);
+  };
+
+  const updatePinnedDropIndex = (clientY: number) => {
+    const activeDrag = dragRef.current;
+    if (!activeDrag) return;
+    const remainingIds = activeDrag.pinnedIds.filter(id => id !== activeDrag.id);
+    const nextIndex = remainingIds.findIndex(id => {
+      const row = pinnedRowRefs.current.get(id);
+      return row ? clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2 : false;
+    });
+    const dropIndex = nextIndex === -1 ? remainingIds.length : nextIndex;
+    if (dropIndex !== activeDrag.dropIndex) {
+      const nextDrag = { ...activeDrag, dropIndex };
+      dragRef.current = nextDrag;
+      setDrag(nextDrag);
+    }
+  };
 
   const close = () => {
     setOpen(false);
@@ -63,6 +110,10 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      if (dragRef.current) {
+        finishPinnedDrag(false);
+        return;
+      }
       if (saving || editingId) {
         setSaving(false);
         setEditingId(null);
@@ -73,13 +124,28 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
         close();
       }
     };
+    const onPointerMove = (event: PointerEvent) => {
+      if (!dragRef.current || event.pointerId !== dragRef.current.pointerId) return;
+      event.preventDefault();
+      updatePinnedDropIndex(event.clientY);
+    };
+    const onPointerEnd = (event: PointerEvent) => {
+      if (!dragRef.current || event.pointerId !== dragRef.current.pointerId) return;
+      finishPinnedDrag(event.type === "pointerup");
+    };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerEnd);
+    document.addEventListener("pointercancel", onPointerEnd);
     window.addEventListener("resize", updatePosition);
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerEnd);
+      document.removeEventListener("pointercancel", onPointerEnd);
       window.removeEventListener("resize", updatePosition);
     };
   }, [open, saving, editingId, deleteId]);
@@ -118,6 +184,44 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
     setDeleteId(null);
   };
 
+  const movePinnedPreset = (id: string, direction: -1 | 1) => {
+    const index = pinnedPresets.findIndex(preset => preset.id === id);
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= pinnedPresets.length) return;
+    const pinnedIds = pinnedPresets.map(preset => preset.id);
+    [pinnedIds[index], pinnedIds[targetIndex]] = [pinnedIds[targetIndex], pinnedIds[index]];
+    setPinnedOrder(pinnedIds);
+  };
+
+  const startPinnedDrag = (event: ReactPointerEvent<HTMLButtonElement>, id: string) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const activeDrag = { id, pointerId: event.pointerId, pinnedIds: pinnedPresets.map(preset => preset.id), dropIndex: pinnedPresets.findIndex(preset => preset.id === id) };
+    dragRef.current = activeDrag;
+    setDrag(activeDrag);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const renderPresetRow = (preset: InventoryPreset, pinnedIndex?: number) => <div
+    className="inventory-presets-row"
+    key={preset.id}
+    ref={pinnedIndex === undefined ? undefined : element => {
+      if (element) pinnedRowRefs.current.set(preset.id, element);
+      else pinnedRowRefs.current.delete(preset.id);
+    }}
+  >
+    {pinnedIndex !== undefined && <button className="inventory-presets-drag-handle" onPointerDown={event => startPinnedDrag(event, preset.id)} aria-label={`Reorder ${preset.name}`} title="Drag to reorder">Drag</button>}
+    <button className="inventory-presets-name" onClick={() => apply(preset)} title="Apply preset">{preset.name}</button>
+    {pinnedIndex !== undefined && <>
+      <button className="inventory-presets-icon" onClick={() => movePinnedPreset(preset.id, -1)} disabled={pinnedIndex === 0} aria-label={`Move ${preset.name} up`} title="Move up">Up</button>
+      <button className="inventory-presets-icon" onClick={() => movePinnedPreset(preset.id, 1)} disabled={pinnedIndex === pinnedPresets.length - 1} aria-label={`Move ${preset.name} down`} title="Move down">Down</button>
+    </>}
+    <button className="inventory-presets-icon" onClick={() => { setEditingId(preset.id); setSaving(false); setName(preset.name); }} aria-label={`Rename ${preset.name}`} title="Rename">Edit</button>
+    <button className="inventory-presets-icon" onClick={() => togglePin(preset.id)} aria-label={`${preset.pinned ? "Unpin" : "Pin"} ${preset.name}`} title={preset.pinned ? "Unpin" : "Pin"}>{preset.pinned ? "Unpin" : "Pin"}</button>
+    <button className="inventory-presets-icon inventory-presets-delete" onClick={() => setDeleteId(preset.id)} aria-label={`Delete ${preset.name}`} title="Delete">Delete</button>
+  </div>;
+
   return <>
     {pinnedPresets.map(preset => <button key={preset.id} className="fchip inventory-preset-chip" onClick={() => apply(preset)}>{preset.name}</button>)}
     <button ref={triggerRef} className={`fchip inventory-preset-custom ${open ? "fchip-on" : ""}`} onClick={() => open ? close() : setOpen(true)} aria-expanded={open} aria-haspopup="dialog">Custom</button>
@@ -134,12 +238,20 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
         </form>}
         <div className="inventory-presets-list">
           {inventoryPresets.length === 0 && <p className="inventory-presets-empty">No saved presets.</p>}
-          {inventoryPresets.map(preset => <div className="inventory-presets-row" key={preset.id}>
-            <button className="inventory-presets-name" onClick={() => apply(preset)} title="Apply preset">{preset.name}</button>
-            <button className="inventory-presets-icon" onClick={() => { setEditingId(preset.id); setSaving(false); setName(preset.name); }} aria-label={`Rename ${preset.name}`} title="Rename">Edit</button>
-            <button className="inventory-presets-icon" onClick={() => togglePin(preset.id)} aria-label={`${preset.pinned ? "Unpin" : "Pin"} ${preset.name}`} title={preset.pinned ? "Unpin" : "Pin"}>{preset.pinned ? "Unpin" : "Pin"}</button>
-            <button className="inventory-presets-icon inventory-presets-delete" onClick={() => setDeleteId(preset.id)} aria-label={`Delete ${preset.name}`} title="Delete">Delete</button>
-          </div>)}
+          {pinnedPresets.length > 0 && <section className="inventory-presets-section" aria-label="Pinned presets">
+            <h2>Pinned</h2>
+            <div className="inventory-presets-table">
+              {pinnedPresets.filter(preset => drag?.id !== preset.id).flatMap((preset, index) => <Fragment key={preset.id}>
+                {drag?.dropIndex === index && <div className="inventory-presets-insertion" aria-hidden="true" />}
+                {renderPresetRow(preset, pinnedPresets.findIndex(pinned => pinned.id === preset.id))}
+              </Fragment>)}
+              {drag?.dropIndex === pinnedPresets.length - 1 && <div className="inventory-presets-insertion" aria-hidden="true" />}
+            </div>
+          </section>}
+          {unpinnedPresets.length > 0 && <section className="inventory-presets-section" aria-label="Saved presets">
+            {pinnedPresets.length > 0 && <h2>Saved</h2>}
+            <div className="inventory-presets-table">{unpinnedPresets.map(preset => renderPresetRow(preset))}</div>
+          </section>}
         </div>
         {deleteId && <div className="inventory-presets-confirm" role="alert">
           <span>Delete this preset?</span>
