@@ -1,3 +1,5 @@
+import type { FilterPresetSettings } from "./filterPresets";
+
 export type ClockFormat = "auto" | "12h" | "24h";
 export type RelicOverlayPriority = "completion" | "plat" | "ducat" | "setPlat";
 export type RelicPickPriority = "unowned" | "ducat" | "platinum";
@@ -23,4 +25,5 @@ export interface SettingsSnapshot {
   wfmInvisibleOnClose: boolean; wfmAutoInvisible: boolean; wfmAutoInvisibleMins: number; relicPickEnabled: boolean;
   relicPickPriority: RelicPickPriority; relicPickRefinement: RelicRefinement;
   relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize; memTriggerEnabled: boolean;
+  filterPresets: FilterPresetSettings;
 }

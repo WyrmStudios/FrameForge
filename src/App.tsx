@@ -113,6 +113,7 @@ import {
 } from "./constants/settings";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "./constants/tauri";
 import type { InventoryFilters } from "./types/filters";
+import { parseFilterPresetSettings, type FilterPresetSettings } from "./types/filterPresets";
 import type { ViewMode } from "./types/ui";
 import { formatUnixTime } from "./lib/formatters";
 import type { ArchonShard, CatalogItem, CraftingJob, InventoryItem, QuantityMap } from "./types/items";
@@ -276,6 +277,7 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [inventoryReady, setInventoryReady] = useState(false);
   const inventoryReadyRef = useRef(false);
   const [inventoryFilters, setInventoryFilters] = useState<InventoryFilters>(INVENTORY_FILTERS_DEFAULT);
+  const [filterPresets, setFilterPresets] = useState<FilterPresetSettings>(() => parseFilterPresetSettings(undefined));
   const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode } = inventoryFilters;
   const prevSortRef = useRef(sortMode);
   useEffect(() => { if (sortMode !== "recent") prevSortRef.current = sortMode; }, [sortMode]);
@@ -366,8 +368,9 @@ const [blobLogEnabled, setBlobLogEnabled] = useState(false);
     relicPickEnabled: true, relicPickPriority: DEFAULT_RELIC_PICK_PRIORITY, relicPickRefinement: DEFAULT_RELIC_PICK_REFINEMENT, relicPickLines: DEFAULT_RELIC_PICK_LINES,
     foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
     memTriggerEnabled: false,
+    filterPresets: parseFilterPresetSettings(undefined),
   });
-  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled };
+  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled, filterPresets };
 
   const saveAllSettings = useCallback(() => {
     // Until the on-disk settings have been applied, settingsRef still holds
@@ -552,6 +555,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
         if (RELIC_PICK_REFINEMENT_OPTIONS.includes(s.relicPickRefinement)) setRelicPickRefinement(s.relicPickRefinement);
         if (RELIC_PICK_LINES_OPTIONS.includes(s.relicPickLines)) setRelicPickLines(s.relicPickLines);
         if (FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) setFoundryPageSize(s.foundryPageSize);
+        setFilterPresets(parseFilterPresetSettings(s.filterPresets));
       } catch {}
       // Unblock saving even if the file failed to parse, since the backend
       // refuses to overwrite a settings.json that is not a valid JSON object.
