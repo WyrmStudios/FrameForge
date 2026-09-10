@@ -31,6 +31,10 @@ function defaultFilters<M extends FilterPresetModule>(module: M, filters: Curren
   return INVENTORY_FILTERS_DEFAULT as CurrentFiltersByModule[M];
 }
 
+function sameFilters(left: object, right: object): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 interface PresetDrag {
   id: string;
   pointerId: number;
@@ -213,6 +217,10 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
   useEffect(() => {
     if (saving || editingId) inputRef.current?.focus();
   }, [saving, editingId]);
+
+  useEffect(() => {
+    if (filtersBeforeClear && !sameFilters(filters, defaultFilters(module, filters))) setFiltersBeforeClear(null);
+  }, [module, filters, filtersBeforeClear]);
 
   const clearFilters = () => {
     if (filtersBeforeClear) {
