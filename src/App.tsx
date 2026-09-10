@@ -1030,7 +1030,7 @@ if (typeof s.autoDiagEnabled === "boolean") {
 
   useEffect(() => {
     if (settingsLoadedRef.current) saveAllSettings();
-  }, [tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, modularSectionOrder, modularPopout]); // eslint-disable-line
+  }, [tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, modularSectionOrder, modularPopout, filterPresets]); // eslint-disable-line
 
   // ── Watched fissure notifications ──────────────────────────────────────────
   //
@@ -1777,6 +1777,8 @@ if (typeof s.autoDiagEnabled === "boolean") {
                 itemCount={visibleItems.length}
                 view={inventoryView}
                 onViewChange={setInventoryViewPreference}
+                filterPresets={filterPresets}
+                onFilterPresetsChange={setFilterPresets}
               />
 
               <InventoryGrid

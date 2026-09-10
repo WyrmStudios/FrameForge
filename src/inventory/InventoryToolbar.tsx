@@ -4,6 +4,8 @@ import type { InventoryFilters } from "../types/filters";
 import SearchBar from "../shared/SearchBar";
 import { ViewToggle } from "../shared/ViewToggle";
 import type { ViewMode } from "../types/ui";
+import type { FilterPresetSettings } from "../types/filterPresets";
+import InventoryPresets from "./InventoryPresets";
 
 interface InventoryToolbarProps {
   filters: InventoryFilters;
@@ -14,10 +16,12 @@ interface InventoryToolbarProps {
   itemCount: number;
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
+  filterPresets: FilterPresetSettings;
+  onFilterPresetsChange: Dispatch<SetStateAction<FilterPresetSettings>>;
 }
 
 export default function InventoryToolbar({
-  filters, onFiltersChange, onToggleRecent, availableRanks, showRankFilters, itemCount, view, onViewChange,
+  filters, onFiltersChange, onToggleRecent, availableRanks, showRankFilters, itemCount, view, onViewChange, filterPresets, onFilterPresetsChange,
 }: InventoryToolbarProps) {
   const { search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode } = filters;
   return (
@@ -43,6 +47,8 @@ export default function InventoryToolbar({
             <button key={rank} className={`fchip ${filterRank === rank ? "fchip-on" : ""}`} onClick={() => onFiltersChange(previous => ({ ...previous, filterRank: previous.filterRank === rank ? null : rank }))}>R{rank}</button>
           ))}
         </>}
+        <span className="fbar-sep" />
+        <InventoryPresets {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange }} />
         <span className="fbar-sep" />
         <span className="fbar-label">Sort:</span>
         <button className={`fchip ${sortMode === "qty-desc" ? "fchip-on" : ""}`} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: "qty-desc" }))}>Qty ↓</button>
