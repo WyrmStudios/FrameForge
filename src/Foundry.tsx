@@ -1,13 +1,15 @@
-import { useState, useEffect, useMemo, useCallback, memo, startTransition, useRef, useContext } from "react";
+import { useState, useEffect, useMemo, useCallback, memo, startTransition, useRef, useContext, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ImgCacheDirContext } from "./ImgCacheDir";
 import { HelpTip } from "./shared/HelpTip";
+import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
 import { FOUNDRY_FILTERS_DEFAULT } from "./constants/filters";
 import { WARFRAME_WIKI_BASE, warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
 import type { ArchonShard, CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeComponentStatus, RecipeMap, RelicDropMap } from "./types/items";
 import type { FoundryFilters } from "./types/filters";
+import type { FilterPresetModule, FilterPresetSettings } from "./types/filterPresets";
 import type { ViewMode } from "./types/ui";
 import { ViewToggle } from "./shared/ViewToggle";
 import sentientIcon from "./assets/SentientFactionIcon.webp";
@@ -22,6 +24,11 @@ interface Props {
   tracked: string[];
   onTrackToggle: (id: string) => void;
   pageSize?: number;
+  filters: FoundryFilters;
+  onFiltersChange: Dispatch<SetStateAction<FoundryFilters>>;
+  filterPresets: FilterPresetSettings;
+  onFilterPresetsChange: Dispatch<SetStateAction<FilterPresetSettings>>;
+  onOpenSettings: (module: FilterPresetModule) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -556,8 +563,7 @@ const CRAFT_CATEGORIES = [
   "Companions", "Archwing", "Operator Weapons", "Parts", "Blueprints", "Miscellaneous",
 ];
 
-export default function Foundry({ inventory, refreshKey, crafting, subsummedWarframes = new Set(), tracked, onTrackToggle, pageSize = 30 }: Props) {
-  const [filters, onFiltersChange] = useState<FoundryFilters>(FOUNDRY_FILTERS_DEFAULT);
+export default function Foundry({ inventory, refreshKey, crafting, subsummedWarframes = new Set(), tracked, onTrackToggle, pageSize = 30, filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }: Props) {
   const [craftable, setCraftable] = useState<CatalogItem[]>([]);
   const [recipes, setRecipes]     = useState<Map<string, RecipeComponent[]>>(new Map());
   const [relicDrops, setRelicDrops] = useState<RelicDropMap>({});
@@ -758,8 +764,10 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
           <button className={`fchip ${filterMastered  ? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterMastered: !filterMastered, filterUnmastered: false })}>★ Mastered</button>
           <button className={`fchip ${filterUnmastered? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterUnmastered: !filterUnmastered, filterMastered: false })}>☆ Unmastered</button>
           <span className="fbar-sep"/>
-          <button className={`fchip ${filterLvlCap   ? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterLvlCap: !filterLvlCap, ...(!filterLvlCap ? { activeCat: "All" } : {}) })}>Lvl &gt; 30</button>
-          {isFiltered && <button className="fchip fchip-reset" onClick={() => onFiltersChange({ ...FOUNDRY_FILTERS_DEFAULT, activeCat })}>Show All</button>}
+           <button className={`fchip ${filterLvlCap   ? "fchip-on" : ""}`} onClick={() => onFiltersChange({ ...filters, filterLvlCap: !filterLvlCap, ...(!filterLvlCap ? { activeCat: "All" } : {}) })}>Lvl &gt; 30</button>
+           <span className="fbar-sep"/>
+           <FilterPresets module="foundry" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
+           {isFiltered && <button className="fchip fchip-reset" onClick={() => onFiltersChange({ ...FOUNDRY_FILTERS_DEFAULT, activeCat })}>Show All</button>}
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visible.length} items</span>
           <ViewToggle view={craftView} onChange={v => { setCraftView(v); localStorage.setItem(PREFERENCE_KEYS.FOUNDRY_VIEW, v); }} />
           <HelpTip items={[

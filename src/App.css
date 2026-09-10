@@ -207,11 +207,12 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .btn-report:hover { background: rgba(110,118,129,.22); color: #cdd9e5; border-color: rgba(110,118,129,.8); }
 
 .btn-settings {
-  background: none; border: none; cursor: pointer; font-size: 16px;
-  color: var(--muted); padding: 2px 4px; border-radius: 4px; line-height: 1;
-  transition: color .15s; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: 1px solid rgba(110,118,129,.45); border-radius: 6px;
+  background: rgba(110,118,129,.1); color: var(--muted); cursor: pointer; flex-shrink: 0;
+  font-size: 16px; line-height: 1; transition: all .15s;
 }
-.btn-settings:hover { color: var(--text); }
+.btn-settings:hover { background: rgba(110,118,129,.22); border-color: rgba(110,118,129,.8); color: var(--text); }
 
 .settings-section { padding: 12px 20px; border-bottom: 1px solid rgba(48,54,61,.6); }
 .settings-section:last-child { border-bottom: none; }
@@ -388,9 +389,8 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .inventory-presets-section h2 { padding: 3px 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .inventory-presets-table { display: flex; flex-direction: column; }
 .inventory-presets-row { display: flex; align-items: center; gap: 4px; padding: 3px; }
-.inventory-presets-pinned-row { cursor: grab; touch-action: none; }
-.inventory-presets-pinned-row:active { cursor: grabbing; }
-.inventory-presets-drag-grip { width: 12px; color: var(--muted); font: 700 13px/9px monospace; letter-spacing: -2px; white-space: pre-wrap; }
+.inventory-presets-drag-grip { display: inline-block; width: 12px; color: var(--muted); cursor: grab; touch-action: none; font: 700 13px/9px monospace; letter-spacing: -2px; user-select: none; white-space: pre-wrap; }
+.inventory-presets-drag-grip:active { cursor: grabbing; }
 .inventory-presets-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .inventory-presets-inline-form { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
 .inventory-presets-inline-form input { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--accent); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; }

@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./shared/HelpTip";
+import FilterPresets from "./shared/FilterPresets";
 import { PREFERENCE_KEYS } from "./constants/preferences";
 import { RELIC_FILTERS_DEFAULT } from "./constants/filters";
 import { RELIC_DROP_RATES, RELIC_REFINEMENT_LABELS, RELIC_REFINEMENT_ORDER } from "./constants/relics";
@@ -8,6 +9,7 @@ import { warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
 import type { CatalogItem, InventoryItem } from "./types/items";
 import type { RelicFilters } from "./types/filters";
+import type { FilterPresetModule, FilterPresetSettings } from "./types/filterPresets";
 import type { DropReward, RelicDrop } from "./types/relics";
 import type { ViewMode } from "./types/ui";
 import type { WfmCachedPrices, WfmItem } from "./types/market";
@@ -17,6 +19,11 @@ interface Props {
   inventory: Record<string, InventoryItem>;
   refreshKey: number;
   colorblindMode?: boolean;
+  filters: RelicFilters;
+  onFiltersChange: Dispatch<SetStateAction<RelicFilters>>;
+  filterPresets: FilterPresetSettings;
+  onFilterPresetsChange: Dispatch<SetStateAction<FilterPresetSettings>>;
+  onOpenSettings: (module: FilterPresetModule) => void;
 }
 
 // ─── Module-level constants ───────────────────────────────────────────────────
@@ -650,8 +657,7 @@ function PlannerTab({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function RelicHelper({ inventory, refreshKey, colorblindMode = false }: Props) {
-  const [filters, onFiltersChange] = useState<RelicFilters>(RELIC_FILTERS_DEFAULT);
+export default function RelicHelper({ inventory, refreshKey, colorblindMode = false, filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }: Props) {
   const [plannerActive, setPlannerActive] = useState(false);
   const [relicView, setRelicView] = useState<ViewMode>(() =>
     (localStorage.getItem(PREFERENCE_KEYS.RELIC_VIEW) as ViewMode | null) ?? "cards"
@@ -821,9 +827,11 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
           <span className="fbar-sep"/>
           <button className={`fchip ${completion.includes("complete")   ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "complete"))}>Completed</button>
           <button className={`fchip ${completion.includes("incomplete") ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "incomplete"))}>Uncompleted</button>
-          <button className={`fchip ${ignoreFormaKuva ? "fchip-on" : ""}`} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</button>
-          <span className="fbar-sep"/>
-          <span className="fbar-label">Sort:</span>
+           <button className={`fchip ${ignoreFormaKuva ? "fchip-on" : ""}`} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</button>
+           <span className="fbar-sep"/>
+           <FilterPresets module="relics" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
+           <span className="fbar-sep"/>
+           <span className="fbar-label">Sort:</span>
           <button className={`fchip ${sortMode === "count"  ? "fchip-on" : ""}`} onClick={() => set("sortMode", "count")}>Most Owned</button>
           <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Avg Plat</button>
           <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Avg Ducats</button>

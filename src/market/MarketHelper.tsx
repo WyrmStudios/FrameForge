@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef, memo, useContext } from "react";
+import { useState, useEffect, useMemo, useRef, memo, useContext, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ImgCacheDirContext } from "../ImgCacheDir";
 import { listen } from "@tauri-apps/api/event";
 import { HelpTip } from "../shared/HelpTip";
+import FilterPresets from "../shared/FilterPresets";
 import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { warframeStatImageUrl } from "../constants/urls";
@@ -10,6 +11,7 @@ import { MARKET_FILTERS_DEFAULT } from "../constants/filters";
 import { TAURI_COMMANDS } from "../constants/tauri";
 import type { CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeMap } from "../types/items";
 import type { MarketFilters } from "../types/filters";
+import type { FilterPresetModule, FilterPresetSettings } from "../types/filterPresets";
 import type { ModCopy } from "../types/inventory";
 import type { BlobRivenEntry, BlobRivenStat, WfmCachedPrices, WfmItem, WfmItemInfo, WfmPrice, WfmPriceUpdate, WfmRivenAttribute } from "../types/market";
 import type { WfmCreateOrderArgs, WfmCreateRivenAuctionArgs, WfmSession } from "../types/tauri";
@@ -27,6 +29,11 @@ interface Props {
   crafting: CraftingJob[];
   onWfmLoginChange?: (loggedIn: boolean) => void;
   modCopiesMap?: Record<string, ModCopy[]>;
+  filters: MarketFilters;
+  onFiltersChange: Dispatch<SetStateAction<MarketFilters>>;
+  filterPresets: FilterPresetSettings;
+  onFilterPresetsChange: Dispatch<SetStateAction<FilterPresetSettings>>;
+  onOpenSettings: (module: FilterPresetModule) => void;
 }
 
 function toggle<T>(arr: T[], val: T): T[] {
@@ -171,8 +178,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
 
 // ─── Market Helper ────────────────────────────────────────────────────────────
 
-export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLoginChange, modCopiesMap = {} }: Props) {
-  const [filters, onFiltersChange] = useState<MarketFilters>(MARKET_FILTERS_DEFAULT);
+export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLoginChange, modCopiesMap = {}, filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }: Props) {
   const [allItems, setAllItems]           = useState<CatalogItem[]>([]);
   const [wfmItems, setWfmItems]           = useState<WfmItem[]>([]);
   const [wfmLoading, setWfmLoading]       = useState(false);
@@ -571,9 +577,11 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           <button className={`fchip ${conditions.includes("hasparts")  ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "hasparts"))}>Has Parts</button>
           <span className="fbar-sep"/>
           <button className={`fchip ${vault.includes("vaulted")   ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</button>
-          <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
-          <span className="fbar-sep"/>
-          <span className="fbar-label">Sort:</span>
+           <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
+           <span className="fbar-sep"/>
+           <FilterPresets module="market" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
+           <span className="fbar-sep"/>
+           <span className="fbar-label">Sort:</span>
           <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Most Plat</button>
           <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Most Ducats</button>
           <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
