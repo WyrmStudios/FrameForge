@@ -36,6 +36,8 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
   const inventoryPresets = filterPresets.presets.filter((preset): preset is InventoryPreset => preset.module === "inventory");
   const pinnedPresets = inventoryPresets.filter(preset => preset.pinned);
   const unpinnedPresets = inventoryPresets.filter(preset => !preset.pinned);
+  const isPresetActive = (preset: InventoryPreset) =>
+    Object.entries(preset.filters).every(([key, value]) => filters[key as keyof InventoryFilters] === value);
 
   const setPinnedOrder = (pinnedIds: string[]) => onFilterPresetsChange(current => {
     const pinnedById = new Map(current.presets.filter((preset): preset is InventoryPreset => preset.module === "inventory" && preset.pinned === true).map(preset => [preset.id, preset]));
@@ -223,7 +225,7 @@ export default function InventoryPresets({ filters, onFiltersChange, filterPrese
   </div>;
 
   return <>
-    {pinnedPresets.map(preset => <button key={preset.id} className="fchip inventory-preset-chip" onClick={() => apply(preset)}>{preset.name}</button>)}
+    {pinnedPresets.map(preset => <button key={preset.id} className={`fchip inventory-preset-chip ${isPresetActive(preset) ? "fchip-on" : ""}`} onClick={() => apply(preset)}>{preset.name}</button>)}
     <button ref={triggerRef} className={`fchip inventory-preset-custom ${open ? "fchip-on" : ""}`} onClick={() => open ? close() : setOpen(true)} aria-expanded={open} aria-haspopup="dialog">Custom</button>
     {open && createPortal(
       <section ref={popupRef} className="inventory-presets-popup" style={{ left: position.left, top: position.top, maxHeight: position.maxHeight }} role="dialog" aria-label="Inventory filter presets">
