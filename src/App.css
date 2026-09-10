@@ -388,11 +388,12 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .inventory-presets-section h2 { padding: 3px 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .inventory-presets-table { display: flex; flex-direction: column; }
 .inventory-presets-row { display: flex; align-items: center; gap: 4px; padding: 3px; }
-.inventory-presets-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: none; background: none; color: var(--text); cursor: pointer; padding: 4px 3px; text-align: left; font: inherit; }
-.inventory-presets-name:hover { color: var(--accent); }
-.inventory-presets-icon, .inventory-presets-drag-handle { flex-shrink: 0; padding: 3px 5px; font-size: 10px; }
-.inventory-presets-drag-handle { cursor: grab; touch-action: none; }
-.inventory-presets-drag-handle:active { cursor: grabbing; }
+.inventory-presets-pinned-row { cursor: grab; touch-action: none; }
+.inventory-presets-pinned-row:active { cursor: grabbing; }
+.inventory-presets-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.inventory-presets-inline-form { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+.inventory-presets-inline-form input { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--accent); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; }
+.inventory-presets-icon { flex-shrink: 0; width: 23px; padding: 3px; font-size: 12px; line-height: 1; }
 .inventory-presets-icon:disabled { opacity: .45; cursor: default; }
 .inventory-presets-insertion { height: 2px; margin: 1px 3px; background: var(--accent); border-radius: 1px; }
 .inventory-presets-delete:hover { border-color: var(--red); color: var(--red); }
