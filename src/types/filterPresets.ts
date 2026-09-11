@@ -28,8 +28,6 @@ export type FilterPreset = {
 export interface FilterPresetSettings {
   presets: FilterPreset[];
   restorePreviousFiltersOnPresetClick: boolean;
-  restoreFiltersOnLaunch: boolean;
-  restoredFilters: Partial<FilterPresetFiltersByModule>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -119,18 +117,9 @@ function parsePreset(value: unknown): FilterPreset | null {
 }
 
 export function parseFilterPresetSettings(value: unknown): FilterPresetSettings {
-  if (!isRecord(value)) return { presets: [], restorePreviousFiltersOnPresetClick: false, restoreFiltersOnLaunch: false, restoredFilters: {} };
-  const restoredFilters: FilterPresetSettings["restoredFilters"] = {};
-  if (isRecord(value.restoredFilters)) {
-    for (const module of ["inventory", "foundry", "market", "relics"] as const) {
-      const filters = parseFilters(module, value.restoredFilters[module]);
-      if (filters) Object.assign(restoredFilters, { [module]: filters });
-    }
-  }
+  if (!isRecord(value)) return { presets: [], restorePreviousFiltersOnPresetClick: false };
   return {
     presets: Array.isArray(value.presets) ? value.presets.map(parsePreset).filter((preset): preset is FilterPreset => preset !== null) : [],
     restorePreviousFiltersOnPresetClick: value.restorePreviousFiltersOnPresetClick === true,
-    restoreFiltersOnLaunch: value.restoreFiltersOnLaunch === true,
-    restoredFilters,
   };
 }

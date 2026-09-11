@@ -374,7 +374,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
               imageSrcs={imageSrcs}
               isOwned={isOwned}
               isComplete={isComplete}
-              isHighlighted={searchTerms.length > 0 && matchesSearchTerms(searchTerms, r.itemName)}
+              isHighlighted={searchTerms.some(term => term.length > 1) && matchesSearchTerms(searchTerms.filter(term => term.length > 1), r.itemName)}
               colorblindMode={colorblindMode}
             />
           );
@@ -785,8 +785,9 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
   const pagedDrops = visibleDrops.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.ceil(visibleDrops.length / PAGE_SIZE);
 
-  const searchMatchesReward = searchTerms.length > 0
-    && drops.some(d => d.rewards.some(reward => matchesSearchTerms(searchTerms, reward.itemName ?? "")));
+  const highlightSearchTerms = searchTerms.filter(term => term.length > 1);
+  const searchMatchesReward = highlightSearchTerms.length > 0
+    && drops.some(d => d.rewards.some(reward => matchesSearchTerms(highlightSearchTerms, reward.itemName ?? "")));
 
   return (
     <div className="relic-helper">
@@ -824,11 +825,11 @@ export default function RelicHelper({ inventory, refreshKey, colorblindMode = fa
           <span className="fbar-sep"/>
           <button className={`fchip ${completion.includes("complete")   ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "complete"))}>Completed</button>
           <button className={`fchip ${completion.includes("incomplete") ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "incomplete"))}>Uncompleted</button>
-           <button className={`fchip ${ignoreFormaKuva ? "fchip-on" : ""}`} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</button>
-           <span className="fbar-sep"/>
-           <FilterPresets module="relics" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
-           <span className="fbar-sep"/>
-           <span className="fbar-label">Sort:</span>
+          <button className={`fchip ${ignoreFormaKuva ? "fchip-on" : ""}`} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</button>
+          <span className="fbar-sep"/>
+          <FilterPresets module="relics" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
+          <span className="fbar-sep"/>
+          <span className="fbar-label">Sort:</span>
           <button className={`fchip ${sortMode === "count"  ? "fchip-on" : ""}`} onClick={() => set("sortMode", "count")}>Most Owned</button>
           <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Avg Plat</button>
           <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Avg Ducats</button>

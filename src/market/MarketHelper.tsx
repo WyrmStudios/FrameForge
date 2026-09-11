@@ -577,11 +577,11 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           <button className={`fchip ${conditions.includes("hasparts")  ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "hasparts"))}>Has Parts</button>
           <span className="fbar-sep"/>
           <button className={`fchip ${vault.includes("vaulted")   ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</button>
-           <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
-           <span className="fbar-sep"/>
-           <FilterPresets module="market" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
-           <span className="fbar-sep"/>
-           <span className="fbar-label">Sort:</span>
+          <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
+          <span className="fbar-sep"/>
+          <FilterPresets module="market" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
+          <span className="fbar-sep"/>
+          <span className="fbar-label">Sort:</span>
           <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Most Plat</button>
           <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Most Ducats</button>
           <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
