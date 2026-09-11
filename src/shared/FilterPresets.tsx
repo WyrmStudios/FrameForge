@@ -231,6 +231,7 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
     setFiltersBeforeClear({ ...filters });
     onFiltersChange(current => defaultFilters(module, current));
   };
+  const canClearFilters = filtersBeforeClear !== null || !sameFilters(filters, defaultFilters(module, filters));
 
   const apply = (preset: ModulePreset<M>, activeChip = false) => {
     if (activeChip && isPresetActive(preset)) {
@@ -364,7 +365,7 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
   return <>
     {pinnedPresets.map(preset => <button key={preset.id} className={`fchip inventory-preset-chip ${isPresetActive(preset) ? "fchip-on" : ""}`} onClick={() => apply(preset, true)}>{preset.name}</button>)}
     <button ref={triggerRef} className={`fchip inventory-preset-custom ${open ? "fchip-on" : ""}`} onClick={() => open ? close() : setOpen(true)} aria-expanded={open} aria-haspopup="dialog">Custom</button>
-    <button className="fchip fchip-reset" onClick={clearFilters}>{filtersBeforeClear ? "Restore filters" : "Clear filters"}</button>
+    <button className="fchip fchip-reset" onClick={clearFilters} disabled={!canClearFilters}>{filtersBeforeClear ? "Restore filters" : "Clear filters"}</button>
     {open && createPortal(manager, document.body)}
   </>;
 }

@@ -360,6 +360,7 @@ html, body, #root { height: 100%; font-family: -apple-system, BlinkMacSystemFont
 .fchip-on    { border-color: var(--accent); color: var(--accent); background: rgba(56,139,253,.1); }
 .fchip-reset { border-color: rgba(255,255,255,.2); color: var(--text); }
 .fchip-reset:hover { border-color: rgba(255,255,255,.4); }
+.fchip-reset:disabled { border-color: var(--border); color: var(--muted); opacity: .55; cursor: default; }
 .fbar-sep   { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; margin: 0 2px; }
 .fbar-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
