@@ -204,16 +204,32 @@ export default function App() {
   const [foundryFilters, setFoundryFilters] = useState<FoundryFilters>(FOUNDRY_FILTERS_DEFAULT);
   const [marketFilters, setMarketFilters] = useState<MarketFilters>(MARKET_FILTERS_DEFAULT);
   const [relicFilters, setRelicFilters] = useState<RelicFilters>(RELIC_FILTERS_DEFAULT);
-  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterDucats, filterRank, sortMode } = inventoryFilters;
+  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterPlat, filterDucats, filterRank, sortMode } = inventoryFilters;
   const { bulkPrices, refresh: refreshBulkPrices } = useBulkPrices();
   // Bulk prices refresh hourly in the background — re-fetch on each Inventory
   // activation so the chips reflect the current map.
   useEffect(() => { if (activeModule === "inventory") refreshBulkPrices(); }, [activeModule, refreshBulkPrices]);
   const prevSortRef = useRef(sortMode);
-  useEffect(() => { if (sortMode !== "recent") prevSortRef.current = sortMode; }, [sortMode]);
+  useEffect(() => {
+    if (sortMode !== "recent" && sortMode !== "plat-desc" && sortMode !== "plat-asc" && sortMode !== "ducat-desc" && sortMode !== "ducat-asc") prevSortRef.current = sortMode;
+  }, [sortMode]);
   const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => {
     const filterRecent = !previous.filterRecent;
     return { ...previous, filterRecent, sortMode: filterRecent ? "recent" : prevSortRef.current };
+  }), []);
+  const toggleInventoryPlat = useCallback(() => setInventoryFilters(previous => {
+    if (!previous.filterPlat || (previous.sortMode !== "plat-desc" && previous.sortMode !== "plat-asc")) {
+      return { ...previous, filterPlat: true, filterRecent: false, sortMode: "plat-desc" };
+    }
+    if (previous.sortMode === "plat-desc") return { ...previous, sortMode: "plat-asc" };
+    return { ...previous, filterPlat: false, sortMode: prevSortRef.current };
+  }), []);
+  const toggleInventoryDucats = useCallback(() => setInventoryFilters(previous => {
+    if (!previous.filterDucats || (previous.sortMode !== "ducat-desc" && previous.sortMode !== "ducat-asc")) {
+      return { ...previous, filterDucats: true, filterRecent: false, sortMode: "ducat-desc" };
+    }
+    if (previous.sortMode === "ducat-desc") return { ...previous, sortMode: "ducat-asc" };
+    return { ...previous, filterDucats: false, sortMode: prevSortRef.current };
   }), []);
   const [inventoryView, setInventoryView] = useState<ViewMode>(() =>
     (localStorage.getItem(PREFERENCE_KEYS.INVENTORY_VIEW) as ViewMode | null) ?? "cards"
@@ -567,6 +583,7 @@ export default function App() {
         plat != null || (i.ducats != null && i.ducats > 0) || i.category === "Mods" || i.category === "Arcanes"
       );
       if (filterTradeable && !isTradeable) continue;
+      if (filterPlat && !(plat != null && plat > 0)) continue;
       if (filterDucats && !(i.ducats != null && i.ducats > 0)) continue;
       if (filterRank !== null) {
         if (i.category === "Mods" || i.category === "Arcanes") {
@@ -591,6 +608,10 @@ export default function App() {
         const bi = changeOrder.get(b.unique_name) ?? Infinity;
         return ai - bi || a.name.localeCompare(b.name);
       }
+      if (sortMode === "plat-asc") return (a.plat ?? 0) - (b.plat ?? 0) || a.name.localeCompare(b.name);
+      if (sortMode === "plat-desc") return (b.plat ?? 0) - (a.plat ?? 0) || a.name.localeCompare(b.name);
+      if (sortMode === "ducat-asc") return (a.ducats ?? 0) - (b.ducats ?? 0) || a.name.localeCompare(b.name);
+      if (sortMode === "ducat-desc") return (b.ducats ?? 0) - (a.ducats ?? 0) || a.name.localeCompare(b.name);
       const aOwned = a.qty > 0 ? 1 : 0;
       const bOwned = b.qty > 0 ? 1 : 0;
       if (bOwned !== aOwned) return bOwned - aOwned;
@@ -800,6 +821,8 @@ export default function App() {
                 filters={inventoryFilters}
                 onFiltersChange={setInventoryFilters}
                 onToggleRecent={toggleInventoryRecent}
+                onTogglePlat={toggleInventoryPlat}
+                onToggleDucats={toggleInventoryDucats}
                 availableRanks={availableRanks}
                 showRankFilters={apiModCopies.length > 0}
                 itemCount={visibleItems.length}

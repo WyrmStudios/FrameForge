@@ -42,12 +42,13 @@ function parseInventoryFilters(value: unknown): InventoryFilters | null {
     typeof value.filterPrime !== "boolean" || typeof value.filterVaulted !== "boolean" ||
     typeof value.filterUnvaulted !== "boolean" ||
     !(typeof value.filterRank === "number" || value.filterRank === "unranked" || value.filterRank === null) ||
-    !["qty-desc", "qty-asc", "name-asc", "name-desc", "recent"].includes(value.sortMode as string)) return null;
+    !["qty-desc", "qty-asc", "name-asc", "name-desc", "plat-desc", "plat-asc", "ducat-desc", "ducat-asc", "recent"].includes(value.sortMode as string)) return null;
   return {
     category: value.category, search: value.search, filterOwned: value.filterOwned, filterRecent: value.filterRecent,
     filterPrime: value.filterPrime, filterVaulted: value.filterVaulted, filterUnvaulted: value.filterUnvaulted,
     // Optional so presets saved before these keys existed still load.
-    filterTradeable: value.filterTradeable === true, filterDucats: value.filterDucats === true,
+    filterTradeable: value.filterTradeable === true, filterPlat: value.filterPlat === true,
+    filterDucats: value.filterDucats === true,
     filterRank: value.filterRank, sortMode: value.sortMode as InventoryFilters["sortMode"],
   };
 }

@@ -22,6 +22,8 @@ interface InventoryToolbarProps {
   filters: InventoryFilters;
   onFiltersChange: Dispatch<SetStateAction<InventoryFilters>>;
   onToggleRecent: () => void;
+  onTogglePlat: () => void;
+  onToggleDucats: () => void;
   availableRanks: number[];
   showRankFilters: boolean;
   itemCount: number;
@@ -37,9 +39,9 @@ interface InventoryToolbarProps {
 }
 
 export default function InventoryToolbar({
-  filters, onFiltersChange, onToggleRecent, availableRanks, showRankFilters, itemCount, view, onViewChange, cardColumns, onCardColumnsChange, listTextScale, onListTextScaleChange, filterPresets, onFilterPresetsChange, onOpenSettings,
+  filters, onFiltersChange, onToggleRecent, onTogglePlat, onToggleDucats, availableRanks, showRankFilters, itemCount, view, onViewChange, cardColumns, onCardColumnsChange, listTextScale, onListTextScaleChange, filterPresets, onFilterPresetsChange, onOpenSettings,
 }: InventoryToolbarProps) {
-  const { search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterDucats, filterRank, sortMode } = filters;
+  const { search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterPlat, filterDucats, filterRank, sortMode } = filters;
   const isCardView = view === "cards" || view === "text-cards";
   const isListView = view === "list" || view === "list-compact";
   const imagesVisible = view === "cards" || view === "list";
@@ -59,7 +61,12 @@ export default function InventoryToolbar({
         <FilterChip active={filterVaulted} onClick={() => onFiltersChange(previous => ({ ...previous, filterVaulted: !previous.filterVaulted }))}>🔒 Vaulted</FilterChip>
         <FilterChip active={filterUnvaulted} onClick={() => onFiltersChange(previous => ({ ...previous, filterUnvaulted: !previous.filterUnvaulted }))}>🔓 Unvaulted</FilterChip>
         <FilterChip active={filterTradeable} aria-pressed={filterTradeable} onClick={() => onFiltersChange(previous => ({ ...previous, filterTradeable: !previous.filterTradeable }))}>Tradeable</FilterChip>
-        <FilterChip active={filterDucats} aria-pressed={filterDucats} onClick={() => onFiltersChange(previous => ({ ...previous, filterDucats: !previous.filterDucats }))}>Ducats</FilterChip>
+        <FilterChip active={filterPlat} aria-pressed={filterPlat} onClick={onTogglePlat}>
+          Plat{sortMode === "plat-desc" ? " ↓" : sortMode === "plat-asc" ? " ↑" : ""}
+        </FilterChip>
+        <FilterChip active={filterDucats} aria-pressed={filterDucats} onClick={onToggleDucats}>
+          Ducats{sortMode === "ducat-desc" ? " ↓" : sortMode === "ducat-asc" ? " ↑" : ""}
+        </FilterChip>
         {showRankFilters && <>
           <FilterSeparator />
           <FilterLabel>Rank:</FilterLabel>
@@ -72,10 +79,8 @@ export default function InventoryToolbar({
         <FilterPresets module="inventory" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
         <FilterSeparator />
         <FilterLabel>Sort:</FilterLabel>
-        <FilterChip active={sortMode === "qty-desc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: "qty-desc" }))}>Qty ↓</FilterChip>
-        <FilterChip active={sortMode === "qty-asc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: "qty-asc" }))}>Qty ↑</FilterChip>
-        <FilterChip active={sortMode === "name-asc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: "name-asc" }))}>A-Z</FilterChip>
-        <FilterChip active={sortMode === "name-desc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: "name-desc" }))}>Z-A</FilterChip>
+        <FilterChip active={sortMode === "qty-desc" || sortMode === "qty-asc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: previous.sortMode === "qty-desc" ? "qty-asc" : "qty-desc" }))}>Qty {sortMode === "qty-asc" ? "↑" : "↓"}</FilterChip>
+        <FilterChip active={sortMode === "name-asc" || sortMode === "name-desc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: previous.sortMode === "name-asc" ? "name-desc" : "name-asc" }))}>{sortMode === "name-desc" ? "Z-A" : "A-Z"}</FilterChip>
         <span className={`${ITEM_COUNT_LABEL} ml-auto`}>{itemCount} item{itemCount !== 1 ? "s" : ""}{itemCount === 1000 ? " (capped)" : ""}</span>
         <ViewToggle
           view={view === "text-cards" ? "cards" : view === "list-compact" ? "list" : view}
