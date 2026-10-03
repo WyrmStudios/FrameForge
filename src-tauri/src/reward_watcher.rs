@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Emitter;
 
-use crate::events;
+use crate::{arbitrations, db, events, log_tail};
 use crate::log_watcher;
 use crate::wfcd::RelicReward;
 use crate::append_to_file;
@@ -79,8 +79,15 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
     if let Some(log_path) = ee_log_path {
         let flag = flag.clone();
         std::thread::spawn(move || {
-            let mut file_pos: u64 = std::fs::metadata(&log_path)
-                .map(|m| m.len()).unwrap_or(0);
+            let mut arbitration_runs = db::ArbitrationRecorder::default();
+            let mut tail = log_tail::LogTail::from_start(log_path.clone());
+            // Only arbitration consumes history; old trade prompts and reward overlays
+            // must not replay. Keep the parser so an active run can finish live.
+            if let Some(chunk) = tail.read() {
+                arbitrations::record_arbitration_runs(&ee_ocr_app, &mut arbitration_runs, chunk.text, false);
+            }
+            let mut backfilled = tail.has_read();
+            let mut pending_lines = String::new();
             let mut active_since: Option<std::time::Instant> = None;
             // Cooldown: don't fire riven-screen-open again within 4 seconds of the last fire.
             let mut last_riven_fire: Option<std::time::Instant> = None;
@@ -88,7 +95,6 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
             let mut last_relic_pick_trigger: Option<std::time::Instant> = None;
             // Rolling raw log text used to reconstruct multi-read trade dialogs.
             let mut trade_buffer = String::new();
-            use std::io::{Read, Seek, SeekFrom};
 
             log_watcher::seed_ee_log_names(&log_path, &shared_squad_names2, &ee_ocr_app);
 
@@ -132,14 +138,28 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
-                let Ok(mut f) = std::fs::File::open(&log_path) else { continue };
-                let len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-                if len < file_pos { file_pos = 0; }
-                if f.seek(SeekFrom::Start(file_pos)).is_err() { continue; }
-                let mut buf = String::new();
-                if f.read_to_string(&mut buf).is_err() { continue; }
-                file_pos = len;
-                if buf.is_empty() { continue; }
+                let Some(chunk) = tail.read() else {
+                    backfilled |= tail.has_read();
+                    arbitrations::record_arbitration_runs(&ee_ocr_app, &mut arbitration_runs, String::new(), false);
+                    continue;
+                };
+                if chunk.restarted {
+                    // A replacement starts a new parser but retains failed writes.
+                    arbitration_runs.restart();
+                    pending_lines.clear();
+                    trade_buffer.clear();
+                    last_riven_fire = None;
+                    last_relic_pick_trigger = None;
+                }
+                let live = backfilled && !chunk.restarted;
+                backfilled = true;
+                let buf = chunk.text;
+                arbitrations::record_arbitration_runs(&ee_ocr_app, &mut arbitration_runs, buf.clone(), live);
+                if !live { continue; }
+                pending_lines.push_str(&buf);
+                let Some(end) = pending_lines.rfind('\n') else { continue; };
+                let remainder = pending_lines.split_off(end + 1);
+                let buf = std::mem::replace(&mut pending_lines, remainder);
 
                 let lower = buf.to_lowercase();
 

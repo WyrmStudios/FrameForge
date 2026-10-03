@@ -66,6 +66,23 @@
         "decorations": true,
         "resizable": true,
         "skipTaskbar": false
+      },
+      {
+        "label": "arbitration-overlay",
+        "url": "index.html#arbitrationoverlay",
+        "title": "FrameForge Arbitration Summary",
+        "width": 340,
+        "height": 80,
+        "x": 0,
+        "y": -3000,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false
       }
     ],
     "security": {

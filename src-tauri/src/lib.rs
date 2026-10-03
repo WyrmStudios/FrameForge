@@ -20,6 +20,8 @@ use wfm::Wfm;
 // ─── Modules ──────────────────────────────────────────────────────────────────
 
 mod app_state;
+mod arbitration;
+mod arbitrations;
 mod blob_capture;
 mod cache;
 mod catalogue;
@@ -31,6 +33,7 @@ mod diagnostics;
 mod events;
 mod image_cache;
 mod inventory_state;
+mod log_tail;
 mod log_watcher;
 mod logging;
 mod mem_regions;
@@ -558,6 +561,7 @@ pub fn run() {
             unmatched_paths_dir,
             corrections: initial.corrections,
             force_pid_check: Arc::new(AtomicBool::new(false)),
+            arbitration_overlay_enabled: Arc::new(AtomicBool::new(false)),
             relic_pick_overlay_enabled: Arc::new(AtomicBool::new(true)),
             mem_trigger_enabled: Arc::new(AtomicBool::new(false)),
         })
@@ -664,6 +668,11 @@ pub fn run() {
             syndicates::get_syndicate_stores,
             syndicates::get_research_lab_stores,
             worldstate::fetch_worldstate,
+            arbitrations::fetch_arbitration_schedule,
+            arbitrations::get_arbitration_runs,
+            arbitrations::delete_arbitration_run,
+            arbitrations::set_arbitration_overlay_enabled,
+            arbitrations::test_arbitration_overlay,
             diagnostics::get_warframe_window_rect,
             diagnostics::get_overlay_session_log,
             relic_pick::get_pending_relic_rewards,

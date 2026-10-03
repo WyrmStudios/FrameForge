@@ -1,4 +1,4 @@
-export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
+export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "arbitrations" | "statistics" | "completionist";
 
 const MODULE_NAV = "w-[72px] shrink-0 bg-surface border-r border-border flex flex-col items-center py-[8px] gap-[4px]";
 const MODULE_BTN =
@@ -34,6 +34,10 @@ export default function AppNavigation({ activeModule, onModuleChange }: AppNavig
       <button className={`${MODULE_BTN} ${activeModule === "timers" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("timers")} title="Timers">
         <img src="/timers-icon.png" alt="" className="size-6 object-contain" />
         <span className={MODULE_LABEL}>Timers</span>
+      </button>
+      <button className={`${MODULE_BTN} ${activeModule === "arbitrations" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("arbitrations")} title="Arbitrations">
+        <span aria-hidden className="size-6 text-center text-[20px] leading-6">⚖</span>
+        <span className={MODULE_LABEL}>Arbitrations</span>
       </button>
       <button className={`${MODULE_BTN} ${activeModule === "statistics" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("statistics")} title="Statistics">
         <img src="/statistics-icon.png" alt="" className="size-6 object-contain" />

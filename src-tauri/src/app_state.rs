@@ -150,6 +150,7 @@ pub struct AppState {
     pub corrections: HashMap<String, CorrectionEntry>,
     /// Set by `poke_scan` to bypass the 5-second PID-check cooldown immediately.
     pub force_pid_check: Arc<AtomicBool>,
+    pub arbitration_overlay_enabled: Arc<AtomicBool>,
     /// When false, the Relic Pick Overlay is suppressed even when EE.log triggers it.
     pub relic_pick_overlay_enabled: Arc<AtomicBool>,
     /// When true, a parallel memory-scan thread polls Warframe's process memory for the

@@ -8,6 +8,17 @@ A desktop companion for Warframe — live inventory, market prices, trading, tim
 
 ## Features
 
+### Arbitrations
+
+Browse the cached arbitration schedule up to 60 days ahead (seven by default),
+filter by farming tier, and favorite nodes. Optional alerts match favorites or
+selected tiers, with a ten-minute default lead time.
+
+Completed runs are recovered from EE.log at startup and tracked live. History
+supports deletion and analytics; Vitus values are estimates, and kill counts
+require host telemetry. An optional summary overlay closes after 12 seconds
+and is disabled by default. Parser/model attribution: [third-party notices](THIRD_PARTY_NOTICES.md).
+
 ### Live Inventory
 Reads your inventory directly from Warframe's process memory (read-only, same API as Overwolf). Instead of scanning for individual item patterns, FrameForge locates and captures the full account JSON blob that the game client holds in memory — the same authoritative data the game itself uses.
 

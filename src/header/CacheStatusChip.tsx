@@ -23,6 +23,7 @@ function age(ts: number | null): string {
 }
 
 const DISPLAY: Record<string, string> = {
+  "arbitrations-v1.json": "Arbitrations",
   worldstate: "Worldstate",
   "bulk-prices": "Bulk Prices",
   catalogue: "Catalogue",

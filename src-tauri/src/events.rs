@@ -34,6 +34,9 @@ pub const CATALOGUE_UPDATED: &str = "catalogue-updated";
 pub const BULK_PRICES_UPDATED: &str = "bulk-prices-updated";
 pub const TRADE_COMPLETED: &str = "trade-completed";
 
+pub const ARBITRATION_RUN_ENDED: &str = "arbitration-run-ended";
+pub const ARBITRATION_RUNS_CHANGED: &str = "arbitration-runs-changed";
+
 pub const BLOB_STATUS: &str = "blob-status";
 pub const CACHE_STATUS: &str = "cache-status";
 pub const CONSOLE_LOGIN_SUCCESS: &str = "console-login-success";
