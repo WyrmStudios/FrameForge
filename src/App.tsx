@@ -89,14 +89,14 @@ function OverlayTestPage() {
   }, []);
 
   return (
-    <div className="box-border flex h-screen w-screen flex-col items-center justify-center gap-3 border-4 border-[#00ff88] bg-[#00cc55] font-sans text-white">
-      <div className="text-[22px] font-bold drop-shadow-[0_2px_6px_#000]">
+    <div className="box-border flex h-screen w-screen flex-col items-center justify-center gap-3 border-4 border-overlay-smoke bg-overlay-smoke-bg font-sans text-white">
+      <div className="text-22 font-bold drop-shadow-[0_2px_6px_#000]">
         FrameForge Overlay Test
       </div>
-      <div className="text-[13px] opacity-85">If you see green: window + React are working</div>
+      <div className="text-13 opacity-85">If you see green: window + React are working</div>
       <button
         onClick={() => getCurrentWindow().close().catch(() => {})}
-        className="mt-2 cursor-pointer rounded-md border-0 bg-[#00ff88] px-6 py-2 text-sm font-bold text-black"
+        className="mt-2 cursor-pointer rounded-md border-0 bg-overlay-smoke px-6 py-2 text-sm font-bold text-black"
       >
         Close
       </button>
@@ -650,8 +650,8 @@ export default function App() {
     <div className="flex h-full flex-col overflow-hidden">
 
       {/* ── Header ── */}
-      <header className="flex h-[var(--header-h)] shrink-0 items-center gap-[12px] border-b border-border bg-surface px-[16px]">
-        <span className="text-[15px] font-semibold text-foreground">{APP_TITLE}</span>
+      <header className="flex h-(--header-h) shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
+        <span className="text-15 font-semibold text-foreground">{APP_TITLE}</span>
         <HeaderStatusBadges
           masteryRank={masteryRank}
           playerName={playerName}
@@ -665,7 +665,7 @@ export default function App() {
           }}
           onDismissUpdate={() => setPendingUpdate(null)}
         />
-        <div className="ml-auto flex items-center gap-[6px]">
+        <div className="ml-auto flex items-center gap-1.5">
           {/* ── Connection status chips ── */}
           {(() => {
             // Memory chip
@@ -791,7 +791,7 @@ export default function App() {
 
             <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
               {monitoring && warframeRunning && !inventorySynced && (
-                <div className="shrink-0 border-b border-[#e3b341]/20 bg-[#e3b341]/[.08] px-4 py-2 text-xs text-[#e3b341]">
+                <div className="shrink-0 border-b border-caution/20 bg-caution/8 px-4 py-2 text-xs text-caution">
                   Inventory not synced yet — complete a mission or visit a relay to load your inventory
                 </div>
               )}

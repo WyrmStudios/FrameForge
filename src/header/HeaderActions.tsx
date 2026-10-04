@@ -1,13 +1,13 @@
 const BTN_ICON_BRAND =
-  "flex items-center justify-center w-[28px] h-[28px] p-0 rounded-[6px] border border-solid cursor-pointer shrink-0 transition-all duration-150";
+  "flex items-center justify-center w-7 h-7 p-0 rounded-6 border border-solid cursor-pointer shrink-0 transition-all duration-150";
 const BTN_DISCORD =
-  "border-[rgba(88,101,242,.5)] bg-[rgba(88,101,242,.12)] text-[#8b9ff4] hover:bg-[rgba(88,101,242,.25)] hover:text-[#c0c8ff] hover:border-[rgba(88,101,242,.8)]";
+  "border-discord/50 bg-discord/12 text-discord-ink hover:bg-discord/25 hover:text-discord-ink-hover hover:border-discord/80";
 const BTN_KOFI =
-  "border-[rgba(255,94,91,.45)] bg-[rgba(255,94,91,.1)] text-[#ff7a77] hover:bg-[rgba(255,94,91,.22)] hover:text-[#ffb0ae] hover:border-[rgba(255,94,91,.8)]";
+  "border-kofi/45 bg-kofi/10 text-kofi-ink hover:bg-kofi/22 hover:text-kofi-ink-hover hover:border-kofi/80";
 const BTN_REPORT =
-  "border-[rgba(110,118,129,.45)] bg-[rgba(110,118,129,.1)] text-[#8b949e] hover:bg-[rgba(110,118,129,.22)] hover:text-[#cdd9e5] hover:border-[rgba(110,118,129,.8)]";
+  "border-inactive/45 bg-inactive/10 text-muted hover:bg-inactive/22 hover:text-report-ink-hover hover:border-inactive/80";
 const BTN_SETTINGS =
-  "flex items-center justify-center w-[28px] h-[28px] p-0 border border-[rgba(110,118,129,.45)] rounded-[6px] bg-[rgba(110,118,129,.1)] text-muted cursor-pointer shrink-0 text-[16px] leading-none transition-all duration-150 hover:bg-[rgba(110,118,129,.22)] hover:border-[rgba(110,118,129,.8)] hover:text-foreground";
+  "flex items-center justify-center w-7 h-7 p-0 border border-inactive/45 rounded-6 bg-inactive/10 text-muted cursor-pointer shrink-0 text-16 leading-none transition-all duration-150 hover:bg-inactive/22 hover:border-inactive/80 hover:text-foreground";
 
 interface HeaderActionsProps {
   onOpenExternalUrl: (url: string) => void;

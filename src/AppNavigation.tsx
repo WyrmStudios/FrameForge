@@ -1,11 +1,11 @@
 export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
 
-const MODULE_NAV = "w-[72px] shrink-0 bg-surface border-r border-border flex flex-col items-center py-[8px] gap-[4px]";
+const MODULE_NAV = "w-18 shrink-0 bg-surface border-r border-border flex flex-col items-center py-2 gap-1";
 const MODULE_BTN =
-  "flex flex-col items-center gap-[4px] w-[68px] px-[4px] py-[8px] bg-transparent border-0 rounded-[8px] text-muted cursor-pointer transition-[background,color] duration-100 overflow-hidden";
-const MODULE_BTN_ON = "text-accent! bg-[rgba(56,139,253,.12)]!";
-const MODULE_BTN_OFF = "text-muted hover:bg-[rgba(255,255,255,.06)] hover:text-foreground";
-const MODULE_LABEL = "text-[9px] font-semibold tracking-[0] w-full text-center line-clamp-2 break-all leading-[1.3]";
+  "flex flex-col items-center gap-1 w-17 px-1 py-2 bg-transparent border-0 rounded-8 text-muted cursor-pointer transition-[background,color] duration-100 overflow-hidden";
+const MODULE_BTN_ON = "text-accent! bg-accent/12!";
+const MODULE_BTN_OFF = "text-muted hover:bg-white/6 hover:text-foreground";
+const MODULE_LABEL = "text-9 font-semibold tracking-normal w-full text-center line-clamp-2 break-all leading-1.3";
 
 interface AppNavigationProps {
   activeModule: Module;

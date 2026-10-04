@@ -66,91 +66,91 @@ async function invokeWfm<T>(command: string, args?: Record<string, unknown>): Pr
 }
 
 // ─── WFM classes (Tailwind) ──────────────────────────────────────────────────
-const WFM_LOGIN_WRAP  = "flex-1 flex items-center justify-center p-[24px]";
-const WFM_LOGIN_CARD  = "bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.6)] rounded-[8px] p-[24px] w-full max-w-[340px] flex flex-col gap-[12px]";
-const WFM_LOGIN_TITLE = "text-[14px] font-bold text-foreground";
-const WFM_LOGIN_DESC  = "text-[12px] text-muted leading-[1.5]";
-const WFM_FIELD       = "flex flex-col gap-[4px]";
-const WFM_FIELD_LABEL = "text-[11px] text-muted shrink-0 min-w-[80px]";
-const WFM_INPUT       = "bg-[rgba(0,0,0,.2)] border border-[rgba(48,54,61,.8)] rounded-[4px] text-foreground text-[12px] px-[8px] py-[5px] outline-none transition-[border-color] duration-[100ms] w-full focus:border-accent";
-const WFM_ERROR       = "text-[12px] text-danger py-[4px]";
-const WFM_REMEMBER    = "flex items-center gap-[6px] text-[12px] text-muted cursor-pointer select-none";
-const WFM_BTN_PRIMARY = "bg-[var(--accent)] border-0 rounded-[5px] text-white text-[13px] font-semibold px-[16px] py-[8px] cursor-pointer transition-[opacity] duration-[100ms] hover:opacity-[.85] disabled:opacity-40 disabled:cursor-default";
-const WFM_ALT_NOTE    = "text-[11px] text-muted leading-[1.5] mt-[8px]";
+const WFM_LOGIN_WRAP  = "flex-1 flex items-center justify-center p-6";
+const WFM_LOGIN_CARD  = "bg-white/4 border border-border/60 rounded-8 p-6 w-full max-w-85 flex flex-col gap-3";
+const WFM_LOGIN_TITLE = "text-14 font-bold text-foreground";
+const WFM_LOGIN_DESC  = "text-12 text-muted leading-normal";
+const WFM_FIELD       = "flex flex-col gap-1";
+const WFM_FIELD_LABEL = "text-11 text-muted shrink-0 min-w-20";
+const WFM_INPUT       = "bg-black/20 border border-border/80 rounded-4 text-foreground text-12 px-2 py-1.25 outline-none transition-[border-color] duration-100 w-full focus:border-accent";
+const WFM_ERROR       = "text-12 text-danger py-1";
+const WFM_REMEMBER    = "flex items-center gap-1.5 text-12 text-muted cursor-pointer select-none";
+const WFM_BTN_PRIMARY = "bg-[var(--accent)] border-0 rounded-5 text-white text-13 font-semibold px-4 py-2 cursor-pointer transition-[opacity] duration-100 hover:opacity-85 disabled:opacity-40 disabled:cursor-default";
+const WFM_ALT_NOTE    = "text-11 text-muted leading-normal mt-2";
 const WFM_ALT_LINK    = "text-accent underline";
 const WFM_TRADING     = "flex flex-col h-full overflow-hidden";
-const WFM_HEADER      = "flex items-center px-[12px] py-[6px] border-b border-border shrink-0 gap-[8px]";
-const WFM_TABS        = "flex gap-[2px]";
-const WFM_TAB         = "relative border border-[rgba(48,54,61,.6)] bg-transparent text-muted text-[12px] px-[12px] py-[3px] rounded-[4px] cursor-pointer transition-[background,color,border-color] duration-[100ms] hover:bg-[rgba(255,255,255,.06)] hover:text-foreground";
-const WFM_TAB_ON      = "relative border border-accent bg-[rgba(56,139,253,.15)] text-accent text-[12px] px-[12px] py-[3px] rounded-[4px] cursor-pointer transition-[background,color,border-color] duration-[100ms]";
-const WFM_BADGE       = "inline-flex items-center justify-center bg-danger text-white text-[10px] font-bold rounded-[10px] min-w-[16px] h-[16px] px-[4px] ml-[4px] align-middle";
-const WFM_SESSION     = "flex items-center gap-[5px] ml-auto";
-const WFM_STATUS_PICKER = "flex gap-[3px] items-center";
-const WFM_OPT         = "border rounded-full w-[18px] h-[18px] text-[8px] cursor-pointer flex items-center justify-center transition-[opacity,border-color] duration-[150ms] p-0 hover:enabled:opacity-70 disabled:cursor-default";
-const WFM_ST          = { online: { c: "text-success", on: "bg-[rgba(63,185,80,.15)]" }, ingame: { c: "text-accent", on: "bg-[rgba(56,139,253,.15)]" }, invisible: { c: "text-muted", on: "bg-[rgba(139,148,158,.15)]" } } as const;
-const WFM_USERNAME    = "text-[12px] text-foreground font-semibold";
-const WFM_LOGOUT      = "bg-transparent border-0 text-muted text-[14px] cursor-pointer px-[2px] leading-none transition-[color] duration-[100ms] hover:text-danger";
-const WFM_PANEL       = "flex-1 min-h-0 overflow-y-auto px-[14px] py-[10px] flex flex-col gap-[4px]";
-const WFM_SECTION_LABEL = "text-[10px] font-bold uppercase tracking-[.04em] text-muted pt-[2px] pb-[4px]";
+const WFM_HEADER      = "flex items-center px-3 py-1.5 border-b border-border shrink-0 gap-2";
+const WFM_TABS        = "flex gap-0.5";
+const WFM_TAB         = "relative border border-border/60 bg-transparent text-muted text-12 px-3 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100 hover:bg-white/6 hover:text-foreground";
+const WFM_TAB_ON      = "relative border border-accent bg-accent/15 text-accent text-12 px-3 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100";
+const WFM_BADGE       = "inline-flex items-center justify-center bg-danger text-white text-10 font-bold rounded-10 min-w-4 h-4 px-1 ml-1 align-middle";
+const WFM_SESSION     = "flex items-center gap-1.25 ml-auto";
+const WFM_STATUS_PICKER = "flex gap-0.75 items-center";
+const WFM_OPT         = "border rounded-full w-4.5 h-4.5 text-8 cursor-pointer flex items-center justify-center transition-[opacity,border-color] duration-150 p-0 hover:enabled:opacity-70 disabled:cursor-default";
+const WFM_ST          = { online: { c: "text-success", on: "bg-success/15" }, ingame: { c: "text-accent", on: "bg-accent/15" }, invisible: { c: "text-muted", on: "bg-muted/15" } } as const;
+const WFM_USERNAME    = "text-12 text-foreground font-semibold";
+const WFM_LOGOUT      = "bg-transparent border-0 text-muted text-14 cursor-pointer px-0.5 leading-none transition-[color] duration-100 hover:text-danger";
+const WFM_PANEL       = "flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 flex flex-col gap-1";
+const WFM_SECTION_LABEL = "text-10 font-bold uppercase tracking-0.04 text-muted pt-0.5 pb-1";
 const WFM_SECTION_ROW = "flex items-center gap-0";
-const WFM_REFRESH     = "bg-transparent border-0 text-muted text-[14px] cursor-pointer pl-[6px] leading-none transition-[color] duration-[100ms] hover:text-foreground";
-const WFM_BULK        = "bg-transparent border border-[rgba(48,54,61,.5)] rounded-[3px] text-[9px] font-bold px-[5px] py-[1px] cursor-pointer whitespace-nowrap normal-case tracking-normal ml-[4px] transition-[background,border-color,color] duration-[100ms]";
-const WFM_BULK_SHOW   = `${WFM_BULK} text-success hover:bg-[rgba(63,185,80,.12)] hover:border-[var(--green)]`;
-const WFM_BULK_HIDE   = `${WFM_BULK} text-muted hover:bg-[rgba(255,255,255,.06)] hover:border-[rgba(139,148,158,.5)] hover:text-foreground`;
-const WFM_EMPTY       = "p-[20px] text-center text-[12px] text-muted";
-const WFM_VIS_BTN     = "bg-transparent border-0 cursor-pointer text-[13px] p-0 leading-none opacity-70 shrink-0 transition-[opacity] duration-[100ms] hover:opacity-100";
-const WFM_HINT        = "text-[11px] text-muted pb-[8px] italic";
-const WFM_SEARCH      = "w-full bg-[var(--surface)] border border-border rounded-[6px] text-foreground text-[12px] px-[8px] py-[5px] mb-[6px] outline-none focus:border-accent";
-const WFM_ORDERS      = "flex flex-col gap-[2px]";
-const WFM_ORDER_ROW   = "flex items-center gap-[6px] px-[8px] py-[5px] bg-[rgba(255,255,255,.03)] border border-[rgba(48,54,61,.35)] rounded-[4px] transition-[background] duration-[100ms] hover:bg-[rgba(255,255,255,.06)]";
-const WFM_TYPE        = "text-[10px] font-bold px-[5px] py-[1px] rounded-[3px] shrink-0";
-const WFM_TYPES       = { sell: `${WFM_TYPE} bg-[rgba(63,185,80,.15)] text-success`, buy: `${WFM_TYPE} bg-[rgba(56,139,253,.15)] text-accent`, direct: `${WFM_TYPE} bg-[rgba(163,113,247,.15)] text-[#a371f7]`, auction: `${WFM_TYPE} bg-[rgba(240,192,64,.15)] text-[#f0c040]` } as const;
-const WFM_ORDER_NAME  = "flex-1 text-[12px] text-foreground truncate min-w-0";
-const WFM_ORDER_PRICE = "text-[12px] font-bold text-[#f0c040] shrink-0 tabular-nums";
-const WFM_ORDER_QTY   = "text-[11px] text-muted shrink-0 min-w-[24px]";
-const WFM_BUYOUT      = "text-[11px] text-muted shrink-0 min-w-[60px]";
-const WFM_SM_BASE     = "border rounded-[3px] text-[11px] px-[7px] py-[2px] cursor-pointer whitespace-nowrap transition-[background,color] duration-[100ms]";
-const WFM_SM_OFF      = `${WFM_SM_BASE} bg-[rgba(255,255,255,.06)] border-[rgba(48,54,61,.5)] text-muted hover:bg-[rgba(255,255,255,.12)] hover:text-foreground`;
-const WFM_SM_DEL      = `${WFM_SM_BASE} bg-[rgba(255,255,255,.06)] border-[rgba(48,54,61,.5)] text-muted hover:bg-[rgba(255,255,255,.12)] hover:border-danger hover:text-danger`;
-const WFM_SM_SAVE     = `${WFM_SM_BASE} bg-[rgba(255,255,255,.06)] border-[var(--green)] text-success hover:bg-[rgba(255,255,255,.12)] hover:text-foreground`;
-const WFM_SM_INVITE   = `${WFM_SM_BASE} bg-[rgba(255,255,255,.06)] border-[var(--accent)] text-accent hover:bg-[rgba(255,255,255,.12)] hover:text-foreground`;
-const WFM_SM_REVERT   = `${WFM_SM_BASE} bg-[rgba(255,255,255,.06)] !border-[rgba(80,200,80,.45)] !text-success hover:bg-[rgba(255,255,255,.12)] hover:!bg-[rgba(80,200,80,.12)] disabled:opacity-50 disabled:cursor-default`;
-const WFM_AE_OVERLAY  = "fixed inset-0 bg-[rgba(0,0,0,.6)] flex items-center justify-center z-[1000]";
-const WFM_AE_CARD     = "bg-transparent border border-border rounded-[8px] w-[300px] max-w-[95vw] flex flex-col overflow-hidden";
-const WFM_AE_HEADER   = "flex items-center gap-[8px] px-[14px] py-[12px] border-b border-border";
-const WFM_AE_TITLE    = "text-[14px] font-semibold text-foreground";
+const WFM_REFRESH     = "bg-transparent border-0 text-muted text-14 cursor-pointer pl-1.5 leading-none transition-[color] duration-100 hover:text-foreground";
+const WFM_BULK        = "bg-transparent border border-border/50 rounded-3 text-9 font-bold px-1.25 py-0.25 cursor-pointer whitespace-nowrap normal-case tracking-normal ml-1 transition-[background,border-color,color] duration-100";
+const WFM_BULK_SHOW   = `${WFM_BULK} text-success hover:bg-success/12 hover:border-[var(--green)]`;
+const WFM_BULK_HIDE   = `${WFM_BULK} text-muted hover:bg-white/6 hover:border-muted/50 hover:text-foreground`;
+const WFM_EMPTY       = "p-5 text-center text-12 text-muted";
+const WFM_VIS_BTN     = "bg-transparent border-0 cursor-pointer text-13 p-0 leading-none opacity-70 shrink-0 transition-[opacity] duration-100 hover:opacity-100";
+const WFM_HINT        = "text-11 text-muted pb-2 italic";
+const WFM_SEARCH      = "w-full bg-[var(--surface)] border border-border rounded-6 text-foreground text-12 px-2 py-1.25 mb-1.5 outline-none focus:border-accent";
+const WFM_ORDERS      = "flex flex-col gap-0.5";
+const WFM_ORDER_ROW   = "flex items-center gap-1.5 px-2 py-1.25 bg-white/3 border border-border/35 rounded-4 transition-[background] duration-100 hover:bg-white/6";
+const WFM_TYPE        = "text-10 font-bold px-1.25 py-0.25 rounded-3 shrink-0";
+const WFM_TYPES       = { sell: `${WFM_TYPE} bg-success/15 text-success`, buy: `${WFM_TYPE} bg-accent/15 text-accent`, direct: `${WFM_TYPE} bg-direct-trade/15 text-direct-trade`, auction: `${WFM_TYPE} bg-ducat/15 text-ducat` } as const;
+const WFM_ORDER_NAME  = "flex-1 text-12 text-foreground truncate min-w-0";
+const WFM_ORDER_PRICE = "text-12 font-bold text-ducat shrink-0 tabular-nums";
+const WFM_ORDER_QTY   = "text-11 text-muted shrink-0 min-w-6";
+const WFM_BUYOUT      = "text-11 text-muted shrink-0 min-w-15";
+const WFM_SM_BASE     = "border rounded-3 text-11 px-1.75 py-0.5 cursor-pointer whitespace-nowrap transition-[background,color] duration-100";
+const WFM_SM_OFF      = `${WFM_SM_BASE} bg-white/6 border-border/50 text-muted hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_DEL      = `${WFM_SM_BASE} bg-white/6 border-border/50 text-muted hover:bg-white/12 hover:border-danger hover:text-danger`;
+const WFM_SM_SAVE     = `${WFM_SM_BASE} bg-white/6 border-[var(--green)] text-success hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_INVITE   = `${WFM_SM_BASE} bg-white/6 border-[var(--accent)] text-accent hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_REVERT   = `${WFM_SM_BASE} bg-white/6 !border-confirm/45 !text-success hover:bg-white/12 hover:!bg-confirm/12 disabled:opacity-50 disabled:cursor-default`;
+const WFM_AE_OVERLAY  = "fixed inset-0 bg-black/60 flex items-center justify-center z-1000";
+const WFM_AE_CARD     = "bg-transparent border border-border rounded-8 w-75 max-w-[95vw] flex flex-col overflow-hidden";
+const WFM_AE_HEADER   = "flex items-center gap-2 px-3.5 py-3 border-b border-border";
+const WFM_AE_TITLE    = "text-14 font-semibold text-foreground";
 const WFM_RIVEN_MOD   = "italic text-muted text-[0.92em]";
-const WFM_AE_BODY     = "flex flex-col gap-[12px] p-[14px]";
-const WFM_AE_FIELD    = "flex flex-col gap-[5px]";
-const WFM_AE_LABEL    = "text-[11px] text-muted";
-const WFM_AE_VIS_ROW  = "flex gap-[4px]";
-const WFM_VIS_ON      = `${WFM_SM_BASE} bg-[rgba(56,139,253,.2)] border-accent text-accent`;
-const WFM_AE_HINT     = "text-[10px] text-muted italic";
-const WFM_AE_TYPE_WARN = "block mt-[4px] text-[10px] text-[#f0c040]";
-const WFM_AE_INPUT_ROW = "flex items-center gap-[5px]";
-const WFM_AE_INPUT    = "w-[80px] bg-[rgba(0,0,0,.3)] border border-[rgba(48,54,61,.8)] rounded-[3px] text-foreground text-[12px] px-[6px] py-[4px] outline-none focus:border-accent";
-const WFM_PLAT        = "text-[11px] text-[#f0c040] shrink-0";
-const WFM_AE_ERROR    = "text-[11px] text-danger pt-[2px]";
-const WFM_AE_FOOTER   = "flex gap-[6px] px-[14px] py-[10px] border-t border-border justify-end";
-const WFM_CHANGELOG   = "mt-[14px] border-t border-border pt-[8px]";
-const WFM_CH_ROW      = "flex items-center gap-[6px] px-[4px] py-[5px] rounded-[4px] text-[12px] border-b border-[rgba(48,54,61,.4)] last:border-b-0";
-const WFM_CH_BADGE    = "shrink-0 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[11px] font-bold";
+const WFM_AE_BODY     = "flex flex-col gap-3 p-3.5";
+const WFM_AE_FIELD    = "flex flex-col gap-1.25";
+const WFM_AE_LABEL    = "text-11 text-muted";
+const WFM_AE_VIS_ROW  = "flex gap-1";
+const WFM_VIS_ON      = `${WFM_SM_BASE} bg-accent/20 border-accent text-accent`;
+const WFM_AE_HINT     = "text-10 text-muted italic";
+const WFM_AE_TYPE_WARN = "block mt-1 text-10 text-ducat";
+const WFM_AE_INPUT_ROW = "flex items-center gap-1.25";
+const WFM_AE_INPUT    = "w-20 bg-black/30 border border-border/80 rounded-3 text-foreground text-12 px-1.5 py-1 outline-none focus:border-accent";
+const WFM_PLAT        = "text-11 text-ducat shrink-0";
+const WFM_AE_ERROR    = "text-11 text-danger pt-0.5";
+const WFM_AE_FOOTER   = "flex gap-1.5 px-3.5 py-2.5 border-t border-border justify-end";
+const WFM_CHANGELOG   = "mt-3.5 border-t border-border pt-2";
+const WFM_CH_ROW      = "flex items-center gap-1.5 px-1 py-1.25 rounded-4 text-12 border-b border-border/40 last:border-b-0";
+const WFM_CH_BADGE    = "shrink-0 w-4.5 h-4.5 rounded-full flex items-center justify-center text-11 font-bold";
 const WFM_CH_TEXT     = "flex-1 min-w-0 truncate text-foreground";
-const WFM_CH_PLAYER   = "text-muted text-[11px]";
-const WFM_CH_TIME     = "shrink-0 text-[10px] text-muted";
-const WFM_CH_REV_LABEL = "text-[10px] text-muted italic";
-const WFM_CLEAR       = "bg-transparent border-0 text-muted text-[11px] cursor-pointer self-end pb-[4px] underline hover:text-danger";
-const WFM_WHISPER     = "border rounded-[6px] px-[12px] py-[10px] flex flex-col gap-[6px]";
+const WFM_CH_PLAYER   = "text-muted text-11";
+const WFM_CH_TIME     = "shrink-0 text-10 text-muted";
+const WFM_CH_REV_LABEL = "text-10 text-muted italic";
+const WFM_CLEAR       = "bg-transparent border-0 text-muted text-11 cursor-pointer self-end pb-1 underline hover:text-danger";
+const WFM_WHISPER     = "border rounded-6 px-3 py-2.5 flex flex-col gap-1.5";
 const WFM_W_HEADER    = "flex justify-between items-center";
-const WFM_W_FROM      = "text-[13px] font-bold text-foreground";
-const WFM_W_TIME      = "text-[10px] text-muted";
-const WFM_W_SUMMARY   = "text-[12px] text-muted";
+const WFM_W_FROM      = "text-13 font-bold text-foreground";
+const WFM_W_TIME      = "text-10 text-muted";
+const WFM_W_SUMMARY   = "text-12 text-muted";
 const WFM_W_ITEM      = "text-foreground font-semibold";
-const WFM_W_PRICE     = "text-[#f0c040]";
-const WFM_W_GHOST_BADGE = "text-[11px] text-success font-semibold";
-const WFM_W_ACTIONS   = "flex gap-[5px] flex-wrap";
-const WFM_W_REVERT    = "flex items-center gap-[8px] mt-[4px]";
-const WFM_REVERT_HINT = "text-[11px] text-muted flex-1";
+const WFM_W_PRICE     = "text-ducat";
+const WFM_W_GHOST_BADGE = "text-11 text-success font-semibold";
+const WFM_W_ACTIONS   = "flex gap-1.25 flex-wrap";
+const WFM_W_REVERT    = "flex items-center gap-2 mt-1";
+const WFM_REVERT_HINT = "text-11 text-muted flex-1";
 
 // ── Login panel ───────────────────────────────────────────────────────────────
 
@@ -649,8 +649,8 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
         <div className={WFM_CHANGELOG}>
           <div className={WFM_SECTION_LABEL}>Auto-updated listings</div>
           {changelog.map(entry => (
-            <div key={entry.id} className={`${WFM_CH_ROW}${entry.reverted ? " opacity-[.55]" : ""}`}>
-              <span className={`${WFM_CH_BADGE} ${entry.action === "decreased" ? "bg-[rgba(56,139,253,.2)] text-accent" : "bg-[rgba(63,185,80,.2)] text-success"}`}>
+            <div key={entry.id} className={`${WFM_CH_ROW}${entry.reverted ? " opacity-55" : ""}`}>
+              <span className={`${WFM_CH_BADGE} ${entry.action === "decreased" ? "bg-accent/20 text-accent" : "bg-success/20 text-success"}`}>
                 {entry.action === "decreased" ? "−" : "✓"}
               </span>
               <span className={WFM_CH_TEXT}>
@@ -922,7 +922,7 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
       {whispers.length === 0 ? (
         <div className={WFM_EMPTY}>
           <div>No trade whispers yet.</div>
-          <div className="mt-1 text-[11px] text-muted">
+          <div className="mt-1 text-11 text-muted">
             When someone whispers you a warframe.market trade offer, it will appear here.
           </div>
         </div>
@@ -930,7 +930,7 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
         <>
           <button className={WFM_CLEAR} onClick={() => setWhispers([])}>Clear all</button>
           {whispers.map((w, i) => (
-            <div key={i} className={`${WFM_WHISPER}${w.completedAt ? " border-[rgba(80,200,80,.35)] bg-[rgba(80,200,80,.05)] opacity-75" : " border-[rgba(48,54,61,.4)] bg-[rgba(255,255,255,.04)]"}`}>
+            <div key={i} className={`${WFM_WHISPER}${w.completedAt ? " border-confirm/35 bg-confirm/5 opacity-75" : " border-border/40 bg-white/4"}`}>
               <div className={WFM_W_HEADER}>
                 <span className={WFM_W_FROM}>{w.from}</span>
                 <span className={WFM_W_TIME}>{w.timestamp}</span>
@@ -1138,7 +1138,7 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
               : `Status: ${wfmStatus}. Click to change.`}>
             {(["online", "ingame", "invisible"] as const).map(s => (
               <button key={s} disabled={statusBusy}
-                className={`${WFM_OPT} ${wfmStatus === s ? `border-transparent opacity-100 ${WFM_ST[s].on}` : "bg-transparent border-[rgba(48,54,61,.5)] opacity-[.35]"} ${WFM_ST[s].c}`}
+                className={`${WFM_OPT} ${wfmStatus === s ? `border-transparent opacity-100 ${WFM_ST[s].on}` : "bg-transparent border-border/50 opacity-35"} ${WFM_ST[s].c}`}
                 title={{ online: "Set Online", ingame: "Set In Game", invisible: "Set Invisible" }[s]}
                 onClick={async () => {
                   setStatusBusy(true); setStatusError("");
@@ -1157,7 +1157,7 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
       </div>
 
       {statusError && (
-        <div className="border-b border-[rgba(248,81,73,.2)] bg-[rgba(248,81,73,.08)] px-3 py-1 text-[11px] text-red">
+        <div className="border-b border-danger/20 bg-danger/8 px-3 py-1 text-11 text-red">
           {statusError}
         </div>
       )}

@@ -30,72 +30,72 @@ import "./RivenOverlayWindow.css";
 
 const ROV_ROOT = "w-full h-full flex items-start justify-center p-2";
 const ROV_CARD =
-  "bg-[rgba(13,17,23,0.93)] border border-[rgba(56,139,253,0.3)] rounded-[10px] px-[14px] py-[12px] w-full flex flex-col gap-[8px] backdrop-blur-[10px] shadow-[0_8px_32px_rgba(0,0,0,0.65)]";
+  "bg-background/93 border border-accent/30 rounded-10 px-3.5 py-3 w-full flex flex-col gap-2 backdrop-blur-10 shadow-[0_8px_32px_rgba(0,0,0,0.65)]";
 
-const ROV_HEADER = "flex items-center gap-[6px]";
-const ROV_TITLE = "text-[14px] font-bold text-[#e6edf3] flex-1";
+const ROV_HEADER = "flex items-center gap-1.5";
+const ROV_TITLE = "text-14 font-bold text-foreground flex-1";
 const ROV_COMPARE =
-  "bg-[rgba(56,139,253,0.15)] border border-[rgba(56,139,253,0.35)] text-[#58a6ff] text-[10px] font-semibold cursor-pointer px-[7px] py-[2px] rounded-[4px] leading-[1.4] transition-[background] duration-150 hover:bg-[rgba(56,139,253,0.28)]";
+  "bg-accent/15 border border-accent/35 text-info text-10 font-semibold cursor-pointer px-1.75 py-0.5 rounded-4 leading-1.4 transition-[background] duration-150 hover:bg-accent/28";
 const ROV_SAVE =
-  "bg-transparent border-0 text-[rgba(139,148,158,0.6)] text-[12px] cursor-pointer px-[4px] py-[2px] rounded-[4px] leading-none transition-colors duration-150 hover:text-[#3fb950]";
+  "bg-transparent border-0 text-muted/60 text-12 cursor-pointer px-1 py-0.5 rounded-4 leading-none transition-colors duration-150 hover:text-success";
 const ROV_CLOSE =
-  "bg-transparent border-0 text-[rgba(139,148,158,0.5)] text-[12px] cursor-pointer px-[4px] py-[2px] rounded-[4px] leading-none transition-[color,background] duration-150 hover:text-[#f85149] hover:bg-[rgba(248,81,73,0.12)]";
+  "bg-transparent border-0 text-muted/50 text-12 cursor-pointer px-1 py-0.5 rounded-4 leading-none transition-[color,background] duration-150 hover:text-danger hover:bg-danger/12";
 
-const ROV_SCANNING = "text-[12px] text-[rgba(139,148,158,0.8)] text-center py-[6px]";
-const ROV_VERDICT = "text-[13px] font-bold tracking-[0.3px]";
+const ROV_SCANNING = "text-12 text-muted/80 text-center py-1.5";
+const ROV_VERDICT = "text-13 font-bold tracking-[0.3px]";
 
-const ROV_SCORE_WRAP = "flex items-center gap-[7px]";
+const ROV_SCORE_WRAP = "flex items-center gap-1.75";
 const ROV_SCORE_TRACK =
-  "flex-1 h-[5px] bg-[rgba(255,255,255,0.08)] rounded-[3px] overflow-hidden";
-const ROV_SCORE_FILL = "h-full rounded-[3px] transition-[width] duration-[400ms] ease-[ease]";
-const ROV_SCORE_PCT = "text-[11px] font-semibold min-w-[30px] text-right";
+  "flex-1 h-1.25 bg-white/8 rounded-3 overflow-hidden";
+const ROV_SCORE_FILL = "h-full rounded-3 transition-[width] duration-400 ease-[ease]";
+const ROV_SCORE_PCT = "text-11 font-semibold min-w-7.5 text-right";
 
 const ROV_ROLLED =
-  "flex flex-col gap-[4px] border-t border-t-[rgba(255,255,255,0.06)] pt-[8px]";
-const ROV_ROW = "flex items-center gap-[7px] text-[12px] px-[6px] py-[3px] rounded-[5px]";
-const ROV_ICON = "text-[11px] w-[13px] text-center shrink-0";
-const ROV_NAME = "flex-1 text-[#e6edf3]";
-const ROV_VALUE = "text-[12px] font-semibold tabular-nums shrink-0";
+  "flex flex-col gap-1 border-t border-t-white/6 pt-2";
+const ROV_ROW = "flex items-center gap-1.75 text-12 px-1.5 py-0.75 rounded-5";
+const ROV_ICON = "text-11 w-3.25 text-center shrink-0";
+const ROV_NAME = "flex-1 text-foreground";
+const ROV_VALUE = "text-12 font-semibold tabular-nums shrink-0";
 const STAT_TONE: Record<string, { row: string; icon: string; name: string; value: string }> = {
   wanted: {
-    row: ROV_ROW + " bg-[rgba(63,185,80,0.1)]",
-    icon: ROV_ICON + " text-[#3fb950]",
+    row: ROV_ROW + " bg-success/10",
+    icon: ROV_ICON + " text-success",
     name: ROV_NAME,
-    value: ROV_VALUE + " text-[#3fb950]",
+    value: ROV_VALUE + " text-success",
   },
   neutral: {
-    row: ROV_ROW + " bg-[rgba(255,255,255,0.04)]",
-    icon: ROV_ICON + " text-[rgba(139,148,158,0.6)]",
-    name: "flex-1 text-[rgba(230,237,243,0.7)]",
-    value: ROV_VALUE + " text-[#f0c040]",
+    row: ROV_ROW + " bg-white/4",
+    icon: ROV_ICON + " text-muted/60",
+    name: "flex-1 text-foreground/70",
+    value: ROV_VALUE + " text-ducat",
   },
   safe_neg: {
-    row: ROV_ROW + " bg-[rgba(56,139,253,0.08)]",
-    icon: ROV_ICON + " text-[#58a6ff]",
+    row: ROV_ROW + " bg-accent/8",
+    icon: ROV_ICON + " text-info",
     name: ROV_NAME,
-    value: ROV_VALUE + " text-[#58a6ff]",
+    value: ROV_VALUE + " text-info",
   },
   harmful: {
-    row: ROV_ROW + " bg-[rgba(248,81,73,0.08)]",
-    icon: ROV_ICON + " text-[#f85149]",
+    row: ROV_ROW + " bg-danger/8",
+    icon: ROV_ICON + " text-danger",
     name: ROV_NAME,
-    value: ROV_VALUE + " text-[#f85149]",
+    value: ROV_VALUE + " text-danger",
   },
 };
 
-const ROV_ORIGINAL = "border-t border-t-[rgba(255,255,255,0.06)] pt-[6px]";
+const ROV_ORIGINAL = "border-t border-t-white/6 pt-1.5";
 const ROV_SECTION_LABEL =
-  "text-[10px] font-semibold text-[rgba(139,148,158,0.55)] uppercase tracking-[0.5px] mb-[4px]";
+  "text-10 font-semibold text-muted/55 uppercase tracking-[0.5px] mb-1";
 const ROV_ALT_CARD =
-  "border-t border-t-[rgba(255,255,255,0.06)] pt-[6px] first:border-t-0 first:pt-0";
+  "border-t border-t-white/6 pt-1.5 first:border-t-0 first:pt-0";
 const ROV_ALT_LABEL =
-  "text-[9px] font-bold uppercase tracking-[0.05em] text-[rgba(139,148,158,0.55)] bg-[rgba(255,255,255,0.06)] rounded-[3px] px-[5px] py-[1px] inline-block mb-[3px]";
+  "text-9 font-bold uppercase tracking-wider text-muted/55 bg-white/6 rounded-3 px-1.25 py-0.25 inline-block mb-0.75";
 const ROV_MISSING =
-  "text-[10.5px] text-[rgba(139,148,158,0.65)] border-t border-t-[rgba(255,255,255,0.06)] pt-[6px] leading-[1.6] break-words";
+  "text-10.5 text-muted/65 border-t border-t-white/6 pt-1.5 leading-1.6 break-words";
 const ROV_MISSING_LABEL = "font-semibold";
-const ROV_MISSING_STAT = "text-[rgba(139,148,158,0.9)]";
+const ROV_MISSING_STAT = "text-muted/90";
 const ROV_NOTES =
-  "text-[10px] text-[rgba(139,148,158,0.7)] italic border-t border-t-[rgba(255,255,255,0.06)] pt-[5px]";
+  "text-10 text-muted/70 italic border-t border-t-white/6 pt-1.25";
 
 // No auto-hide — user dismisses with ✕ or the poll detects screen closure.
 // Only a very long emergency fallback (60 min) in case everything else fails.
@@ -107,15 +107,15 @@ const requestHide = (reason: string) => {
 };
 
 function verdictColor(verdict: string): string {
-  if (verdict.startsWith("GREAT"))    return "#3fb950";
+  if (verdict.startsWith("GREAT"))    return "var(--green)";
   if (verdict.startsWith("GOOD"))     return "#a8d8a8";
   if (verdict.startsWith("MEDIOCRE")) return "#f0c040";
-  return "#f85149";
+  return "var(--red)";
 }
 
 function ScoreBar({ score }: { score: number }) {
   const pct = Math.round(score * 100);
-  const color = score >= 0.8 ? "#3fb950" : score >= 0.6 ? "#a8d8a8" : score >= 0.4 ? "#f0c040" : "#f85149";
+  const color = score >= 0.8 ? "var(--green)" : score >= 0.6 ? "#a8d8a8" : score >= 0.4 ? "#f0c040" : "var(--red)";
   return (
     <div className={ROV_SCORE_WRAP}>
       <div className={ROV_SCORE_TRACK}>
@@ -251,7 +251,7 @@ export default function RivenOverlayWindow() {
         {!scanning && rolledStats.length === 0 && !analysis && (
           <div className={ROV_SCANNING + " !text-danger"}>
             Could not read card stats
-            {parsedWeapon && <div className="mt-[3px] text-[10px] text-[rgba(139,148,158,.7)]">Weapon: "{parsedWeapon}"</div>}
+            {parsedWeapon && <div className="mt-0.75 text-10 text-muted/70">Weapon: "{parsedWeapon}"</div>}
           </div>
         )}
 
@@ -273,14 +273,14 @@ export default function RivenOverlayWindow() {
                   <div key={s} className={STAT_TONE.safe_neg.row}>
                     <span className={STAT_TONE.safe_neg.icon}>✓</span>
                     <span className={STAT_TONE.safe_neg.name}>−{s}</span>
-                    <span className={STAT_TONE.safe_neg.value + " !text-[10px]"}>Safe</span>
+                    <span className={STAT_TONE.safe_neg.value + " !text-10"}>Safe</span>
                   </div>
                 ))}
                 {i === 0 && analysis.harmful_negatives.map(s => (
                   <div key={s} className={STAT_TONE.harmful.row}>
                     <span className={STAT_TONE.harmful.icon}>✗</span>
                     <span className={STAT_TONE.harmful.name}>−{s}</span>
-                    <span className={STAT_TONE.harmful.value + " !text-[10px]"}>Harmful</span>
+                    <span className={STAT_TONE.harmful.value + " !text-10"}>Harmful</span>
                   </div>
                 ))}
                 {alt.missing.length > 0 && (
@@ -337,7 +337,7 @@ export default function RivenOverlayWindow() {
 
             {/* No DB entry */}
             {!analysis && rolledStats.length > 0 && (
-              <div className={ROV_MISSING + " !text-[rgba(139,148,158,.6)]"}>
+              <div className={ROV_MISSING + " !text-muted/60"}>
                 No database entry for {displayName}
               </div>
             )}
@@ -349,8 +349,8 @@ export default function RivenOverlayWindow() {
             {/* Raw OCR fallback */}
             {!analysis && ocrRaw && (
               <details className="mt-1">
-                <summary className="cursor-pointer text-[10px] text-[rgba(139,148,158,.5)]">Raw OCR</summary>
-                <pre className="mt-[3px] max-h-[100px] overflow-y-auto whitespace-pre-wrap text-[9px] text-[rgba(139,148,158,.6)]">{ocrRaw}</pre>
+                <summary className="cursor-pointer text-10 text-muted/50">Raw OCR</summary>
+                <pre className="mt-0.75 max-h-25 overflow-y-auto whitespace-pre-wrap text-9 text-muted/60">{ocrRaw}</pre>
               </details>
             )}
           </>

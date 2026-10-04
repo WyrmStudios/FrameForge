@@ -20,7 +20,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 
   render() {
     if (this.state.err) {
-      return <div className="whitespace-pre-wrap p-6 font-mono text-[#f85149]">
+      return <div className="whitespace-pre-wrap p-6 font-mono text-danger">
         <strong>Render error:</strong>{"\n"}{this.state.err}
       </div>;
     }

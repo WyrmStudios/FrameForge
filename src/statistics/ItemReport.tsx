@@ -11,52 +11,52 @@ type Timeframe = "7" | "30" | "90" | "all";
 
 const IR_ROOT = "flex min-h-0 flex-1 flex-col overflow-hidden";
 const IR_ADD_BAR = "flex shrink-0 items-center border-b border-border px-3.5 py-2";
-const IR_SEARCH_WRAP = "relative w-[300px]";
+const IR_SEARCH_WRAP = "relative w-75";
 const IR_SEARCH_INPUT =
-  "w-full rounded-[4px] border border-[rgba(48,54,61,0.8)] bg-[rgba(0,0,0,0.2)] px-2.5 py-[5px] text-[12px] text-foreground outline-none focus:border-accent";
+  "w-full rounded-4 border border-border/80 bg-black/20 px-2.5 py-1.25 text-12 text-foreground outline-none focus:border-accent";
 const IR_DROPDOWN =
-  "absolute inset-x-0 top-[calc(100%_+_4px)] z-50 max-h-60 overflow-y-auto rounded-[6px] border border-[rgba(48,54,61,0.8)] bg-surface shadow-[0_4px_16px_rgba(0,0,0,0.5)]";
-const IR_DROPDOWN_EMPTY = "px-3 py-2.5 text-center text-[12px] text-muted";
+  "absolute inset-x-0 top-[calc(100%_+_4px)] z-50 max-h-60 overflow-y-auto rounded-6 border border-border/80 bg-surface shadow-[0_4px_16px_rgba(0,0,0,0.5)]";
+const IR_DROPDOWN_EMPTY = "px-3 py-2.5 text-center text-12 text-muted";
 const IR_DROPDOWN_ROW =
-  "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-1.5 text-left transition-[background] duration-100 hover:bg-[rgba(255,255,255,0.06)]";
-const IR_DROPDOWN_NAME = "min-w-0 flex-1 truncate text-[12px] text-foreground";
-const IR_DROPDOWN_CAT = "shrink-0 text-[10px] text-muted";
+  "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-1.5 text-left transition-[background] duration-100 hover:bg-white/6";
+const IR_DROPDOWN_NAME = "min-w-0 flex-1 truncate text-12 text-foreground";
+const IR_DROPDOWN_CAT = "shrink-0 text-10 text-muted";
 const IR_SCROLL = "min-h-0 flex-1 overflow-y-auto px-3.5 py-3";
 const IR_GRID = "grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-2.5";
 const IR_CARD =
-  "flex cursor-default flex-col gap-2 rounded-[8px] border bg-surface px-3.5 py-3 transition-[border-color,opacity] duration-100";
+  "flex cursor-default flex-col gap-2 rounded-8 border bg-surface px-3.5 py-3 transition-[border-color,opacity] duration-100";
 const IR_DRAG_HANDLE =
-  "shrink-0 select-none pr-0.5 text-[16px] leading-none text-muted opacity-40 transition-opacity duration-150 hover:opacity-100";
+  "shrink-0 select-none pr-0.5 text-16 leading-none text-muted opacity-40 transition-opacity duration-150 hover:opacity-100";
 const IR_CARD_HEADER = "flex min-w-0 items-center justify-between gap-2";
-const IR_CARD_NAME = "min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground";
+const IR_CARD_NAME = "min-w-0 flex-1 truncate text-13 font-semibold text-foreground";
 const IR_CARD_RIGHT = "flex shrink-0 items-center gap-1";
 const IR_TF_BTNS = "flex";
 const IR_TF_BASE =
-  "cursor-pointer border-y border-l px-1.5 py-[2px] text-[10px] leading-[1.4] transition-[background,color,border-color] duration-100";
+  "cursor-pointer border-y border-l px-1.5 py-0.5 text-10 leading-1.4 transition-[background,color,border-color] duration-100";
 const IR_TF_IDLE =
-  "border-[rgba(48,54,61,0.5)] bg-transparent text-muted hover:bg-[rgba(255,255,255,0.06)] hover:text-foreground";
-const IR_TF_ACTIVE = "border-accent bg-[rgba(56,139,253,0.15)] text-accent";
-const IR_TF_EDGES = "first:rounded-l-[3px] last:mr-1 last:rounded-r-[3px] last:border-r";
+  "border-border/50 bg-transparent text-muted hover:bg-white/6 hover:text-foreground";
+const IR_TF_ACTIVE = "border-accent bg-accent/15 text-accent";
+const IR_TF_EDGES = "first:rounded-l-3 last:mr-1 last:rounded-r-3 last:border-r";
 const IR_REMOVE_BTN =
-  "cursor-pointer border-0 bg-transparent px-0.5 py-0 text-[16px] leading-none text-muted transition-colors duration-100 hover:text-danger";
+  "cursor-pointer border-0 bg-transparent px-0.5 py-0 text-16 leading-none text-muted transition-colors duration-100 hover:text-danger";
 const IR_CONFIRM_ROW = "flex shrink-0 items-center gap-1.5";
-const IR_CONFIRM_MSG = "whitespace-nowrap text-[11px] text-danger";
+const IR_CONFIRM_MSG = "whitespace-nowrap text-11 text-danger";
 const IR_CONFIRM_YES =
-  "cursor-pointer rounded-[3px] border border-danger bg-[rgba(248,81,73,0.2)] px-2 py-[2px] text-[11px] font-semibold text-danger transition-[background] duration-100 hover:bg-[rgba(248,81,73,0.35)]";
+  "cursor-pointer rounded-3 border border-danger bg-danger/20 px-2 py-0.5 text-11 font-semibold text-danger transition-[background] duration-100 hover:bg-danger/35";
 const IR_CONFIRM_NO =
-  "cursor-pointer rounded-[3px] border border-[rgba(48,54,61,0.6)] bg-[rgba(255,255,255,0.06)] px-2 py-[2px] text-[11px] text-muted transition-[background] duration-100 hover:bg-[rgba(255,255,255,0.12)] hover:text-foreground";
-const IR_CHART_SVG = "block h-[60px] w-full rounded-[4px] bg-[rgba(0,0,0,0.15)]";
+  "cursor-pointer rounded-3 border border-border/60 bg-white/6 px-2 py-0.5 text-11 text-muted transition-[background] duration-100 hover:bg-white/12 hover:text-foreground";
+const IR_CHART_SVG = "block h-15 w-full rounded-4 bg-black/15";
 const IR_CHART_EMPTY =
-  "flex h-[60px] items-center justify-center rounded-[4px] bg-[rgba(0,0,0,0.1)] text-[11px] italic text-muted";
+  "flex h-15 items-center justify-center rounded-4 bg-black/10 text-11 italic text-muted";
 const IR_CARD_STATS = "flex gap-4";
 const IR_STAT = "flex flex-col gap-px";
-const IR_STAT_LABEL = "text-[10px] uppercase tracking-[0.04em] text-muted";
-const IR_STAT_VALUE = "text-[14px] font-bold tabular-nums";
-const IR_LOADING = "flex flex-1 items-center justify-center text-[14px] text-muted";
+const IR_STAT_LABEL = "text-10 uppercase tracking-0.04 text-muted";
+const IR_STAT_VALUE = "text-14 font-bold tabular-nums";
+const IR_LOADING = "flex flex-1 items-center justify-center text-14 text-muted";
 const IR_EMPTY = "flex flex-1 flex-col items-center justify-center gap-2.5 p-10 text-center";
-const IR_EMPTY_ICON = "text-[48px]";
-const IR_EMPTY_TITLE = "text-[16px] font-semibold text-foreground";
-const IR_EMPTY_DESC = "text-[13px] leading-[1.6] text-muted";
+const IR_EMPTY_ICON = "text-48";
+const IR_EMPTY_TITLE = "text-16 font-semibold text-foreground";
+const IR_EMPTY_DESC = "text-13 leading-1.6 text-muted";
 
 // ── SVG line chart ─────────────────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onR
       className={[
         IR_CARD,
         isDragOver ? "border-accent shadow-[0_0_0_1px_var(--accent)]" : "border-border",
-        isDragSource ? "opacity-[0.45]" : "",
+        isDragSource ? "opacity-45" : "",
       ]
         .filter(Boolean)
         .join(" ")}

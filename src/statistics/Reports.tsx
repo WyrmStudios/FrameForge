@@ -110,76 +110,76 @@ function groupBySessions(trades: Trade[]): TradeSession[] {
 
 const BADGE: Record<string, string> = { sale: "Sale", purchase: "Purchase", trade: "Trade" };
 const BADGE_CLASS: Record<string, string> = {
-  sale:     "border border-[rgba(39,174,96,0.35)] bg-[rgba(39,174,96,0.2)] text-[#27ae60]",
-  purchase: "border border-[rgba(231,76,60,0.35)] bg-[rgba(231,76,60,0.2)] text-[#e74c3c]",
-  trade:    "border border-[rgba(52,152,219,0.35)] bg-[rgba(52,152,219,0.2)] text-[#3498db]",
+  sale:     "border border-txn-sale/35 bg-txn-sale/20 text-txn-sale",
+  purchase: "border border-txn-purchase/35 bg-txn-purchase/20 text-txn-purchase",
+  trade:    "border border-txn-trade/35 bg-txn-trade/20 text-txn-trade",
 };
 
 // ── Presentation ──────────────────────────────────────────────────────────────
 
 const RPT_ROOT_CLASS = "flex min-h-0 flex-1 flex-col overflow-hidden bg-background";
 const RPT_SCROLL_CLASS = "flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4";
-const RPT_CARD_CLASS = "min-w-0 flex-1 rounded-[6px] border border-border bg-surface p-3.5";
+const RPT_CARD_CLASS = "min-w-0 flex-1 rounded-6 border border-border bg-surface p-3.5";
 const RPT_CARD_FLEX_CLASS = "flex flex-col gap-2.5";
-const RPT_CARD_TITLE_CLASS = "mb-1 text-[13px] font-semibold text-foreground";
-const RPT_TOP_LOADING_CLASS = "flex items-center gap-2.5 py-2.5 text-[12px] text-muted";
-const RPT_TOP_SOURCE_CLASS = "mt-[3px] text-[11px] text-muted";
-const RPT_TOP_PROGRESS_CLASS = "relative mt-2 h-1.5 w-[min(340px,60vw)] overflow-hidden rounded-[3px] bg-[rgba(255,255,255,0.12)]";
+const RPT_CARD_TITLE_CLASS = "mb-1 text-13 font-semibold text-foreground";
+const RPT_TOP_LOADING_CLASS = "flex items-center gap-2.5 py-2.5 text-12 text-muted";
+const RPT_TOP_SOURCE_CLASS = "mt-0.75 text-11 text-muted";
+const RPT_TOP_PROGRESS_CLASS = "relative mt-2 h-1.5 w-[min(340px,60vw)] overflow-hidden rounded-3 bg-white/12";
 const RPT_TOP_PROGRESS_FILL_CLASS = "block h-full rounded-[inherit] bg-accent transition-[width] duration-200 ease-out";
-const RPT_TOP_PROGRESS_EM_CLASS = "absolute left-0 top-[9px] text-[10px] not-italic text-muted";
-const RPT_TOP_REFRESHING_CLASS = "mb-2.5 text-[11px] text-muted";
-const RPT_TOP_SPINNER_CLASS = "inline-block size-3.5 shrink-0 animate-[rpt-spin_0.8s_linear_infinite] rounded-full border-2 border-[rgba(255,255,255,0.15)] border-t-accent";
+const RPT_TOP_PROGRESS_EM_CLASS = "absolute left-0 top-2.25 text-10 not-italic text-muted";
+const RPT_TOP_REFRESHING_CLASS = "mb-2.5 text-11 text-muted";
+const RPT_TOP_SPINNER_CLASS = "inline-block size-3.5 shrink-0 animate-[rpt-spin_0.8s_linear_infinite] rounded-full border-2 border-white/15 border-t-accent";
 const RPT_TOP_WRAP_CLASS = "flex items-start gap-4";
 const RPT_RANGE_ROW_CLASS = "flex items-center gap-1.5";
 const RPT_VIEW_TOGGLE_CLASS = "mr-2 flex gap-1 border-r border-border pr-2";
-const RPT_RANGE_LABEL_CLASS = "mr-0.5 text-[12px] text-muted";
-const RPT_RANGE_BTN_CLASS = "cursor-pointer rounded-[4px] border px-2.5 py-[3px] text-[12px] transition-[background] duration-150";
+const RPT_RANGE_LABEL_CLASS = "mr-0.5 text-12 text-muted";
+const RPT_RANGE_BTN_CLASS = "cursor-pointer rounded-4 border px-2.5 py-0.75 text-12 transition-[background] duration-150";
 const RPT_RANGE_IDLE_CLASS = "border-border bg-surface text-foreground hover:bg-[var(--surface-hover)]";
 const RPT_RANGE_ACTIVE_CLASS = "border-accent bg-[var(--accent-dim)] text-accent";
-const RPT_TRADE_COUNT_CLASS = "ml-1.5 text-[11px] text-muted";
+const RPT_TRADE_COUNT_CLASS = "ml-1.5 text-11 text-muted";
 const RPT_LOG_CLASS = "flex flex-col gap-2.5";
-const RPT_SESSION_CARD_CLASS = "overflow-hidden rounded-[8px] border border-border bg-surface";
-const RPT_SESSION_HEADER_CLASS = "flex items-center gap-2 border-b border-border bg-[rgba(255,255,255,0.03)] px-3 py-2";
-const RPT_SESSION_BADGE_CLASS = "shrink-0 rounded-[3px] px-[7px] py-[2px] text-[10px] font-bold uppercase tracking-[0.04em]";
-const RPT_SESSION_PLAYER_CLASS = "text-[13px] font-semibold text-foreground";
-const RPT_SESSION_DATE_CLASS = "ml-auto text-[11px] text-muted";
+const RPT_SESSION_CARD_CLASS = "overflow-hidden rounded-8 border border-border bg-surface";
+const RPT_SESSION_HEADER_CLASS = "flex items-center gap-2 border-b border-border bg-white/3 px-3 py-2";
+const RPT_SESSION_BADGE_CLASS = "shrink-0 rounded-3 px-1.75 py-0.5 text-10 font-bold uppercase tracking-0.04";
+const RPT_SESSION_PLAYER_CLASS = "text-13 font-semibold text-foreground";
+const RPT_SESSION_DATE_CLASS = "ml-auto text-11 text-muted";
 const RPT_SESSION_BODY_CLASS = "flex items-start gap-3 px-3 py-2.5";
 const RPT_SESSION_SIDE_CLASS = "flex min-w-0 flex-1 flex-col gap-1";
 const RPT_SESSION_GAVE_CLASS = "items-end";
 const RPT_SESSION_RECEIVED_CLASS = "items-start";
-const RPT_SESSION_SIDE_LABEL_CLASS = "mb-0.5 text-[10px] uppercase tracking-[0.05em] text-muted";
-const RPT_SESSION_ITEM_CLASS = "flex items-center gap-1 text-[12px] text-foreground";
-const RPT_SESSION_QTY_CLASS = "text-[11px] text-muted";
+const RPT_SESSION_SIDE_LABEL_CLASS = "mb-0.5 text-10 uppercase tracking-wider text-muted";
+const RPT_SESSION_ITEM_CLASS = "flex items-center gap-1 text-12 text-foreground";
+const RPT_SESSION_QTY_CLASS = "text-11 text-muted";
 const RPT_SESSION_PLAT_CLASS = "font-semibold text-foreground";
-const RPT_SESSION_EMPTY_CLASS = "text-[12px] text-muted";
-const RPT_SESSION_ARROW_CLASS = "shrink-0 pt-5 text-[18px] text-muted";
+const RPT_SESSION_EMPTY_CLASS = "text-12 text-muted";
+const RPT_SESSION_ARROW_CLASS = "shrink-0 pt-5 text-18 text-muted";
 const RPT_SUMMARY_CLASS = "flex gap-3";
-const RPT_STAT_CARD_CLASS = "flex flex-1 flex-col gap-1 rounded-[6px] border border-border bg-surface px-3.5 py-2.5";
+const RPT_STAT_CARD_CLASS = "flex flex-1 flex-col gap-1 rounded-6 border border-border bg-surface px-3.5 py-2.5";
 const RPT_STAT_HIGHLIGHT_CLASS = "border-accent bg-[var(--accent-dim)]";
-const RPT_STAT_LABEL_CLASS = "text-[11px] uppercase tracking-[0.04em] text-muted";
-const RPT_STAT_VALUE_CLASS = "flex items-center gap-[5px] text-[22px] font-bold";
-const RPT_GREEN_CLASS = "text-[#3fb950]";
-const RPT_RED_CLASS = "text-[#f85149]";
+const RPT_STAT_LABEL_CLASS = "text-11 uppercase tracking-0.04 text-muted";
+const RPT_STAT_VALUE_CLASS = "flex items-center gap-1.25 text-22 font-bold";
+const RPT_GREEN_CLASS = "text-success";
+const RPT_RED_CLASS = "text-danger";
 const RPT_MUTED_CLASS = "text-muted";
 const RPT_ROW_CLASS = "flex items-start gap-3.5";
 const RPT_CHART_WRAP_CLASS = "flex items-center gap-3";
-const RPT_LEGEND_CLASS = "flex min-w-0 flex-1 flex-col gap-[5px] text-[12px]";
+const RPT_LEGEND_CLASS = "flex min-w-0 flex-1 flex-col gap-1.25 text-12";
 const RPT_LEGEND_ROW_CLASS = "flex items-center gap-1.5";
-const RPT_LEGEND_DOT_CLASS = "size-2.5 shrink-0 rounded-[2px]";
+const RPT_LEGEND_DOT_CLASS = "size-2.5 shrink-0 rounded-2";
 const RPT_LEGEND_LABEL_CLASS = "flex-1 truncate text-foreground";
-const RPT_LEGEND_PCT_CLASS = "shrink-0 text-[11px] text-muted";
-const RPT_TABLE_CLASS = "w-full table-auto border-collapse text-[12px]";
+const RPT_LEGEND_PCT_CLASS = "shrink-0 text-11 text-muted";
+const RPT_TABLE_CLASS = "w-full table-auto border-collapse text-12";
 const RPT_TH_CLASS = "whitespace-nowrap border-b border-border px-2 py-1 font-semibold text-muted";
-const RPT_TD_CLASS = "align-middle whitespace-nowrap border-b border-[rgba(48,54,61,0.5)] px-2 py-[5px] text-foreground group-hover:bg-[var(--surface-hover)]";
+const RPT_TD_CLASS = "align-middle whitespace-nowrap border-b border-border/50 px-2 py-1.25 text-foreground group-hover:bg-[var(--surface-hover)]";
 const RPT_TD_NUM_CLASS = "text-right tabular-nums";
-const RPT_EMPTY_ROW_CLASS = "whitespace-nowrap border-b border-[rgba(48,54,61,0.5)] p-3 text-center align-middle text-muted group-hover:bg-[var(--surface-hover)]";
+const RPT_EMPTY_ROW_CLASS = "whitespace-nowrap border-b border-border/50 p-3 text-center align-middle text-muted group-hover:bg-[var(--surface-hover)]";
 const RPT_TBODY_ROW_CLASS = "group [&:last-child>td]:border-b-0";
-const RPT_DOT_CLASS = "mr-1.5 inline-block size-2 shrink-0 rounded-[2px]";
+const RPT_DOT_CLASS = "mr-1.5 inline-block size-2 shrink-0 rounded-2";
 const RPT_EMPTY_CLASS = "flex flex-1 flex-col items-center justify-center gap-2.5 p-10 text-center";
-const RPT_EMPTY_ICON_CLASS = "text-[48px]";
-const RPT_EMPTY_TITLE_CLASS = "text-[16px] font-semibold text-foreground";
-const RPT_EMPTY_DESC_CLASS = "text-[13px] leading-[1.6] text-muted";
-const RPT_LOADING_CLASS = "flex flex-1 items-center justify-center text-[14px] text-muted";
+const RPT_EMPTY_ICON_CLASS = "text-48";
+const RPT_EMPTY_TITLE_CLASS = "text-16 font-semibold text-foreground";
+const RPT_EMPTY_DESC_CLASS = "text-13 leading-1.6 text-muted";
+const RPT_LOADING_CLASS = "flex flex-1 items-center justify-center text-14 text-muted";
 
 function TradeCard({ session, clockFormat, systemLocale }: { session: TradeSession; clockFormat: "auto" | "12h" | "24h"; systemLocale: string }) {
   const date = new Date(session.timestamp);
@@ -290,7 +290,7 @@ function DonutChart({ data }: { data: { label: string; value: number; color: str
   return (
     <svg viewBox="0 0 180 180" width={180} height={180} className="shrink-0">
       {slices.map((s, i) => (
-        <path key={i} d={s.path} fill={s.color} stroke="#0d1117" strokeWidth={1.5} />
+        <path key={i} d={s.path} fill={s.color} strokeWidth={1.5} style={{ stroke: "var(--bg)" }} />
       ))}
       {slices.filter(s => s.pct >= 7).map((s, i) => (
         <text key={i} x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle"
@@ -482,7 +482,7 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
           ) : topError ? (
             <div className={`${RPT_TOP_LOADING_CLASS} text-red`}>
               Failed to load market data<br />
-              <span className="text-[11px] text-muted">{topError}</span>
+              <span className="text-11 text-muted">{topError}</span>
             </div>
           ) : topItems.length === 0 ? (
             <div className={`${RPT_TOP_LOADING_CLASS} text-muted`}>No market data available</div>

@@ -16,55 +16,55 @@ import "../styles/Overlay.css";
 
 const OV_ROOT = "relative w-full h-full";
 const OV_ARROW =
-  "absolute top-[2px] w-[36px] h-[28px] pointer-events-none opacity-[0.65] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]";
+  "absolute top-0.5 w-9 h-7 pointer-events-none opacity-65 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]";
 
 const OV_CARD =
-  "absolute top-[34px] bg-[rgba(22,27,34,0.82)] border border-[var(--border)] rounded-[8px] pt-[7px] pb-[6px] px-[8px] flex flex-col gap-[4px] shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
+  "absolute top-8.5 bg-surface/82 border border-[var(--border)] rounded-8 pt-1.75 pb-1.5 px-2 flex flex-col gap-1 shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
 const OV_CARD_UNKNOWN =
-  "absolute top-[34px] bg-[rgba(30,24,14,0.82)] border border-[rgba(180,140,60,0.6)] rounded-[8px] pt-[7px] pb-[6px] px-[8px] flex flex-col gap-[4px] shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
+  "absolute top-8.5 bg-unknown-card-bg/82 border border-unknown-card-border/60 rounded-8 pt-1.75 pb-1.5 px-2 flex flex-col gap-1 shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
 
 const OV_NAME =
-  "text-[14px] font-bold text-[#f0e0a0] leading-[1.25] text-center overflow-hidden text-ellipsis line-clamp-2";
+  "text-14 font-bold text-reward-name leading-1.25 text-center overflow-hidden text-ellipsis line-clamp-2";
 
-const OV_PRICE_ROW = "flex items-center justify-between gap-[4px]";
+const OV_PRICE_ROW = "flex items-center justify-between gap-1";
 const OV_PRICE_SHARED =
-  "flex items-center gap-[2px] text-[13px] font-bold whitespace-nowrap";
-const OV_PRICE_PLAT = OV_PRICE_SHARED + " text-[#c7b3ff]";
-const OV_PRICE_DUCAT = OV_PRICE_SHARED + " text-[#f0c040]";
+  "flex items-center gap-0.5 text-13 font-bold whitespace-nowrap";
+const OV_PRICE_PLAT = OV_PRICE_SHARED + " text-price-platinum-overlay";
+const OV_PRICE_DUCAT = OV_PRICE_SHARED + " text-ducat";
 const OV_PRICE_NA = "text-muted font-normal";
 const OV_LOCK =
-  "text-[13px] leading-none bg-[rgba(248,81,73,0.15)] border border-[rgba(248,81,73,0.35)] rounded-[4px] px-[4px] py-[1px] shrink-0";
+  "text-13 leading-none bg-danger/15 border border-danger/35 rounded-4 px-1 py-0.25 shrink-0";
 
 const OV_OWN_BAR =
-  "text-center text-[11px] font-bold uppercase tracking-[0.05em] px-[4px] py-[3px] rounded-[4px]";
+  "text-center text-11 font-bold uppercase tracking-wider px-1 py-0.75 rounded-4";
 const OV_OWN_YES =
   OV_OWN_BAR +
-  " bg-[rgba(240,192,64,0.15)] border border-[rgba(240,192,64,0.35)] text-[#f0c040]";
+   " bg-ducat/15 border border-ducat/35 text-ducat";
 const OV_OWN_NO =
   OV_OWN_BAR +
-  " bg-[rgba(248,81,73,0.1)] border border-[rgba(248,81,73,0.28)] text-[#f85149]";
+  " bg-danger/10 border border-danger/28 text-danger";
 
 const OV_SET_PRICE =
-  "flex items-center justify-center gap-[2px] text-[13px] font-bold text-[#c7b3ff]";
+  "flex items-center justify-center gap-0.5 text-13 font-bold text-price-platinum-overlay";
 
-const OV_COMP_GRID = "grid grid-cols-2 gap-[3px]";
+const OV_COMP_GRID = "grid grid-cols-2 gap-0.75";
 const OV_GRID_CELL =
-  "flex flex-col items-center justify-center px-[4px] py-[3px] rounded-[4px] border border-transparent min-w-0 text-center";
+  "flex flex-col items-center justify-center px-1 py-0.75 rounded-4 border border-transparent min-w-0 text-center";
 const OV_GRID_CELL_OWNED =
-  OV_GRID_CELL + " bg-[rgba(240,192,64,0.12)] border-[rgba(240,192,64,0.3)]";
+   OV_GRID_CELL + " bg-ducat/12 border-ducat/30";
 const OV_GRID_CELL_MISS =
-  OV_GRID_CELL + " bg-[rgba(255,255,255,0.02)] border-[rgba(255,255,255,0.06)]";
+  OV_GRID_CELL + " bg-white/2 border-white/6";
 const OV_GRID_NAME =
-  "text-[11px] font-semibold whitespace-nowrap overflow-hidden text-ellipsis max-w-full leading-[1.3]";
-const OV_GRID_NAME_OWNED = OV_GRID_NAME + " text-[#f0c040]";
+  "text-11 font-semibold whitespace-nowrap overflow-hidden text-ellipsis max-w-full leading-1.3";
+const OV_GRID_NAME_OWNED = OV_GRID_NAME + " text-ducat";
 const OV_GRID_NAME_MISS = OV_GRID_NAME + " text-muted";
 const OV_GRID_QTY =
-  "text-[10px] font-bold leading-none tabular-nums";
-const OV_GRID_QTY_OWNED = OV_GRID_QTY + " text-[rgba(240,192,64,0.65)]";
-const OV_GRID_QTY_MISS = OV_GRID_QTY + " text-[rgba(139,148,158,0.6)]";
+  "text-10 font-bold leading-none tabular-nums";
+const OV_GRID_QTY_OWNED = OV_GRID_QTY + " text-ducat/65";
+const OV_GRID_QTY_MISS = OV_GRID_QTY + " text-muted/60";
 
 const OV_CAT =
-  "text-[10px] font-bold uppercase text-[rgba(139,148,158,0.5)] tracking-[0.05em] text-center";
+  "text-10 font-bold uppercase text-muted/50 tracking-wider text-center";
 
 interface ComponentRow {
   unique_name: string;
@@ -647,7 +647,7 @@ export default function Overlay() {
     // Outline: dashed frame at the window's current position.
     return (
       <div className={OV_ROOT}>
-        <div className="absolute inset-x-8 top-10 bottom-10 flex items-center justify-center rounded-[10px] border-2 border-dashed border-[rgba(56,139,253,.85)] bg-[rgba(22,27,34,.55)] text-[22px] font-semibold text-[#79b8ff]">
+        <div className="absolute inset-x-8 top-10 bottom-10 flex items-center justify-center rounded-10 border-2 border-dashed border-accent/85 bg-surface/55 text-22 font-semibold text-overlay-outline">
           Relic Reward Overlay — outline
         </div>
       </div>

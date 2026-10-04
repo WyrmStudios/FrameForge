@@ -9,18 +9,18 @@ export interface HelpItem {
 }
 
 const HT_BTN =
-  "w-[18px] h-[18px] rounded-full border border-border bg-[rgba(255,255,255,.04)] text-muted text-[10px] font-bold leading-none cursor-pointer inline-flex items-center justify-center shrink-0 transition-[color,border-color] duration-[120ms] hover:text-foreground hover:border-accent";
+  "w-4.5 h-4.5 rounded-full border border-border bg-white/4 text-muted text-10 font-bold leading-none cursor-pointer inline-flex items-center justify-center shrink-0 transition-[color,border-color] duration-120 hover:text-foreground hover:border-accent";
 const HT_POPUP =
-  "absolute top-[26px] bg-[#1a1f2a] border border-border rounded-[8px] px-3 py-[10px] z-[600] min-w-[230px] max-w-[300px] max-h-[calc(60vh_/_var(--ff-scale,1))] overflow-y-auto shadow-[0_8px_28px_rgba(0,0,0,.7)] flex flex-col gap-[7px]";
+  "absolute top-6.5 bg-tooltip-bg border border-border rounded-8 px-3 py-2.5 z-600 min-w-57.5 max-w-75 max-h-[calc(60vh_/_var(--ff-scale,1))] overflow-y-auto shadow-[0_8px_28px_rgba(0,0,0,.7)] flex flex-col gap-1.75";
 const HT_TITLE =
-  "text-[10px] font-bold uppercase tracking-[.07em] text-muted mb-[2px]";
+  "text-10 font-bold uppercase tracking-0.07 text-muted mb-0.5";
 const HT_ROW = "flex items-start gap-2";
-const HT_SWATCH = "w-[13px] h-[13px] rounded-[3px] shrink-0 mt-px";
+const HT_SWATCH = "w-3.25 h-3.25 rounded-3 shrink-0 mt-px";
 const HT_BORDER_SAMPLE =
-  "w-[13px] h-[13px] shrink-0 mt-px rounded-[2px] bg-[rgba(255,255,255,.04)] border border-border border-t-[3px]";
-const HT_ICON = "text-[13px] w-4 text-center shrink-0 leading-[1.4]";
-const HT_LABEL = "text-[11px] font-semibold text-foreground block";
-const HT_DESC = "text-[10px] text-muted block leading-[1.4]";
+  "w-3.25 h-3.25 shrink-0 mt-px rounded-2 bg-white/4 border border-border border-t-3";
+const HT_ICON = "text-13 w-4 text-center shrink-0 leading-1.4";
+const HT_LABEL = "text-11 font-semibold text-foreground block";
+const HT_DESC = "text-10 text-muted block leading-1.4";
 
 export function HelpTip({ items, align = "right" }: { items: HelpItem[]; align?: "left" | "right" }) {
   const [open, setOpen] = useState(false);

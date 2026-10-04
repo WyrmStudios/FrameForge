@@ -8,15 +8,15 @@ import type { FilterPresetModule, FilterPresetSettings } from "../types/filterPr
 import FilterPresets from "../shared/FilterPresets";
 import { FilterBar, FilterChip, FilterLabel, FilterSeparator } from "../shared/ui/FilterControls";
 
-const TOOLBAR = "flex items-center gap-[12px] px-[16px] py-[10px] border-b border-border shrink-0";
-const ITEM_COUNT_LABEL = "text-muted text-[11px] whitespace-nowrap";
+const TOOLBAR = "flex items-center gap-3 px-4 py-2.5 border-b border-border shrink-0";
+const ITEM_COUNT_LABEL = "text-muted text-11 whitespace-nowrap";
 const IMAGE_TOGGLE =
-  "inventory-image-toggle flex items-center gap-[5px] shrink-0 text-muted cursor-pointer text-[11px] whitespace-nowrap hover:text-foreground";
+  "inventory-image-toggle flex items-center gap-1.25 shrink-0 text-muted cursor-pointer text-11 whitespace-nowrap hover:text-foreground";
 const CTRL_WRAP =
-  "flex items-center shrink-0 h-[25px] overflow-hidden border border-border rounded-[5px] text-muted text-[10px] tabular-nums";
-const CTRL_SPAN = "min-w-[42px] text-center";
+  "flex items-center shrink-0 h-6.25 overflow-hidden border border-border rounded-5 text-muted text-10 tabular-nums";
+const CTRL_SPAN = "min-w-10.5 text-center";
 const CTRL_BTN =
-  "self-stretch w-[24px] border-0 bg-[rgba(255,255,255,.03)] text-muted cursor-pointer text-[15px] leading-none hover:enabled:bg-[rgba(255,255,255,.08)] hover:enabled:text-foreground disabled:opacity-35 disabled:cursor-default";
+  "self-stretch w-6 border-0 bg-white/3 text-muted cursor-pointer text-15 leading-none hover:enabled:bg-white/8 hover:enabled:text-foreground disabled:opacity-35 disabled:cursor-default";
 
 interface InventoryToolbarProps {
   filters: InventoryFilters;

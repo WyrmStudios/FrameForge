@@ -9,122 +9,122 @@ import type { AnalyzeRivenArgs, SaveRivenRollArgs } from "../types/tauri";
 // ── Tailwind class constants (formerly RivenAnalyzer.css) ─────────────────────
 
 const RA_ANALYZER =
-  "flex flex-col gap-[10px] px-[14px] py-[12px] h-full min-h-0 overflow-y-auto";
-const RA_HEADER = "flex items-center gap-[8px] shrink-0";
-const RA_TITLE = "text-[13px] font-bold text-foreground";
-const RA_DB_STATUS = "ml-auto text-[10px] text-muted";
+  "flex flex-col gap-2.5 px-3.5 py-3 h-full min-h-0 overflow-y-auto";
+const RA_HEADER = "flex items-center gap-2 shrink-0";
+const RA_TITLE = "text-13 font-bold text-foreground";
+const RA_DB_STATUS = "ml-auto text-10 text-muted";
 const RA_CREDIT =
-  "bg-transparent border-0 p-0 text-[10px] text-muted cursor-pointer opacity-60 transition-[opacity,color] duration-100 whitespace-nowrap hover:opacity-100 hover:text-accent";
+  "bg-transparent border-0 p-0 text-10 text-muted cursor-pointer opacity-60 transition-[opacity,color] duration-100 whitespace-nowrap hover:opacity-100 hover:text-accent";
 const RA_CHECK_BTN =
-  "bg-[rgba(56,139,253,0.15)] border border-[rgba(56,139,253,0.4)] text-[#58a6ff] text-[12px] font-semibold cursor-pointer px-[10px] py-[4px] rounded-[5px] transition-[background] duration-150 hover:bg-[rgba(56,139,253,0.28)]";
+  "bg-accent/15 border border-accent/40 text-info text-12 font-semibold cursor-pointer px-2.5 py-1 rounded-5 transition-[background] duration-150 hover:bg-accent/28";
 const RA_REFRESH_BTN =
-  "bg-transparent border-0 text-muted text-[14px] cursor-pointer px-[2px] py-0 transition-[color] duration-100 hover:text-foreground";
+  "bg-transparent border-0 text-muted text-14 cursor-pointer px-0.5 py-0 transition-[color] duration-100 hover:text-foreground";
 
 const RA_WEAPON_WRAP = "relative shrink-0";
 const RA_WEAPON_INPUT =
-  "w-full bg-[rgba(0,0,0,0.2)] border border-[rgba(48,54,61,0.8)] rounded-[5px] text-foreground text-[13px] font-semibold px-[10px] py-[7px] outline-none focus:border-accent";
+  "w-full bg-black/20 border border-border/80 rounded-5 text-foreground text-13 font-semibold px-2.5 py-1.75 outline-none focus:border-accent";
 const RA_SUGGESTIONS =
-  "absolute top-full left-0 right-0 bg-surface border border-t-0 border-[rgba(48,54,61,0.8)] rounded-b-[5px] z-10 max-h-[220px] overflow-y-auto";
+  "absolute top-full left-0 right-0 bg-surface border border-t-0 border-border/80 rounded-b-5 z-10 max-h-55 overflow-y-auto";
 const RA_SUGGESTION =
-  "px-[10px] py-[6px] text-[12px] text-foreground cursor-pointer transition-[background] duration-100 hover:bg-[rgba(56,139,253,0.12)]";
+  "px-2.5 py-1.5 text-12 text-foreground cursor-pointer transition-[background] duration-100 hover:bg-accent/12";
 
 const RA_SECTION_LABEL =
-  "text-[10px] font-bold uppercase tracking-[0.04em] text-muted shrink-0";
+  "text-10 font-bold uppercase tracking-0.04 text-muted shrink-0";
 const RA_OPTIONAL = "font-normal normal-case tracking-normal italic";
-const RA_STAT_GRID = "flex flex-wrap gap-[4px] shrink-0";
+const RA_STAT_GRID = "flex flex-wrap gap-1 shrink-0";
 const RA_STAT_BTN =
-  "bg-[rgba(255,255,255,0.05)] border border-[rgba(48,54,61,0.6)] text-muted text-[11px] px-[9px] py-[3px] rounded-[4px] cursor-pointer whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-[rgba(255,255,255,0.1)] hover:text-foreground";
+  "bg-white/5 border border-border/60 text-muted text-11 px-2.25 py-0.75 rounded-4 cursor-pointer whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-white/10 hover:text-foreground";
 const RA_STAT_BTN_SELECTED =
-  "bg-[rgba(255,255,255,0.05)] border border-[rgba(48,54,61,0.6)] text-muted text-[11px] px-[9px] py-[3px] rounded-[4px] cursor-pointer whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-[rgba(255,255,255,0.1)] hover:text-foreground bg-[rgba(63,185,80,0.15)]! border-[var(--green)]! text-[var(--green)]!";
+  "bg-white/5 border border-border/60 text-muted text-11 px-2.25 py-0.75 rounded-4 cursor-pointer whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-white/10 hover:text-foreground bg-success/15! border-[var(--green)]! text-success!";
 
-const RA_VERDICT = "text-[16px] font-bold tracking-[0.01em]";
-const RA_STATS_BREAKDOWN = "flex flex-col gap-[3px]";
-const RA_STAT_ROW = "flex items-center gap-[8px] text-[12px] py-[3px]";
-const RA_STAT_ICON = "w-[14px] text-center shrink-0 text-[11px]";
+const RA_VERDICT = "text-16 font-bold tracking-0.01";
+const RA_STATS_BREAKDOWN = "flex flex-col gap-0.75";
+const RA_STAT_ROW = "flex items-center gap-2 text-12 py-0.75";
+const RA_STAT_ICON = "w-3.5 text-center shrink-0 text-11";
 const RA_STAT_TAG =
-  "ml-auto text-[10px] px-[6px] py-[1px] rounded-[3px] shrink-0";
+  "ml-auto text-10 px-1.5 py-0.25 rounded-3 shrink-0";
 const STAT_TONE: Record<string, { row: string; tag: string }> = {
   good: {
     row: RA_STAT_ROW + " text-success",
-    tag: RA_STAT_TAG + " bg-[rgba(63,185,80,0.12)] text-success",
+    tag: RA_STAT_TAG + " bg-success/12 text-success",
   },
   miss: {
     row: RA_STAT_ROW + " text-muted",
-    tag: RA_STAT_TAG + " bg-[rgba(255,255,255,0.06)] text-muted",
+    tag: RA_STAT_TAG + " bg-white/6 text-muted",
   },
   safe: {
-    row: RA_STAT_ROW + " text-[#6eb6ff]",
-    tag: RA_STAT_TAG + " bg-[rgba(110,182,255,0.12)] text-[#6eb6ff]",
+    row: RA_STAT_ROW + " text-state-cool",
+    tag: RA_STAT_TAG + " bg-state-cool/12 text-state-cool",
   },
   bad: {
     row: RA_STAT_ROW + " text-danger",
-    tag: RA_STAT_TAG + " bg-[rgba(248,81,73,0.12)] text-danger",
+    tag: RA_STAT_TAG + " bg-danger/12 text-danger",
   },
 };
 
 const RA_NOTES =
-  "text-[11px] text-muted leading-[1.5] border-t border-t-[rgba(48,54,61,0.4)] pt-[8px]";
+  "text-11 text-muted leading-normal border-t border-t-border/40 pt-2";
 const RA_NEXT_ROLL =
-  "bg-[rgba(56,139,253,0.12)] border border-accent text-accent text-[12px] font-semibold px-[16px] py-[7px] rounded-[5px] cursor-pointer self-start transition-[background] duration-100 shrink-0 hover:bg-[rgba(56,139,253,0.25)]";
+  "bg-accent/12 border border-accent text-accent text-12 font-semibold px-4 py-1.75 rounded-5 cursor-pointer self-start transition-[background] duration-100 shrink-0 hover:bg-accent/25";
 
 const RA_VALUE_INPUTS =
-  "bg-[rgba(0,0,0,0.2)] border border-[rgba(48,54,61,0.5)] rounded-[6px] p-[10px] flex flex-col gap-[6px] shrink-0";
-const RA_VALUE_ROW = "flex items-center gap-[8px]";
-const RA_VALUE_LABEL = "flex-1 text-[12px] text-foreground min-w-[160px]";
+  "bg-black/20 border border-border/50 rounded-6 p-2.5 flex flex-col gap-1.5 shrink-0";
+const RA_VALUE_ROW = "flex items-center gap-2";
+const RA_VALUE_LABEL = "flex-1 text-12 text-foreground min-w-40";
 const RA_VALUE_INPUT =
-  "w-[72px] bg-[rgba(0,0,0,0.3)] border border-[rgba(48,54,61,0.6)] rounded-[4px] px-[6px] py-[3px] text-foreground text-[12px] text-right focus:outline-none focus:border-accent";
+  "w-18 bg-black/30 border border-border/60 rounded-4 px-1.5 py-0.75 text-foreground text-12 text-right focus:outline-none focus:border-accent";
 const RA_SAVE_BTN =
-  "bg-[rgba(56,139,253,0.15)] border border-[rgba(56,139,253,0.4)] text-accent text-[11px] font-semibold px-[12px] py-[4px] rounded-[4px] cursor-pointer transition-[background] duration-100 hover:bg-[rgba(56,139,253,0.28)]";
+  "bg-accent/15 border border-accent/40 text-accent text-11 font-semibold px-3 py-1 rounded-4 cursor-pointer transition-[background] duration-100 hover:bg-accent/28";
 const RA_CANCEL_EDIT =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] rounded-[4px] text-muted text-[11px] px-[8px] py-[4px] cursor-pointer transition-[border-color] duration-100 hover:border-danger hover:text-danger";
+  "bg-transparent border border-border/60 rounded-4 text-muted text-11 px-2 py-1 cursor-pointer transition-[border-color] duration-100 hover:border-danger hover:text-danger";
 
 const RA_SAVED_SECTION =
-  "border-t border-t-[rgba(48,54,61,0.5)] pt-[12px] shrink-0";
+  "border-t border-t-border/50 pt-3 shrink-0";
 const RA_SAVED_GRID =
-  "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-[8px]";
+  "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-2";
 const RA_SAVED_CARD =
-  "bg-[rgba(0,0,0,0.25)] border border-[rgba(48,54,61,0.5)] rounded-[7px] px-[10px] py-[9px] flex flex-col gap-[3px] transition-[border-color] duration-100 hover:border-[rgba(48,54,61,0.9)]";
+  "bg-black/25 border border-border/50 rounded-7 px-2.5 py-2.25 flex flex-col gap-0.75 transition-[border-color] duration-100 hover:border-border/90";
 const RA_SAVED_CARD_SEL =
-  "bg-[rgba(0,0,0,0.25)] border border-[rgba(48,54,61,0.5)] rounded-[7px] px-[10px] py-[9px] flex flex-col gap-[3px] transition-[border-color] duration-100 hover:border-[rgba(48,54,61,0.9)] border-accent! bg-[rgba(56,139,253,0.06)]!";
-const RA_SAVED_HEADER = "flex items-center gap-[4px] mb-[3px]";
+  "bg-black/25 border border-border/50 rounded-7 px-2.5 py-2.25 flex flex-col gap-0.75 transition-[border-color] duration-100 hover:border-border/90 border-accent! bg-accent/6!";
+const RA_SAVED_HEADER = "flex items-center gap-1 mb-0.75";
 const RA_LABEL_INPUT =
-  "flex-1 bg-transparent border-0 border-b border-b-transparent text-foreground text-[11px] font-semibold px-[2px] py-0 min-w-0 focus:outline-none focus:border-b-accent";
-const RA_SAVED_ACTIONS = "flex gap-[3px] shrink-0";
+  "flex-1 bg-transparent border-0 border-b border-b-transparent text-foreground text-11 font-semibold px-0.5 py-0 min-w-0 focus:outline-none focus:border-b-accent";
+const RA_SAVED_ACTIONS = "flex gap-0.75 shrink-0";
 const RA_CMP_BASE =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] rounded-[3px] text-muted text-[10px] w-[20px] h-[20px] cursor-pointer flex items-center justify-center transition-all duration-100 hover:border-accent hover:text-accent";
+  "bg-transparent border border-border/60 rounded-3 text-muted text-10 w-5 h-5 cursor-pointer flex items-center justify-center transition-all duration-100 hover:border-accent hover:text-accent";
 const RA_CMP_ACTIVE =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] rounded-[3px] text-muted text-[10px] w-[20px] h-[20px] cursor-pointer flex items-center justify-center transition-all duration-100 hover:border-accent hover:text-accent bg-[rgba(56,139,253,0.2)]! border-accent! text-accent!";
+  "bg-transparent border border-border/60 rounded-3 text-muted text-10 w-5 h-5 cursor-pointer flex items-center justify-center transition-all duration-100 hover:border-accent hover:text-accent bg-accent/20! border-accent! text-accent!";
 const RA_DELETE_BTN =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] rounded-[3px] text-muted text-[10px] w-[20px] h-[20px] cursor-pointer transition-all duration-100 hover:border-danger hover:text-danger";
+  "bg-transparent border border-border/60 rounded-3 text-muted text-10 w-5 h-5 cursor-pointer transition-all duration-100 hover:border-danger hover:text-danger";
 const RA_EDIT_BTN =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] rounded-[3px] text-muted text-[11px] w-[20px] h-[20px] cursor-pointer transition-all duration-100 hover:border-accent hover:text-accent";
-const RA_SAVED_STATS = "flex flex-col gap-[2px]";
-const RA_SAVED_STAT = "text-[11px] text-muted flex gap-[4px]";
+  "bg-transparent border border-border/60 rounded-3 text-muted text-11 w-5 h-5 cursor-pointer transition-all duration-100 hover:border-accent hover:text-accent";
+const RA_SAVED_STATS = "flex flex-col gap-0.5";
+const RA_SAVED_STAT = "text-11 text-muted flex gap-1";
 
 const RA_COMPARE_PANEL =
-  "mt-[12px] bg-[rgba(0,0,0,0.2)] border border-[rgba(56,139,253,0.3)] rounded-[7px] px-[12px] py-[10px]";
-const RA_COMPARE_GRID = "grid grid-cols-2 gap-[12px]";
-const RA_COMPARE_COL = "flex flex-col gap-[3px]";
+  "mt-3 bg-black/20 border border-accent/30 rounded-7 px-3 py-2.5";
+const RA_COMPARE_GRID = "grid grid-cols-2 gap-3";
+const RA_COMPARE_COL = "flex flex-col gap-0.75";
 const RA_COMPARE_LABEL =
-  "text-[11px] font-bold text-foreground mb-[4px] pb-[4px] border-b border-b-[rgba(48,54,61,0.4)]";
+  "text-11 font-bold text-foreground mb-1 pb-1 border-b border-b-border/40";
 
 const RA_SIGN_BASE =
-  "min-w-[22px] h-[22px] rounded-[4px] border text-[13px] font-bold cursor-pointer shrink-0 transition-all duration-100";
+  "min-w-5.5 h-5.5 rounded-4 border text-13 font-bold cursor-pointer shrink-0 transition-all duration-100";
 const RA_SIGN_POS =
   RA_SIGN_BASE +
-  " bg-[rgba(63,185,80,0.15)] border-[rgba(63,185,80,0.5)] text-[#3fb950] hover:bg-[rgba(63,185,80,0.3)]";
+  " bg-success/15 border-success/50 text-success hover:bg-success/30";
 const RA_SIGN_NEG =
   RA_SIGN_BASE +
-  " bg-[rgba(248,81,73,0.12)] border-[rgba(248,81,73,0.5)] text-[#f85149] hover:bg-[rgba(248,81,73,0.25)]";
+  " bg-danger/12 border-danger/50 text-danger hover:bg-danger/25";
 const RA_FMT_BTN =
-  "min-w-[24px] h-[22px] bg-[rgba(255,255,255,0.06)] border border-[rgba(48,54,61,0.7)] rounded-[4px] text-muted text-[11px] font-semibold cursor-pointer shrink-0 transition-[background] duration-100 hover:bg-[rgba(255,255,255,0.12)]";
+  "min-w-6 h-5.5 bg-white/6 border border-border/70 rounded-4 text-muted text-11 font-semibold cursor-pointer shrink-0 transition-[background] duration-100 hover:bg-white/12";
 
-const RA_ALTERNATIVES = "flex flex-col gap-[8px]";
+const RA_ALTERNATIVES = "flex flex-col gap-2";
 const RA_ALT_CARD =
-  "bg-[rgba(0,0,0,0.2)] border border-[rgba(48,54,61,0.5)] rounded-[7px] px-[12px] py-[10px] flex flex-col gap-[6px]";
-const RA_ALT_HEADER = "flex items-center gap-[8px] flex-wrap";
+  "bg-black/20 border border-border/50 rounded-7 px-3 py-2.5 flex flex-col gap-1.5";
+const RA_ALT_HEADER = "flex items-center gap-2 flex-wrap";
 const RA_ALT_LABEL =
-  "text-[10px] font-bold uppercase tracking-[0.05em] text-muted bg-[rgba(255,255,255,0.06)] rounded-[3px] px-[6px] py-[2px]";
+  "text-10 font-bold uppercase tracking-wider text-muted bg-white/6 rounded-3 px-1.5 py-0.5";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,13 +163,13 @@ function ScoreBar({ score }: { score: number }) {
   const pct = Math.round(score * 100);
   const color = score >= 0.8 ? "var(--green)" : score >= 0.6 ? "#a8d8a8" : score >= 0.4 ? "#f0c040" : "var(--red)";
   return (
-    <div className="flex items-center gap-[8px] h-[6px] bg-[rgba(255,255,255,0.08)] rounded-[3px] overflow-visible relative">
+    <div className="flex items-center gap-2 h-1.5 bg-white/8 rounded-3 overflow-visible relative">
       <div
-        className="h-[6px] rounded-[3px] transition-[width,background] duration-300 min-w-[4px]"
+        className="h-1.5 rounded-3 transition-[width,background] duration-300 min-w-1"
         style={{ width: `${pct}%`, background: color }}
       />
       <span
-        className="text-[11px] font-bold absolute right-0 top-[-2px] tabular-nums"
+        className="text-11 font-bold absolute right-0 -top-0.5 tabular-nums"
         style={{ color }}
       >
         {pct}%
@@ -437,7 +437,7 @@ export default function RivenAnalyzer() {
       </div>
 
       {showLog && (
-        <pre className="max-h-[300px] shrink-0 overflow-y-auto whitespace-pre-wrap break-all rounded-[5px] border border-[rgba(48,54,61,.6)] bg-black/30 p-2.5 text-[10px] text-muted">
+        <pre className="max-h-75 shrink-0 overflow-y-auto whitespace-pre-wrap break-all rounded-5 border border-border/60 bg-black/30 p-2.5 text-10 text-muted">
           {sessionLog}
         </pre>
       )}
@@ -495,7 +495,7 @@ export default function RivenAnalyzer() {
                   {editingId ? "✓ Update Roll" : "💾 Save Roll"}
                 </button>
                 {editingId && <button className={RA_CANCEL_EDIT} onClick={reset}>Cancel</button>}
-                {saveStatus && <span className={`text-[11px] ${saveStatus.includes("!") || saveStatus.includes("✓") ? "text-green" : "text-red"}`}>{saveStatus}</span>}
+                {saveStatus && <span className={`text-11 ${saveStatus.includes("!") || saveStatus.includes("✓") ? "text-green" : "text-red"}`}>{saveStatus}</span>}
               </div>
             </div>
           )}
@@ -559,7 +559,7 @@ export default function RivenAnalyzer() {
         <div className={RA_SAVED_SECTION}>
           <div className={RA_SECTION_LABEL + " mb-2"}>
             Saved Rolls ({savedRivens.length}/50)
-            {compareIds.size > 0 && <span className="ml-2 text-[11px] text-accent">
+            {compareIds.size > 0 && <span className="ml-2 text-11 text-accent">
               {compareIds.size === 1 ? "Select 1 more to compare" : "Comparing ↓"}
             </span>}
           </div>
@@ -598,7 +598,7 @@ export default function RivenAnalyzer() {
 
                   {/* Verdict */}
                   {r.verdict && (
-                    <div className="mb-1 text-[11px] font-bold" style={{ color: verdictColor2(r.verdict) }}>
+                    <div className="mb-1 text-11 font-bold" style={{ color: verdictColor2(r.verdict) }}>
                       {r.verdict.split("—")[0].trim()} · {Math.round(r.score * 100)}%
                     </div>
                   )}
@@ -609,17 +609,17 @@ export default function RivenAnalyzer() {
                       <div key={i} className={RA_SAVED_STAT + " items-center gap-1"}>
                         {isEditing ? (<>
                           <button
-                            className={(s.positive ? RA_SIGN_POS : RA_SIGN_NEG) + " !size-[18px] !min-w-0 !p-0 !text-[11px]"}
+                            className={(s.positive ? RA_SIGN_POS : RA_SIGN_NEG) + " !size-4.5 !min-w-0 !p-0 !text-11"}
                             onClick={() => setInlineEditStats(prev => prev.map((x, j) => j === i ? { ...x, positive: !x.positive } : x))}
                           >{s.positive ? "+" : "−"}</button>
                           <input
-                            className="w-12 rounded-[3px] border border-[rgba(48,54,61,.6)] bg-black/30 px-1 py-px text-right text-[11px] text-foreground"
+                            className="w-12 rounded-3 border border-border/60 bg-black/30 px-1 py-px text-right text-11 text-foreground"
                             value={s.value}
                             onChange={e => setInlineEditStats(prev => prev.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
                           />
-                          <span className="text-[11px] text-muted">% {s.name}</span>
+                          <span className="text-11 text-muted">% {s.name}</span>
                         </>) : (<>
-                          <span className={s.positive ? "text-[rgba(139,148,158,.7)]" : "text-red"}>
+                          <span className={s.positive ? "text-muted/70" : "text-red"}>
                             {s.positive ? "+" : "−"}
                           </span>
                           <span>{s.value && `${s.value}% `}{s.name}</span>
@@ -628,7 +628,7 @@ export default function RivenAnalyzer() {
                     ))}
                   </div>
 
-                  <div className="mt-1 text-[10px] text-[rgba(139,148,158,.4)]">
+                  <div className="mt-1 text-10 text-muted/40">
                     {r.saved_at.slice(0, 10)}
                   </div>
                 </div>
@@ -647,13 +647,13 @@ export default function RivenAnalyzer() {
                     <div key={r.id} className={RA_COMPARE_COL}>
                       <div className={RA_COMPARE_LABEL}>{r.label}</div>
                       {r.verdict && (
-                        <div className="mb-1.5 text-[11px] font-bold" style={{ color: verdictColor2(r.verdict) }}>
+                        <div className="mb-1.5 text-11 font-bold" style={{ color: verdictColor2(r.verdict) }}>
                           {r.verdict.split("—")[0].trim()} · {Math.round(r.score * 100)}%
                         </div>
                       )}
                       {stats.map((s, i) => (
                         <div key={i} className={RA_SAVED_STAT}>
-                          <span className={s.positive ? "text-[rgba(139,148,158,.7)]" : "text-red"}>
+                          <span className={s.positive ? "text-muted/70" : "text-red"}>
                             {s.positive ? "+" : "−"}
                           </span>
                           <span>{s.value && `${s.value}% `}{s.name}</span>

@@ -49,66 +49,66 @@ function chanceToRarity(chance: number): string {
 type CardState = "none" | "unowned" | "complete";
 
 const RL_RARITY_LABEL_COLOR: Record<string, string> = {
-  bronze: "text-[#e8923a]",
-  silver: "text-[#c0c0c0]",
-  gold: "text-[#f0c040]",
+  bronze: "text-relic-bronze",
+  silver: "text-rarity-silver",
+  gold: "text-rarity-gold",
 };
 const PLANNER_RARITY_COLOR: Record<string, string> = {
-  bronze: "text-[#cd7f32]",
-  silver: "text-[#c0c0c0]",
-  gold: "text-[#f0c040]",
+  bronze: "text-rarity-bronze",
+  silver: "text-rarity-silver",
+  gold: "text-rarity-gold",
 };
 const RL_RBOX_TOP: Record<string, string> = {
-  bronze: "border-t-4 border-t-[#cd7f32]",
-  silver: "border-t-4 border-t-[#c0c0c0]",
-  gold: "border-t-4 border-t-[#f0c040]",
+  bronze: "border-t-4 border-t-rarity-bronze",
+  silver: "border-t-4 border-t-rarity-silver",
+  gold: "border-t-4 border-t-rarity-gold",
 };
 const RL_TEXT_REWARD_COLOR: Record<string, string> = {
-  rare: "text-[#f0c040]",
-  uncommon: "text-[#c0c0c0]",
+  rare: "text-rarity-gold",
+  uncommon: "text-rarity-silver",
   common: "text-muted",
 };
 
-const RL_CORNER = "absolute top-[2px] right-[3px] z-[1] flex flex-col items-center gap-px";
-const RL_RARITY_LABEL = "text-[11px] font-black leading-none tracking-[-.02em]";
-const RL_CB_CHECK = "text-[9px] font-black leading-none tracking-[-.1em]";
-const RL_CB_RELIC_CHECK = "text-[11px] font-black tracking-[-.1em] text-[#f0c040]";
+const RL_CORNER = "absolute top-0.5 right-0.75 z-1 flex flex-col items-center gap-px";
+const RL_RARITY_LABEL = "text-11 font-black leading-none tracking-[-.02em]";
+const RL_CB_CHECK = "text-9 font-black leading-none tracking-[-.1em]";
+const RL_CB_RELIC_CHECK = "text-11 font-black tracking-[-.1em] text-ducat";
 const RL_RBOX =
-  "flex flex-col items-center justify-center gap-1 px-1 py-[6px] relative border-r border-b border-r-border border-b-border overflow-hidden";
+  "flex flex-col items-center justify-center gap-1 px-1 py-1.5 relative border-r border-b border-r-border border-b-border overflow-hidden";
 const RL_RBOX_EMPTY = `${RL_RBOX} opacity-25`;
-const RL_RBOX_NAME = "w-full px-[3px] text-center text-[9px] leading-[1.3] line-clamp-2";
+const RL_RBOX_NAME = "w-full px-0.75 text-center text-9 leading-1.3 line-clamp-2";
 const RL_CARD_LEFT =
-  "flex flex-col gap-[3px] shrink-0 w-[160px] pl-3 pr-[10px] py-[10px] border-r border-r-border overflow-hidden";
-const RL_CARD_LEFT_TEXT = "flex flex-col gap-[3px] shrink-0 w-[120px] p-2 border-r border-r-border overflow-hidden";
+  "flex flex-col gap-0.75 shrink-0 w-40 pl-3 pr-2.5 py-2.5 border-r border-r-border overflow-hidden";
+const RL_CARD_LEFT_TEXT = "flex flex-col gap-0.75 shrink-0 w-30 p-2 border-r border-r-border overflow-hidden";
 const RL_ICON_ROW = "flex items-center gap-2 shrink-0";
-const RL_TOTAL = "text-[18px] font-bold text-foreground";
-const RL_CARD_NAME = "shrink-0 text-[12px] font-semibold text-foreground leading-[1.3]";
+const RL_TOTAL = "text-18 font-bold text-foreground";
+const RL_CARD_NAME = "shrink-0 text-12 font-semibold text-foreground leading-1.3";
 const RL_REFINEMENTS = "flex flex-col gap-px";
-const RL_REF = "text-[10px] whitespace-nowrap";
+const RL_REF = "text-10 whitespace-nowrap";
 const RL_REWARDS_GRID = "grid grid-cols-3 grid-rows-[80px_80px] flex-1 overflow-hidden";
-const RL_ICON_COUNT = "text-[10px] font-bold text-muted";
+const RL_ICON_COUNT = "text-10 font-bold text-muted";
 const RL_ROW_IMG = "shrink-0 [&_img]:size-6! [&_img]:object-contain!";
 const RL_ROW_NAME =
-  "flex-1 min-w-0 text-[12px] font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
-const RL_ROW_TOTAL = "shrink-0 text-[12px] font-bold text-muted";
-const RL_ROW_REFS = "shrink-0 text-[10px] tracking-[.02em] text-muted";
+  "flex-1 min-w-0 text-12 font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
+const RL_ROW_TOTAL = "shrink-0 text-12 font-bold text-muted";
+const RL_ROW_REFS = "shrink-0 text-10 tracking-0.02 text-muted";
 const RL_TEXT_REWARDS = "flex-1 min-w-0 px-2 py-1 flex flex-col justify-around";
-const RL_TEXT_REWARD = "text-[10px] whitespace-nowrap overflow-hidden text-ellipsis leading-[1.5]";
-const RL_VAULT_BADGE = "whitespace-nowrap rounded-[3px] border border-[rgba(255,107,107,.35)] bg-[rgba(255,107,107,.15)] px-1 py-px text-[9px] font-bold tracking-[.02em] text-[#ff6b6b]";
-const RL_PAGINATION = "flex items-center gap-[10px] px-[14px] py-[6px] border-b border-border shrink-0";
+const RL_TEXT_REWARD = "text-10 whitespace-nowrap overflow-hidden text-ellipsis leading-normal";
+const RL_VAULT_BADGE = "whitespace-nowrap rounded-3 border border-vaulted/35 bg-vaulted/15 px-1 py-px text-9 font-bold tracking-0.02 text-vaulted";
+const RL_PAGINATION = "flex items-center gap-2.5 px-3.5 py-1.5 border-b border-border shrink-0";
 const RL_SUBTAB =
-  "border-0 border-b-2 bg-transparent text-[12px] font-medium px-[14px] pt-1 pb-[6px] cursor-pointer transition-[color]";
+  "border-0 border-b-2 bg-transparent text-12 font-medium px-3.5 pt-1 pb-1.5 cursor-pointer transition-[color]";
 const RL_SUBTAB_ON = `${RL_SUBTAB} border-b-accent text-accent hover:text-accent`;
 const RL_SUBTAB_OFF = `${RL_SUBTAB} border-b-transparent text-muted hover:text-foreground`;
 const RL_ROOT = "flex flex-col flex-1 overflow-hidden min-h-0";
-const RL_SUBTAB_BAR = "flex gap-[2px] px-3 pt-[6px] border-b border-border shrink-0";
+const RL_SUBTAB_BAR = "flex gap-0.5 px-3 pt-1.5 border-b border-border shrink-0";
 
 const RL_LIST_CLS: Record<ViewMode, string> = {
   cards:
-    "grid grid-cols-[repeat(auto-fill,minmax(420px,1fr))] gap-2 content-start p-[10px_12px] flex-1 overflow-y-auto",
-  icons: "grid grid-cols-[repeat(auto-fill,76px)] gap-[6px] content-start p-2 flex-1 overflow-y-auto",
+    "grid grid-cols-[repeat(auto-fill,minmax(420px,1fr))] gap-2 content-start py-2.5 px-3 flex-1 overflow-y-auto",
+  icons: "grid grid-cols-[repeat(auto-fill,76px)] gap-1.5 content-start p-2 flex-1 overflow-y-auto",
   "text-cards":
-    "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2 content-start p-[10px_12px] flex-1 overflow-y-auto",
+    "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2 content-start py-2.5 px-3 flex-1 overflow-y-auto",
   list: "flex flex-col gap-px px-0 py-1 flex-1 overflow-y-auto",
   "list-compact": "flex flex-col gap-px px-0 py-1 flex-1 overflow-y-auto",
 };
@@ -119,27 +119,27 @@ function relicCardCls(view: ViewMode, state: CardState): string {
   const isRow = view === "list" || view === "list-compact";
   const shell =
     view === "icons"
-      ? "w-[76px] h-[88px] rounded-[8px] px-1 pt-[6px] pb-1 flex flex-col items-center justify-center gap-1 cursor-default transition-[border-color] [&_img]:size-[52px]! [&_img]:object-contain!"
+      ? "w-19 h-22 rounded-8 px-1 pt-1.5 pb-1 flex flex-col items-center justify-center gap-1 cursor-default transition-[border-color] [&_img]:size-13! [&_img]:object-contain!"
       : isRow
-      ? "h-[160px] rounded-[8px] flex flex-row items-center gap-2 px-3 py-[5px] min-h-[32px] transition-[border-color]"
+      ? "h-40 rounded-8 flex flex-row items-center gap-2 px-3 py-1.25 min-h-8 transition-[border-color]"
       : view === "text-cards"
-      ? "h-[160px] rounded-[8px] flex flex-row gap-0 overflow-hidden min-h-[100px] transition-[border-color]"
-      : "h-[160px] rounded-[8px] flex flex-row transition-[border-color]";
-  const gold = "border-[rgba(240,192,64,.55)]!";
+      ? "h-40 rounded-8 flex flex-row gap-0 overflow-hidden min-h-25 transition-[border-color]"
+      : "h-40 rounded-8 flex flex-row transition-[border-color]";
+  const gold = "border-ducat/55!";
   const mod =
     state === "complete"
       ? isRow
-        ? `border border-l-2! ${gold} bg-[rgba(240,192,64,.03)]`
+        ? `border border-l-2! ${gold} bg-ducat/3`
         : view === "icons" || view === "text-cards"
         ? `border ${gold} bg-surface`
-        : `border ${gold} bg-[rgba(240,192,64,.03)]`
+        : `border ${gold} bg-ducat/3`
       : state === "unowned"
       ? isRow
-        ? "border border-t-border border-r-border border-l-border border-b-[rgba(48,54,61,.35)] bg-surface opacity-[.45] hover:opacity-[.7] hover:border-[rgba(139,148,158,.4)]!"
-        : "border border-border bg-surface opacity-[.45] hover:opacity-[.7] hover:border-[rgba(139,148,158,.4)]!"
+        ? "border border-t-border border-r-border border-l-border border-b-border/35 bg-surface opacity-45 hover:opacity-70 hover:border-muted/40!"
+        : "border border-border bg-surface opacity-45 hover:opacity-70 hover:border-muted/40!"
       : isRow
-      ? "border border-t-border border-r-border border-l-border border-b-[rgba(48,54,61,.35)] bg-surface hover:border-[rgba(56,139,253,.4)]"
-      : "border border-border bg-surface hover:border-[rgba(56,139,253,.4)]";
+      ? "border border-t-border border-r-border border-l-border border-b-border/35 bg-surface hover:border-accent/40"
+      : "border border-border bg-surface hover:border-accent/40";
   return `${shell} ${mod}`;
 }
 
@@ -147,34 +147,34 @@ function relicCardCls(view: ViewMode, state: CardState): string {
 const PL_WRAP = "flex flex-col flex-1 overflow-hidden min-h-0";
 const PL_CONTROLS = "flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border shrink-0";
 const PL_GROUP = "flex items-center gap-1";
-const PL_LABEL = "text-[10px] text-muted mr-[2px] uppercase tracking-[.04em]";
-const PL_COUNT = "text-[11px] text-muted";
+const PL_LABEL = "text-10 text-muted mr-0.5 uppercase tracking-0.04";
+const PL_COUNT = "text-11 text-muted";
 const PL_HEADER =
-  "flex items-center px-3 py-1 text-[10px] text-muted uppercase tracking-[.05em] border-b border-border shrink-0";
+  "flex items-center px-3 py-1 text-10 text-muted uppercase tracking-wider border-b border-border shrink-0";
 const PL_LIST = "flex-1 overflow-y-auto";
-const PL_COL_NAME = "flex-1 min-w-0 flex items-center gap-[6px]";
+const PL_COL_NAME = "flex-1 min-w-0 flex items-center gap-1.5";
 const PL_SORTABLE =
-  "bg-transparent border-0 cursor-pointer p-0 inline-flex items-center gap-[3px] transition-[color] uppercase tracking-[.05em] text-[10px]";
-const PL_SORT_ARROW = "text-[8px] leading-none";
+  "bg-transparent border-0 cursor-pointer p-0 inline-flex items-center gap-0.75 transition-[color] uppercase tracking-wider text-10";
+const PL_SORT_ARROW = "text-8 leading-none";
 const PL_SPACER = "w-5 shrink-0";
-const PL_ROW = "border-b border-[rgba(48,54,61,.5)]";
+const PL_ROW = "border-b border-border/50";
 const PL_ROW_MAIN =
-  "flex items-center gap-0 px-3 py-[7px] cursor-pointer transition-[background] duration-[100ms] hover:bg-[rgba(255,255,255,.03)]";
+  "flex items-center gap-0 px-3 py-1.75 cursor-pointer transition-[background] duration-100 hover:bg-white/3";
 const PL_RELIC_NAME =
-  "text-[12px] font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
-const PL_OWNED = "text-[11px] text-muted shrink-0 ml-auto";
-const PL_EV = "w-[72px] text-right shrink-0 text-[12px]";
-const PL_EV_ZERO = "text-[rgba(139,148,158,.4)]";
-const PL_GAIN_POS = "text-[11px] text-success";
-const PL_GAIN_NEG = "text-[11px] text-danger";
-const PL_EXPAND_BTN = "bg-transparent border-0 text-muted text-[10px] cursor-pointer pl-2 shrink-0 w-5";
-const PL_DETAIL = "pt-[6px] pr-3 pb-[10px] pl-6 bg-[rgba(0,0,0,.15)] border-t border-[rgba(48,54,61,.4)]";
-const PL_TIER_ROW = "flex gap-4 mb-[6px] text-[10px] text-muted";
-const PL_REWARD_ROW = "flex items-center gap-2 py-[3px] text-[11px] border-b border-[rgba(48,54,61,.3)] last:border-b-0";
+  "text-12 font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
+const PL_OWNED = "text-11 text-muted shrink-0 ml-auto";
+const PL_EV = "w-18 text-right shrink-0 text-12";
+const PL_EV_ZERO = "text-muted/40";
+const PL_GAIN_POS = "text-11 text-success";
+const PL_GAIN_NEG = "text-11 text-danger";
+const PL_EXPAND_BTN = "bg-transparent border-0 text-muted text-10 cursor-pointer pl-2 shrink-0 w-5";
+const PL_DETAIL = "pt-1.5 pr-3 pb-2.5 pl-6 bg-black/15 border-t border-border/40";
+const PL_TIER_ROW = "flex gap-4 mb-1.5 text-10 text-muted";
+const PL_REWARD_ROW = "flex items-center gap-2 py-0.75 text-11 border-b border-border/30 last:border-b-0";
 const PL_REWARD_RARITY = "w-3 shrink-0 font-bold";
 const PL_REWARD_NAME = "flex-1 text-foreground";
 const PL_REWARD_CHANCE = "w-12 text-right text-muted shrink-0";
-const PL_REWARD_VAL = "w-[52px] text-right text-accent shrink-0 font-semibold";
+const PL_REWARD_VAL = "w-13 text-right text-accent shrink-0 font-semibold";
 
 function plSortableCls(active: boolean, extra = "") {
   return `${PL_SORTABLE} ${extra} ${active ? "text-foreground" : "text-muted hover:text-foreground"}`;
@@ -241,7 +241,7 @@ function parseDropData(raw: any): RelicDrop[] {
 function RelicImg({ src }: { src?: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed)
-    return <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-white/6 text-[11px] text-[#8b949e]">R</div>;
+    return <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-white/6 text-11 text-muted">R</div>;
   return <img className="size-11 shrink-0 rounded-md object-contain" src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
@@ -258,7 +258,7 @@ function PartImg({ srcs, rarity }: { srcs: (string | undefined)[]; rarity?: stri
   const src = valid[idx];
   if (!src) {
     const bg = rarity ? (RARITY_BG[rarity] ?? "rgba(255,255,255,.06)") : "rgba(255,255,255,.06)";
-    return <div className="flex size-10 items-center justify-center rounded bg-white/6 text-[9px] text-white/30" style={{ background: bg }}>?</div>;
+    return <div className="flex size-10 items-center justify-center rounded bg-white/6 text-9 text-white/30" style={{ background: bg }}>?</div>;
   }
   // key={src} forces React to unmount/remount the img when src changes,
   // preventing the broken-image icon from persisting between attempts
@@ -281,18 +281,18 @@ function RewardBox({ reward, imageSrcs, isOwned, isComplete, isHighlighted, colo
   const cls   = RARITY_CSS[reward.rarity] ?? "bronze";
   const shortName = reward.itemName.replace(" Blueprint", "").replace("Prime", "P.").trim();
   const rboxState = isHighlighted
-    ? " bg-[rgba(56,139,253,.18)] outline-2 outline-accent"
+    ? " bg-accent/18 outline-2 outline-accent"
     : isComplete
-    ? " bg-[rgba(240,192,64,.12)]"
+    ? " bg-ducat/12"
     : isOwned
-    ? " bg-[rgba(63,185,80,.1)]"
+    ? " bg-success/10"
     : "";
   const nameColor = isHighlighted
-    ? "text-[#88b8ff]"
+    ? "text-relic-highlight"
     : isComplete
-    ? "text-[#f0c040]"
+    ? "text-ducat"
     : isOwned
-    ? "text-[#5dbf7a]"
+    ? "text-owned"
     : "text-muted";
   return (
     <div
@@ -305,7 +305,7 @@ function RewardBox({ reward, imageSrcs, isOwned, isComplete, isHighlighted, colo
           {cls === "bronze" ? "C" : cls === "silver" ? "U" : "R"}
         </span>
         {colorblindMode && (isOwned || isComplete) && (
-          <span className={`${RL_CB_CHECK} ${isComplete ? "text-[#f0c040]" : "text-[#5dbf7a]"}`}>{isComplete ? "✓✓" : "✓"}</span>
+          <span className={`${RL_CB_CHECK} ${isComplete ? "text-ducat" : "text-owned"}`}>{isComplete ? "✓✓" : "✓"}</span>
         )}
       </span>
       <PartImg srcs={imageSrcs} rarity={reward.rarity} />
@@ -739,11 +739,11 @@ function PlannerTab({
           </button>
         </div>
         {RELIC_REFINEMENT_ORDER.map(t => (
-          <button key={t} className={plSortableCls(sortCol === t, "w-[72px] text-right shrink-0 justify-end")} onClick={() => handleSort(t)}>
+          <button key={t} className={plSortableCls(sortCol === t, "w-18 text-right shrink-0 justify-end")} onClick={() => handleSort(t)}>
             {RELIC_REFINEMENT_LABELS[t]}{sortArrow(t)}
           </button>
         ))}
-        <button className={plSortableCls(sortCol === "gain", "w-[130px] text-right shrink-0 pr-8 justify-end")} onClick={() => handleSort("gain")}>
+        <button className={plSortableCls(sortCol === "gain", "w-32.5 text-right shrink-0 pr-8 justify-end")} onClick={() => handleSort("gain")}>
           Refine gain{sortArrow("gain")}
         </button>
         <div className={PL_SPACER} aria-hidden />
@@ -769,7 +769,7 @@ function PlannerTab({
                     {evByTier[t] < 0.05 ? <span className={PL_EV_ZERO}>—</span> : `${evByTier[t].toFixed(1)}${unit}`}
                   </div>
                 ))}
-                <div className="w-[130px] text-right shrink-0 pr-8">
+                <div className="w-32.5 text-right shrink-0 pr-8">
                   {gain >= 0.1
                     ? <span className={PL_GAIN_POS}>+{gain.toFixed(1)}{unit}</span>
                     : <span className={PL_GAIN_NEG}>{gain.toFixed(1)}{unit}</span>}
@@ -959,7 +959,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
       ) : (<>
       <div className="market-header">
         <FoundrySearch
-          className="w-[220px]"
+          className="w-55"
           placeholder="Relic or item names (comma-separated)…"
           value={search} onChange={e => set("search", e.target.value)}
         />
@@ -989,7 +989,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
           <FilterChip active={sortMode === "za"} onClick={() => set("sortMode", "za")}>Z–A</FilterChip>
           <FilterSeparator />
           {dropError && <SecondaryButton className="ml-1" onClick={() => loadDrops(true)}>↺ Retry</SecondaryButton>}
-          <span className="ml-auto text-[11px] text-muted">
+          <span className="ml-auto text-11 text-muted">
             {dropLoading ? "Loading…" : `${visibleDrops.length} relics · ${ownedCount} owned`}
           </span>
           <ViewToggle view={relicView} onChange={v => { setRelicView(v); localStorage.setItem(PREFERENCE_KEYS.RELIC_VIEW, v); }} />
@@ -1004,7 +1004,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
       </div>
 
       {searchMatchesReward && (
-        <div className="px-3.5 py-1 text-[11px] text-accent">
+        <div className="px-3.5 py-1 text-11 text-accent">
           Showing relics with reward drops matching one or more search terms — highlighted in blue
         </div>
       )}
@@ -1012,7 +1012,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
       {visibleDrops.length > PAGE_SIZE && (
         <div className={RL_PAGINATION}>
           <SecondaryButton disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</SecondaryButton>
-          <span className="text-[11px] text-muted">
+          <span className="text-11 text-muted">
             {page + 1} / {totalPages} &nbsp;({visibleDrops.length} relics)
           </span>
           <SecondaryButton disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</SecondaryButton>

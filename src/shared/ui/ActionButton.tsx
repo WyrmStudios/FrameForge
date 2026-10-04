@@ -3,13 +3,13 @@ import type { ComponentPropsWithRef, ReactNode } from "react";
 export type ButtonVariant = "secondary" | "danger";
 
 const BTN_BASE =
-  "px-[14px] py-[6px] rounded-[6px] text-[12px] cursor-pointer transition-all duration-150 shrink-0 whitespace-nowrap";
+  "px-3.5 py-1.5 rounded-6 text-12 cursor-pointer transition-all duration-150 shrink-0 whitespace-nowrap";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   secondary:
     "border border-border bg-surface text-foreground hover:enabled:border-accent hover:enabled:text-accent disabled:opacity-50 disabled:cursor-default",
   danger:
-    "border border-[rgba(248,81,73,.4)] bg-[rgba(248,81,73,.08)] text-danger hover:border-danger hover:bg-[rgba(248,81,73,.15)]",
+    "border border-danger/40 bg-danger/8 text-danger hover:border-danger hover:bg-danger/15",
 };
 
 type Props = ComponentPropsWithRef<"button"> & {

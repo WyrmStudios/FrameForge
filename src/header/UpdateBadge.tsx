@@ -1,9 +1,9 @@
 const UPDATE_BADGE =
-  "inline-flex items-center gap-[4px] text-[10px] font-bold text-success bg-[rgba(63,185,80,.15)] border border-[rgba(63,185,80,.4)] rounded-[4px] px-[7px] py-[2px] shrink-0 tracking-[.02em] select-none whitespace-nowrap hover:bg-[rgba(63,185,80,.25)]";
+  "inline-flex items-center gap-1 text-10 font-bold text-success bg-success/15 border border-success/40 rounded-4 px-1.75 py-0.5 shrink-0 tracking-0.02 select-none whitespace-nowrap hover:bg-success/25";
 const UPDATE_INSTALL =
   "bg-transparent border-0 text-inherit cursor-pointer [font:inherit] tracking-[inherit] p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-wait";
 const UPDATE_DISMISS =
-  "bg-transparent border-0 text-[rgba(255,255,255,.65)] cursor-pointer text-[13px] leading-none px-[2px] py-0 flex items-center hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "bg-transparent border-0 text-white/65 cursor-pointer text-13 leading-none px-0.5 py-0 flex items-center hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 
 interface UpdateBadgeProps {
   version: string;

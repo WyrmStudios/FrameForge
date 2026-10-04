@@ -14,79 +14,79 @@ import "./RelicPickOverlay.css";
 // Note: body transparency stays in RelicPickOverlay.css (document context).
 
 const RPO_ROOT =
-  "flex flex-col gap-[4px] py-[6px] px-[8px] bg-[rgba(13,17,23,0.92)] border border-[rgba(56,139,253,0.4)] rounded-[8px] text-[12px] text-[color:var(--text,#e6edf3)] w-full h-auto backdrop-blur-[4px]";
+  "flex flex-col gap-1 py-1.5 px-2 bg-background/92 border border-accent/40 rounded-8 text-12 text-[color:var(--text,#e6edf3)] w-full h-auto backdrop-blur-xs";
 
-const RPO_HEADER = "flex items-center gap-[6px] shrink-0";
+const RPO_HEADER = "flex items-center gap-1.5 shrink-0";
 const RPO_TITLE =
-  "text-[12px] font-bold text-[#58a6ff] tracking-[0.04em] uppercase flex-1";
+  "text-12 font-bold text-info tracking-0.04 uppercase flex-1";
 const RPO_CLOSE =
-  "bg-transparent border-0 text-[rgba(230,237,243,0.35)] text-[13px] cursor-pointer px-[2px] py-0 leading-none transition-colors duration-100 hover:text-[rgba(230,237,243,0.85)]";
+  "bg-transparent border-0 text-foreground/35 text-13 cursor-pointer px-0.5 py-0 leading-none transition-colors duration-100 hover:text-foreground/85";
 const RPO_EMPTY =
-  "px-[8px] py-[12px] text-center text-[rgba(230,237,243,0.4)] text-[11px] whitespace-nowrap";
-const RPO_LIST = "flex flex-col gap-[4px] overflow-y-auto max-h-[460px]";
+  "px-2 py-3 text-center text-foreground/40 text-11 whitespace-nowrap";
+const RPO_LIST = "flex flex-col gap-1 overflow-y-auto max-h-115";
 
 const RPO_CARD =
-  "bg-[rgba(255,255,255,0.04)] border border-[rgba(48,54,61,0.6)] rounded-[5px] overflow-hidden shrink-0";
+  "bg-white/4 border border-border/60 rounded-5 overflow-hidden shrink-0";
 const RPO_CARD_BEST =
-  "bg-[rgba(56,139,253,0.06)] border border-[rgba(56,139,253,0.5)] rounded-[5px] overflow-hidden shrink-0";
+  "bg-accent/6 border border-accent/50 rounded-5 overflow-hidden shrink-0";
 const RPO_CARD_HEADER =
-  "flex items-center gap-[5px] px-[8px] py-[4px] border-b border-b-[rgba(48,54,61,0.5)]";
-const RPO_RANK = "text-[10px] font-bold text-[rgba(230,237,243,0.3)] min-w-[16px]";
-const RPO_RANK_BEST = "text-[10px] font-bold text-[#58a6ff] min-w-[16px]";
+  "flex items-center gap-1.25 px-2 py-1 border-b border-b-border/50";
+const RPO_RANK = "text-10 font-bold text-foreground/30 min-w-4";
+const RPO_RANK_BEST = "text-10 font-bold text-info min-w-4";
 const RPO_RELIC_NAME =
-  "flex-1 font-semibold text-[12px] whitespace-nowrap overflow-hidden text-ellipsis";
+  "flex-1 font-semibold text-12 whitespace-nowrap overflow-hidden text-ellipsis";
 
 const REF_SHAPE =
-  "text-[9px] font-semibold px-[4px] py-[1px] rounded-[3px] whitespace-nowrap";
+  "text-9 font-semibold px-1 py-0.25 rounded-3 whitespace-nowrap";
 const REF_BADGE: Record<string, string> = {
   intact:
     REF_SHAPE +
-    " bg-[rgba(255,255,255,0.07)] text-[rgba(230,237,243,0.5)] border border-[rgba(255,255,255,0.1)]",
+    " bg-white/7 text-foreground/50 border border-white/10",
   exceptional:
     REF_SHAPE +
-    " text-[#79c0ff] border border-[rgba(121,192,255,0.3)] bg-[rgba(121,192,255,0.08)]",
+    " text-refinement-exceptional border border-refinement-exceptional/30 bg-refinement-exceptional/8",
   flawless:
     REF_SHAPE +
-    " text-[#a371f7] border border-[rgba(163,113,247,0.3)] bg-[rgba(163,113,247,0.08)]",
+    " text-refinement-flawless border border-refinement-flawless/30 bg-refinement-flawless/8",
   radiant:
     REF_SHAPE +
-    " text-[#d4a847] border border-[rgba(212,168,71,0.4)] bg-[rgba(212,168,71,0.1)]",
+    " text-refinement-radiant border border-refinement-radiant/40 bg-refinement-radiant/10",
 };
 
-const RPO_COUNT = "text-[11px] text-[rgba(230,237,243,0.45)]";
-const RPO_SCORE = "text-[11px] font-semibold text-[#58a6ff] whitespace-nowrap";
+const RPO_COUNT = "text-11 text-foreground/45";
+const RPO_SCORE = "text-11 font-semibold text-info whitespace-nowrap";
 
 const RPO_ESTIMATED =
-  "flex items-center gap-[2px] px-[8px] py-[3px] text-[10px] text-[rgba(230,237,243,0.55)]";
-const RPO_EST_SEP = "text-[rgba(230,237,243,0.25)]";
+  "flex items-center gap-0.5 px-2 py-0.75 text-10 text-foreground/55";
+const RPO_EST_SEP = "text-foreground/25";
 
 const RPO_REWARDS = "flex flex-col";
 const RPO_REWARD =
-  "grid grid-cols-[14px_14px_1fr_auto_auto_auto] items-center gap-[3px] px-[8px] py-[2px] border-b border-b-[rgba(48,54,61,0.25)] text-[10px] last:border-b-0";
-const RPO_VAULT = "text-[9px] text-center leading-none";
-const RPO_OWNED = "text-[10px] font-bold text-center";
-const RPO_OWNED_YES = RPO_OWNED + " text-[rgba(63,185,80,0.85)]";
-const RPO_OWNED_NO = RPO_OWNED + " text-[rgba(230,237,243,0.25)]";
-const RPO_REWARD_NAME = "whitespace-nowrap overflow-hidden text-ellipsis opacity-[0.85]";
+  "grid grid-cols-[14px_14px_1fr_auto_auto_auto] items-center gap-0.75 px-2 py-0.5 border-b border-b-border/25 text-10 last:border-b-0";
+const RPO_VAULT = "text-9 text-center leading-none";
+const RPO_OWNED = "text-10 font-bold text-center";
+const RPO_OWNED_YES = RPO_OWNED + " text-success/85";
+const RPO_OWNED_NO = RPO_OWNED + " text-foreground/25";
+const RPO_REWARD_NAME = "whitespace-nowrap overflow-hidden text-ellipsis opacity-85";
 const RARITY_NAME: Record<string, string> = {
-  Bronze: RPO_REWARD_NAME + " text-[#c47d3a]",
-  Silver: RPO_REWARD_NAME + " text-[#9ba8b5]",
-  Gold: RPO_REWARD_NAME + " text-[#d4a847]",
+  Bronze: RPO_REWARD_NAME + " text-reward-bronze",
+  Silver: RPO_REWARD_NAME + " text-reward-silver",
+  Gold: RPO_REWARD_NAME + " text-refinement-radiant",
 };
-const RPO_VAL_SHARED = "flex items-center gap-[1px] whitespace-nowrap tabular-nums";
-const RPO_PLAT_VAL = RPO_VAL_SHARED + " text-[rgba(121,192,255,0.8)]";
-const RPO_DUCAT_VAL = RPO_VAL_SHARED + " text-[rgba(212,168,71,0.75)]";
+const RPO_VAL_SHARED = "flex items-center gap-0.25 whitespace-nowrap tabular-nums";
+const RPO_PLAT_VAL = RPO_VAL_SHARED + " text-refinement-exceptional/80";
+const RPO_DUCAT_VAL = RPO_VAL_SHARED + " text-refinement-radiant/75";
 
 const RPO_REC_SHAPE =
-  "text-[8px] font-bold px-[3px] py-[1px] rounded-[2px] whitespace-nowrap border";
+  "text-8 font-bold px-0.75 py-0.25 rounded-2 whitespace-nowrap border";
 const RPO_REC: Record<string, string> = {
-  intact: RPO_REC_SHAPE + " text-[rgba(230,237,243,0.4)] border-[rgba(230,237,243,0.15)]",
+  intact: RPO_REC_SHAPE + " text-foreground/40 border-foreground/15",
   exceptional:
     RPO_REC_SHAPE +
-    " text-[#79c0ff] border-[rgba(121,192,255,0.3)] bg-[rgba(121,192,255,0.07)]",
+    " text-refinement-exceptional border-refinement-exceptional/30 bg-refinement-exceptional/7",
   radiant:
     RPO_REC_SHAPE +
-    " text-[#d4a847] border-[rgba(212,168,71,0.35)] bg-[rgba(212,168,71,0.08)]",
+    " text-refinement-radiant border-refinement-radiant/35 bg-refinement-radiant/8",
 };
 
 const ERA_LABEL: Record<string, string> = {
@@ -211,7 +211,7 @@ export default function RelicPickOverlay() {
 
   if (outline) {
     return (
-      <div ref={rootCallback} className="box-border flex h-[300px] w-full items-center justify-center rounded-[10px] border-2 border-dashed border-[rgba(56,139,253,.85)] bg-[rgba(22,27,34,.55)] text-base font-semibold text-[#79b8ff]">
+      <div ref={rootCallback} className="box-border flex h-75 w-full items-center justify-center rounded-10 border-2 border-dashed border-accent/85 bg-surface/55 text-base font-semibold text-overlay-outline">
         Relic Pick Overlay — outline
       </div>
     );

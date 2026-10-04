@@ -81,99 +81,99 @@ function flattenRecipeCounts(comps: RecipeComponent[], multiplier: number, out: 
 }
 
 // ─── Market classes (Tailwind) ───────────────────────────────────────────────
-const MK_TABS       = "flex gap-[2px] px-[10px] py-[6px] border-b border-border shrink-0";
-const MK_TAB        = "text-[12px] px-[14px] py-[3px] rounded-[4px] cursor-pointer transition-[background,color,border-color] duration-[100ms] border";
-const MK_TAB_OFF    = `${MK_TAB} border-[rgba(48,54,61,.6)] bg-transparent text-muted hover:bg-[rgba(255,255,255,.06)] hover:text-foreground`;
-const MK_TAB_ON     = `${MK_TAB} border-accent bg-[rgba(56,139,253,.15)] text-accent`;
-const MK_BADGE      = "inline-flex items-center justify-center bg-danger text-white text-[10px] font-bold rounded-[10px] min-w-[16px] h-[16px] px-[4px] ml-[4px] align-middle";
+const MK_TABS       = "flex gap-0.5 px-2.5 py-1.5 border-b border-border shrink-0";
+const MK_TAB        = "text-12 px-3.5 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100 border";
+const MK_TAB_OFF    = `${MK_TAB} border-border/60 bg-transparent text-muted hover:bg-white/6 hover:text-foreground`;
+const MK_TAB_ON     = `${MK_TAB} border-accent bg-accent/15 text-accent`;
+const MK_BADGE      = "inline-flex items-center justify-center bg-danger text-white text-10 font-bold rounded-10 min-w-4 h-4 px-1 ml-1 align-middle";
 const MK_HELPER     = "flex-1 flex flex-col overflow-hidden min-h-0";
-const MK_PLACEHOLDER = "flex items-center justify-center flex-1 text-muted text-[13px]";
-const MK_HEADER     = "flex items-center gap-[8px] px-[10px] py-[6px] border-b border-border shrink-0 flex-wrap";
-const MK_SUMMARY    = "flex items-center gap-[6px] px-[12px] py-[4px] bg-[rgba(255,255,255,.02)] border-b border-border shrink-0 text-[11px] text-muted";
-const MK_GRID       = "flex-1 overflow-y-auto overflow-x-hidden p-[10px] grid grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))] gap-[10px] content-start items-start min-h-0 columns-2 max-[600px]:columns-1";
-const MK_CARD       = "flex border rounded-[8px] overflow-hidden min-h-[90px] min-w-0 h-[148px] self-start mb-[6px] [break-inside:avoid]";
-const MK_CARD_LEFT  = "w-[90px] shrink-0 flex flex-col items-center gap-[3px] py-[8px] px-[5px] border-r border-border rounded-l-[8px] bg-[rgba(255,255,255,.02)]";
-const MK_CARD_CLICK = "cursor-pointer transition-[background] duration-[120ms] hover:bg-[rgba(255,255,255,.05)]";
-const MK_SET_NAME   = "text-[9px] font-semibold text-center leading-[1.3] text-foreground";
-const MK_SET_BADGES = "flex flex-col gap-[2px] items-center w-full";
-const MK_MSET       = "text-[8px] font-bold py-[1px] px-[5px] rounded-[8px] whitespace-nowrap";
-const MK_MSET_OK    = `${MK_MSET} text-success bg-[rgba(63,185,80,.12)]`;
-const MK_MSET_PARTS = `${MK_MSET} text-muted bg-[rgba(255,255,255,.06)]`;
-const MK_MSET_DUPES = `${MK_MSET} text-[#f0c040] bg-[rgba(240,192,64,.12)]`;
-const MK_PRICE_BOX  = "mt-auto pt-[4px] flex flex-col items-center gap-[2px]";
-const MK_SET_PRICE  = "flex items-center gap-[3px] text-[13px] font-bold mt-[4px] text-[#c8a8ff]";
-const MK_PRICE_BIG  = "text-[13px] font-bold text-[#b39ddb]";
-const MK_PRICE_LBL  = "text-[8px] text-muted";
-const MK_PRICE_SPIN = "text-[9px] text-muted";
-const MK_PRICE_NA   = "text-[9px] text-muted";
-const MK_CARD_RIGHT = "flex-1 min-w-0 flex flex-col overflow-hidden rounded-r-[8px]";
-const MK_PART       = "flex-1 flex items-center gap-[5px] px-[8px] border-b border-[rgba(48,54,61,.28)] min-h-[24px] min-w-0 last:border-b-0 last-of-type:border-b-0";
-const MK_PART_CLICK = "cursor-pointer transition-[background] duration-[100ms] hover:bg-[rgba(56,139,253,.08)]";
-const MK_DCAT       = "text-[10px] text-[#f0c040] font-semibold min-w-[20px] shrink-0 tabular-nums";
-const MK_SEP        = "text-[10px] text-[rgba(255,255,255,.18)] shrink-0";
-const MK_PLATV      = "text-[10px] text-[#b39ddb] font-semibold min-w-[24px] shrink-0 tabular-nums";
-const MK_NAME       = "flex-1 text-[10px] text-foreground truncate min-w-0";
-const MK_QTY        = "text-[11px] font-bold min-w-[18px] text-center shrink-0 rounded-[3px] px-[3px]";
-const MK_QTY_ZERO   = "text-danger bg-[rgba(248,81,73,.12)]";
-const MK_QTY_ONE    = "text-foreground bg-[rgba(255,255,255,.06)]";
-const MK_QTY_DUPE   = "text-[#f0c040] bg-[rgba(240,192,64,.15)]";
-const MK_TOTALS     = "mt-auto px-[8px] text-[9px] text-muted bg-[rgba(255,255,255,.02)] flex items-center gap-[3px] border-t border-[rgba(48,54,61,.3)] min-h-[20px] shrink-0";
-const MODS_GRID     = "flex-1 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-[6px] p-[8px] min-h-0 content-start";
-const MOD_CARD      = "relative flex flex-col items-center gap-[4px] pt-[8px] px-[6px] pb-[6px] bg-[rgba(255,255,255,.03)] border border-border rounded-[7px] cursor-pointer transition-[background,border-color] duration-[120ms] text-center hover:bg-[rgba(255,255,255,.07)] hover:border-accent";
+const MK_PLACEHOLDER = "flex items-center justify-center flex-1 text-muted text-13";
+const MK_HEADER     = "flex items-center gap-2 px-2.5 py-1.5 border-b border-border shrink-0 flex-wrap";
+const MK_SUMMARY    = "flex items-center gap-1.5 px-3 py-1 bg-white/2 border-b border-border shrink-0 text-11 text-muted";
+const MK_GRID       = "flex-1 overflow-y-auto overflow-x-hidden p-2.5 grid grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))] gap-2.5 content-start items-start min-h-0 columns-2 max-[600px]:columns-1";
+const MK_CARD       = "flex border rounded-8 overflow-hidden min-h-22.5 min-w-0 h-37 self-start mb-1.5 [break-inside:avoid]";
+const MK_CARD_LEFT  = "w-22.5 shrink-0 flex flex-col items-center gap-0.75 py-2 px-1.25 border-r border-border rounded-l-8 bg-white/2";
+const MK_CARD_CLICK = "cursor-pointer transition-[background] duration-120 hover:bg-white/5";
+const MK_SET_NAME   = "text-9 font-semibold text-center leading-1.3 text-foreground";
+const MK_SET_BADGES = "flex flex-col gap-0.5 items-center w-full";
+const MK_MSET       = "text-8 font-bold py-0.25 px-1.25 rounded-8 whitespace-nowrap";
+const MK_MSET_OK    = `${MK_MSET} text-success bg-success/12`;
+const MK_MSET_PARTS = `${MK_MSET} text-muted bg-white/6`;
+const MK_MSET_DUPES = `${MK_MSET} text-ducat bg-ducat/12`;
+const MK_PRICE_BOX  = "mt-auto pt-1 flex flex-col items-center gap-0.5";
+const MK_SET_PRICE  = "flex items-center gap-0.75 text-13 font-bold mt-1 text-set-price";
+const MK_PRICE_BIG  = "text-13 font-bold text-price-platinum";
+const MK_PRICE_LBL  = "text-8 text-muted";
+const MK_PRICE_SPIN = "text-9 text-muted";
+const MK_PRICE_NA   = "text-9 text-muted";
+const MK_CARD_RIGHT = "flex-1 min-w-0 flex flex-col overflow-hidden rounded-r-8";
+const MK_PART       = "flex-1 flex items-center gap-1.25 px-2 border-b border-border/28 min-h-6 min-w-0 last:border-b-0 last-of-type:border-b-0";
+const MK_PART_CLICK = "cursor-pointer transition-[background] duration-100 hover:bg-accent/8";
+const MK_DCAT       = "text-10 text-ducat font-semibold min-w-5 shrink-0 tabular-nums";
+const MK_SEP        = "text-10 text-white/18 shrink-0";
+const MK_PLATV      = "text-10 text-price-platinum font-semibold min-w-6 shrink-0 tabular-nums";
+const MK_NAME       = "flex-1 text-10 text-foreground truncate min-w-0";
+const MK_QTY        = "text-11 font-bold min-w-4.5 text-center shrink-0 rounded-3 px-0.75";
+const MK_QTY_ZERO   = "text-danger bg-danger/12";
+const MK_QTY_ONE    = "text-foreground bg-white/6";
+const MK_QTY_DUPE   = "text-ducat bg-ducat/15";
+const MK_TOTALS     = "mt-auto px-2 text-9 text-muted bg-white/2 flex items-center gap-0.75 border-t border-border/30 min-h-5 shrink-0";
+const MODS_GRID     = "flex-1 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-1.5 p-2 min-h-0 content-start";
+const MOD_CARD      = "relative flex flex-col items-center gap-1 pt-2 px-1.5 pb-1.5 bg-white/3 border border-border rounded-7 cursor-pointer transition-[background,border-color] duration-120 text-center hover:bg-white/7 hover:border-accent";
 const MOD_UNOWNED   = "opacity-50 hover:opacity-100";
-const MOD_CAT       = "absolute top-[4px] left-[4px] text-[9px] font-bold py-[1px] px-[4px] rounded-[3px] whitespace-nowrap leading-[1.4]";
-const MOD_CAT_MOD   = `${MOD_CAT} bg-[rgba(88,166,255,.18)] text-[#58a6ff]`;
-const MOD_CAT_ARC   = `${MOD_CAT} bg-[rgba(188,140,255,.18)] text-[#bc8cff]`;
-const MOD_IMG       = "flex items-center justify-center w-[56px] h-[56px] mt-[4px] shrink-0";
-const MOD_NAME      = "text-[11px] text-foreground leading-[1.3] line-clamp-2 w-full";
-const MOD_FOOTER    = "flex items-center gap-[3px] flex-wrap justify-center w-full mt-[2px]";
-const MOD_RANK_NONE = "text-[10px] font-bold text-muted bg-transparent py-[1px] px-[4px] rounded-[3px]";
-const MOD_CHIPS     = "flex flex-wrap gap-[2px] justify-center";
-const MOD_CHIP      = "text-[10px] font-bold text-[#d4a843] bg-[rgba(212,168,67,.12)] py-[1px] px-[5px] rounded-[3px] cursor-pointer transition-[background] duration-[150ms] hover:bg-[rgba(212,168,67,.3)]";
-const MOD_PLAT      = "flex items-center gap-[2px] text-[10px] text-accent whitespace-nowrap";
-const MOD_PLAT_NA   = "flex items-center gap-[2px] text-[9px] text-muted whitespace-nowrap";
-const MODS_PAG      = "flex items-center gap-[10px] justify-center p-[8px] border-t border-border shrink-0";
-const MODS_INFO     = "text-[12px] text-muted";
-const RIV_TAB       = "flex-1 overflow-y-auto p-[10px] flex flex-col gap-[12px]";
-const RIV_SEC_HDR   = "text-[11px] font-semibold uppercase tracking-[.06em] text-muted pt-0 pr-0 pb-[6px] pl-[2px]";
-const RIV_LIST      = "flex flex-col gap-[6px]";
-const RIV_CARD      = "bg-[rgba(255,255,255,.04)] border rounded-[6px] px-[12px] py-[8px] flex flex-col gap-[4px]";
-const RIV_CARD_HDR  = "flex items-center gap-[8px]";
-const RIV_WEAPON    = "text-[13px] font-semibold text-foreground flex-1";
+const MOD_CAT       = "absolute top-1 left-1 text-9 font-bold py-0.25 px-1 rounded-3 whitespace-nowrap leading-1.4";
+const MOD_CAT_MOD   = `${MOD_CAT} bg-info/18 text-info`;
+const MOD_CAT_ARC   = `${MOD_CAT} bg-mod-arcane/18 text-mod-arcane`;
+const MOD_IMG       = "flex items-center justify-center w-14 h-14 mt-1 shrink-0";
+const MOD_NAME      = "text-11 text-foreground leading-1.3 line-clamp-2 w-full";
+const MOD_FOOTER    = "flex items-center gap-0.75 flex-wrap justify-center w-full mt-0.5";
+const MOD_RANK_NONE = "text-10 font-bold text-muted bg-transparent py-0.25 px-1 rounded-3";
+const MOD_CHIPS     = "flex flex-wrap gap-0.5 justify-center";
+const MOD_CHIP      = "text-10 font-bold text-mod-chip bg-mod-chip/12 py-0.25 px-1.25 rounded-3 cursor-pointer transition-[background] duration-150 hover:bg-mod-chip/30";
+const MOD_PLAT      = "flex items-center gap-0.5 text-10 text-accent whitespace-nowrap";
+const MOD_PLAT_NA   = "flex items-center gap-0.5 text-9 text-muted whitespace-nowrap";
+const MODS_PAG      = "flex items-center gap-2.5 justify-center p-2 border-t border-border shrink-0";
+const MODS_INFO     = "text-12 text-muted";
+const RIV_TAB       = "flex-1 overflow-y-auto p-2.5 flex flex-col gap-3";
+const RIV_SEC_HDR   = "text-11 font-semibold uppercase tracking-0.06 text-muted pt-0 pr-0 pb-1.5 pl-0.5";
+const RIV_LIST      = "flex flex-col gap-1.5";
+const RIV_CARD      = "bg-white/4 border rounded-6 px-3 py-2 flex flex-col gap-1";
+const RIV_CARD_HDR  = "flex items-center gap-2";
+const RIV_WEAPON    = "text-13 font-semibold text-foreground flex-1";
 const RIV_MOD_NAME  = "font-normal text-muted italic";
-const RIV_POLARITY  = "font-medium inline-flex items-center gap-[3px]";
-const RIV_META      = "text-[11px] text-muted ml-auto";
-const RIV_STATS     = "flex flex-wrap gap-[4px] mt-[2px]";
-const RIV_STAT      = "text-[11px] rounded-[3px] px-[6px] py-[1px]";
-const RIV_BUFF      = "bg-[rgba(46,160,67,.18)] text-[#3fb950]";
-const RIV_CURSE     = "bg-[rgba(248,81,73,.14)] text-[#f85149]";
-const RIV_SELL      = "bg-[rgba(56,139,253,.12)] border border-[rgba(56,139,253,.35)] text-accent text-[10px] font-semibold py-[2px] px-[8px] rounded-[3px] cursor-pointer transition-[background] duration-[100ms] whitespace-nowrap hover:bg-[rgba(56,139,253,.25)]";
-const RIV_OVERLAY   = "fixed inset-0 bg-[rgba(0,0,0,.6)] flex items-center justify-center z-[200]";
-const RIV_MODAL     = "bg-surface border border-border rounded-[10px] px-[20px] py-[18px] w-[360px] max-w-[calc(100vw_-_32px)] flex flex-col gap-[12px]";
-const RIV_M_TITLE   = "text-[14px] font-bold text-foreground flex items-center gap-[8px]";
-const RIV_M_CLOSE   = "bg-transparent border-0 text-muted text-[16px] cursor-pointer ml-auto px-[2px] transition-[color] duration-[100ms] hover:text-foreground";
-const RIV_M_WEAPON  = "text-[13px] font-semibold text-foreground";
-const RIV_M_META    = "text-[11px] text-muted";
-const RIV_M_STATS   = "flex flex-wrap gap-[4px]";
+const RIV_POLARITY  = "font-medium inline-flex items-center gap-0.75";
+const RIV_META      = "text-11 text-muted ml-auto";
+const RIV_STATS     = "flex flex-wrap gap-1 mt-0.5";
+const RIV_STAT      = "text-11 rounded-3 px-1.5 py-0.25";
+const RIV_BUFF      = "bg-riven-buff/18 text-success";
+const RIV_CURSE     = "bg-danger/14 text-danger";
+const RIV_SELL      = "bg-accent/12 border border-accent/35 text-accent text-10 font-semibold py-0.5 px-2 rounded-3 cursor-pointer transition-[background] duration-100 whitespace-nowrap hover:bg-accent/25";
+const RIV_OVERLAY   = "fixed inset-0 bg-black/60 flex items-center justify-center z-200";
+const RIV_MODAL     = "bg-surface border border-border rounded-10 px-5 py-4.5 w-90 max-w-[calc(100vw_-_32px)] flex flex-col gap-3";
+const RIV_M_TITLE   = "text-14 font-bold text-foreground flex items-center gap-2";
+const RIV_M_CLOSE   = "bg-transparent border-0 text-muted text-16 cursor-pointer ml-auto px-0.5 transition-[color] duration-100 hover:text-foreground";
+const RIV_M_WEAPON  = "text-13 font-semibold text-foreground";
+const RIV_M_META    = "text-11 text-muted";
+const RIV_M_STATS   = "flex flex-wrap gap-1";
 const RIV_M_DIV     = "border-x-0 border-b-0 border-t border-border";
-const RIV_M_ROW     = "flex items-center gap-[8px]";
-const RIV_M_LABEL   = "text-[12px] text-muted min-w-[130px]";
-const RIV_M_INPUT   = "flex-1 w-0 bg-[rgba(0,0,0,.25)] border border-border rounded-[4px] text-foreground text-[12px] px-[8px] py-[4px] outline-none focus:border-accent";
-const RIV_M_NOTE    = "resize-none h-[48px]";
-const RIV_M_TOGROW  = "mt-[2px]";
-const RIV_TOG       = "inline-flex items-center gap-[6px] cursor-pointer select-none";
-const RIV_TOG_TRACK = "relative h-[17px] w-[32px] shrink-0 rounded-[9px] bg-[var(--border)] transition-[background] duration-[150ms] peer-checked:bg-accent peer-checked:[&>span]:left-[17px]";
-const RIV_TOG_THUMB = "absolute top-[2px] left-[2px] h-[13px] w-[13px] rounded-full bg-white transition-[left] duration-[150ms]";
-const RIV_TOG_LABEL = "text-[12px] text-foreground min-w-[44px]";
-const RIV_POLARITY_ICON = "size-[14px] align-middle dark:invert [html[data-theme=dark]_&]:invert [html[data-theme=light]_&]:invert-0";
-const RIV_CARD_META = "flex gap-0 text-[11px] text-muted [&>span]:whitespace-nowrap [&>span+span]:before:content-['·'] [&>span+span]:before:mx-[3px]";
-const RIV_M_WARN    = "text-[11px] text-[#e3b341] bg-[rgba(227,179,65,.1)] border border-[rgba(227,179,65,.3)] rounded-[4px] px-[8px] py-[6px]";
-const RIV_M_ERR     = "text-[11px] text-danger bg-[rgba(248,81,73,.1)] border border-[rgba(248,81,73,.3)] rounded-[4px] px-[8px] py-[6px]";
-const RIV_SALE_TYPE = "flex gap-0 border border-border rounded-[5px] overflow-hidden";
-const RIV_SALE_BTN  = "border-0 bg-transparent py-[4px] px-[12px] text-[12px] cursor-pointer transition-[background,color] duration-[100ms]";
-const RIV_SALE_OFF  = `${RIV_SALE_BTN} text-muted hover:bg-[rgba(255,255,255,.06)] hover:text-foreground`;
+const RIV_M_ROW     = "flex items-center gap-2";
+const RIV_M_LABEL   = "text-12 text-muted min-w-32.5";
+const RIV_M_INPUT   = "flex-1 w-0 bg-black/25 border border-border rounded-4 text-foreground text-12 px-2 py-1 outline-none focus:border-accent";
+const RIV_M_NOTE    = "resize-none h-12";
+const RIV_M_TOGROW  = "mt-0.5";
+const RIV_TOG       = "inline-flex items-center gap-1.5 cursor-pointer select-none";
+const RIV_TOG_TRACK = "relative h-4.25 w-8 shrink-0 rounded-9 bg-[var(--border)] transition-[background] duration-150 peer-checked:bg-accent peer-checked:[&>span]:left-4.25";
+const RIV_TOG_THUMB = "absolute top-0.5 left-0.5 h-3.25 w-3.25 rounded-full bg-white transition-[left] duration-150";
+const RIV_TOG_LABEL = "text-12 text-foreground min-w-11";
+const RIV_POLARITY_ICON = "size-3.5 align-middle dark:invert [html[data-theme=dark]_&]:invert [html[data-theme=light]_&]:invert-0";
+const RIV_CARD_META = "flex gap-0 text-11 text-muted [&>span]:whitespace-nowrap [&>span+span]:before:content-['·'] [&>span+span]:before:mx-0.75";
+const RIV_M_WARN    = "text-11 text-caution bg-caution/10 border border-caution/30 rounded-4 px-2 py-1.5";
+const RIV_M_ERR     = "text-11 text-danger bg-danger/10 border border-danger/30 rounded-4 px-2 py-1.5";
+const RIV_SALE_TYPE = "flex gap-0 border border-border rounded-5 overflow-hidden";
+const RIV_SALE_BTN  = "border-0 bg-transparent py-1 px-3 text-12 cursor-pointer transition-[background,color] duration-100";
+const RIV_SALE_OFF  = `${RIV_SALE_BTN} text-muted hover:bg-white/6 hover:text-foreground`;
 const RIV_SALE_ON   = `${RIV_SALE_BTN} bg-[var(--accent)] text-white`;
-const RIV_SUBMIT    = "bg-[rgba(56,139,253,.15)] border border-accent text-accent text-[12px] font-semibold py-[7px] px-[14px] rounded-[5px] cursor-pointer transition-[background] duration-[100ms] hover:enabled:bg-[rgba(56,139,253,.28)] disabled:opacity-50 disabled:cursor-default";
+const RIV_SUBMIT    = "bg-accent/15 border border-accent text-accent text-12 font-semibold py-1.75 px-3.5 rounded-5 cursor-pointer transition-[background] duration-100 hover:enabled:bg-accent/28 disabled:opacity-50 disabled:cursor-default";
 
 // ─── Set card ─────────────────────────────────────────────────────────────────
 
@@ -195,12 +195,12 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
   );
 
   return (
-    <div className={`${MK_CARD} ${isComplete ? "border-[rgba(63,185,80,.4)]" : "border-border"}`}>
+    <div className={`${MK_CARD} ${isComplete ? "border-success/40" : "border-border"}`}>
       <div className={`${MK_CARD_LEFT}${onCardClick ? ` ${MK_CARD_CLICK}` : ""}`} onClick={onCardClick} title={onCardClick ? "View orders & prices" : undefined}>
         <div className="relative inline-block">
           <ItemImg imageName={parentItem?.image_name} size={64} fallbackText="P" />
           {isCrafting && (
-            <span className="absolute -top-1 -right-[6px] text-[13px]" title="Building in Foundry">⚒</span>
+            <span className="absolute -top-1 -right-1.5 text-13" title="Building in Foundry">⚒</span>
           )}
         </div>
         <div className={MK_SET_NAME}>{setKey}</div>
@@ -627,7 +627,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
 
       {activeMarketTab === "sets" && <>
       <div className={MK_HEADER}>
-        <FoundrySearch className="w-[200px]" placeholder="Search sets (comma-separated)…"
+        <FoundrySearch className="w-50" placeholder="Search sets (comma-separated)…"
           value={search} onChange={e => set("search", e.target.value)} />
         <FilterBar className="flex-1 flex-wrap border-0 p-0">
           <FilterChip active={ownership.includes("owned")} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</FilterChip>
@@ -649,7 +649,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
           <FilterChip active={sortMode === "az"} onClick={() => set("sortMode", "az")}>A–Z</FilterChip>
           <FilterChip active={sortMode === "za"} onClick={() => set("sortMode", "za")}>Z–A</FilterChip>
           <FilterSeparator />
-          <span className="ml-auto text-[11px] text-muted">{visibleSets.length} sets</span>
+          <span className="ml-auto text-11 text-muted">{visibleSets.length} sets</span>
           <HelpTip items={[
             { swatch: "rgba(240,192,64,.5)", icon: "✓", label: "Complete set", desc: "Gold border + ✓ — all parts in inventory" },
             { icon: "+",  label: "+ Dupes",    desc: "Extra copies of at least one part" },
@@ -663,14 +663,14 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
         <span><strong>{fmt(totalDucats)}</strong> total ducats (owned parts)</span>
         <FilterSeparator />
         <DucatIcon size={13} />
-        <span><strong className="text-[#f0c040]">{fmt(dupeDucats)}</strong> from dupes</span>
-        {wfmItems.length === 0 && <span className="text-[11px] text-muted">· Connecting to warframe.market…</span>}
-        {wfmItems.length > 0 && <span className="text-[11px] text-green">· {wfmItems.length.toLocaleString()} items from warframe.market</span>}
+        <span><strong className="text-ducat">{fmt(dupeDucats)}</strong> from dupes</span>
+        {wfmItems.length === 0 && <span className="text-11 text-muted">· Connecting to warframe.market…</span>}
+        {wfmItems.length > 0 && <span className="text-11 text-green">· {wfmItems.length.toLocaleString()} items from warframe.market</span>}
       </div>
 
       <div className={MK_GRID}>
         {visibleSets.length === 0 ? (
-          <EmptyMessage className="col-[1/-1]">No sets match. Adjust filters or own some prime parts first.</EmptyMessage>
+          <EmptyMessage className="col-span-full">No sets match. Adjust filters or own some prime parts first.</EmptyMessage>
         ) : visibleSets.map(([setKey, parts]) => {
           const setNormalKey = normalizeForWfm(setKey + " Set");
           const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
@@ -799,7 +799,7 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={MK_HEADER}>
-        <FoundrySearch className="w-[200px]" placeholder="Search mods &amp; arcanes…"
+        <FoundrySearch className="w-50" placeholder="Search mods &amp; arcanes…"
           value={search} onChange={e => setSearch(e.target.value)} />
         <FilterBar className="flex-1 flex-wrap border-0 p-0">
           <FilterChip active={catFilter === "all"} onClick={() => setCatFilter("all")}>All</FilterChip>
@@ -876,7 +876,7 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
           );
         })}
         {pageItems.length === 0 && (
-          <EmptyMessage className="col-[1/-1] p-6">No items match the current filters.</EmptyMessage>
+          <EmptyMessage className="col-span-full p-6">No items match the current filters.</EmptyMessage>
         )}
       </div>
 
@@ -1606,7 +1606,7 @@ const RivensTab = memo(function RivensTab({ rivens, catalog, wfmUsername, onAuct
               const cat = rivenCategory(r.item_type);
               const challenge = formatChallengeName(r.challenge_type, r.challenge_complication);
               return (
-                <div key={r.item_id || i} className={`${RIV_CARD} border-[rgba(180,150,80,.4)]`}>
+                <div key={r.item_id || i} className={`${RIV_CARD} border-riven-card/40`}>
                   <div className={RIV_CARD_HDR}>
                     <span className={RIV_WEAPON}>{cat} Riven Mod</span>
                     <span className={`${RIV_META} italic`}>{challenge}</span>

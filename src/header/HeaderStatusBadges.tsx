@@ -1,11 +1,11 @@
 import UpdateBadge from "./UpdateBadge";
 
 const MASTERY_BADGE =
-  "text-[11px] font-bold text-[#c0a060] bg-[rgba(192,160,96,.12)] border border-[rgba(192,160,96,.3)] rounded-[5px] px-[8px] py-[2px] shrink-0 tracking-[.03em]";
+  "text-11 font-bold text-mastery bg-mastery/12 border border-mastery/30 rounded-5 px-2 py-0.5 shrink-0 tracking-0.03";
 const PLAYER_NAME_BADGE =
-  "text-[11px] font-semibold text-[#e0e0e0] bg-[rgba(255,255,255,.06)] border border-[rgba(255,255,255,.14)] rounded-[5px] px-[8px] py-[2px] shrink-0 tracking-[.02em]";
+  "text-11 font-semibold text-player-name bg-white/6 border border-white/14 rounded-5 px-2 py-0.5 shrink-0 tracking-0.02";
 const BLOB_STATUS_BADGE =
-  "text-[11px] font-semibold rounded-[5px] px-[9px] py-[2px] shrink-0 tracking-[.02em] text-[#3fb950] bg-[rgba(63,185,80,.10)] border border-[rgba(63,185,80,.30)]";
+  "text-11 font-semibold rounded-5 px-2.25 py-0.5 shrink-0 tracking-0.02 text-success bg-success/10 border border-success/30";
 
 interface HeaderStatusBadgesProps {
   masteryRank: number | null;

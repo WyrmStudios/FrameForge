@@ -11,202 +11,202 @@ export { matchesWatch };
 
 // ── Tailwind class constants (formerly TimerHelper.css) ───────────────────────
 
-const TH_ROOT = "flex flex-col overflow-y-auto flex-1 min-h-0 pb-[8px]";
-const TH_MSG = "px-[16px] py-[12px] text-[12px] text-muted text-center";
-const TH_ERROR = "px-[16px] py-[8px] text-[12px] text-danger flex items-center gap-[8px]";
+const TH_ROOT = "flex flex-col overflow-y-auto flex-1 min-h-0 pb-2";
+const TH_MSG = "px-4 py-3 text-12 text-muted text-center";
+const TH_ERROR = "px-4 py-2 text-12 text-danger flex items-center gap-2";
 const TH_ERROR_BTN =
-  "bg-transparent border border-[var(--red)] text-[var(--red)] text-[11px] px-[8px] py-[1px] rounded-[3px] cursor-pointer";
+  "bg-transparent border border-[var(--red)] text-danger text-11 px-2 py-0.25 rounded-3 cursor-pointer";
 const TH_GROUP =
-  "flex items-center gap-[8px] px-[16px] pt-[6px] pb-[3px] text-[10px] font-bold text-muted uppercase tracking-[0.04em] bg-surface sticky top-0 z-[1] border-b border-b-[rgba(48,54,61,.4)]";
+  "flex items-center gap-2 px-4 pt-1.5 pb-0.75 text-10 font-bold text-muted uppercase tracking-0.04 bg-surface sticky top-0 z-1 border-b border-b-border/40";
 const TH_GROUP_FISSURES = TH_GROUP + " justify-between";
 
 const TH_STAR =
-  "bg-transparent border-0 cursor-pointer text-[14px] text-muted px-[2px] py-0 shrink-0 leading-none transition-colors duration-100 hover:text-[#f0c040]";
+  "bg-transparent border-0 cursor-pointer text-14 text-muted px-0.5 py-0 shrink-0 leading-none transition-colors duration-100 hover:text-ducat";
 const TH_STAR_FAV =
-  "bg-transparent border-0 cursor-pointer text-[14px] px-[2px] py-0 shrink-0 leading-none transition-colors duration-100 text-[#f0c040]";
+  "bg-transparent border-0 cursor-pointer text-14 px-0.5 py-0 shrink-0 leading-none transition-colors duration-100 text-ducat";
 
 // State badges: base bg wins over the legacy `.st-*` backgrounds (later rule in
 // the old stylesheet), so only the state colour differs per variant.
 const TH_STATE =
-  "text-[10px] font-semibold px-[5px] py-[1px] rounded-[3px] bg-[rgba(255,255,255,.07)] shrink-0";
+  "text-10 font-semibold px-1.25 py-0.25 rounded-3 bg-white/7 shrink-0";
 const STATE_COLORS: Record<string, string> = {
-  "st-day": "text-[#f0c040]",
-  "st-night": "text-[#6eb6ff]",
-  "st-warm": "text-[#ff8c5a]",
-  "st-cold": "text-[#6eb6ff]",
-  "st-fass": "text-[#ff6b4a]",
-  "st-duviri": "text-[#c084fc]",
-  "st-joy": "text-[#f0c040]",
-  "st-anger": "text-[#f87171]",
-  "st-envy": "text-[#4ade80]",
-  "st-sorrow": "text-[#60a5fa]",
-  "st-fear": "text-[#c084fc]",
-  "st-active": "text-[var(--green)]",
-  "st-away": "text-[var(--muted)]",
-  "st-neutral": "text-[var(--muted)]",
+  "st-day": "text-ducat",
+  "st-night": "text-state-cool",
+  "st-warm": "text-state-warm",
+  "st-cold": "text-state-cool",
+  "st-fass": "text-state-fass",
+  "st-duviri": "text-state-void",
+  "st-joy": "text-ducat",
+  "st-anger": "text-state-anger",
+  "st-envy": "text-state-envy",
+  "st-sorrow": "text-state-sorrow",
+  "st-fear": "text-state-void",
+  "st-active": "text-success",
+  "st-away": "text-muted",
+  "st-neutral": "text-muted",
 };
 
 const TH_SECTION =
-  "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-[4px] px-[8px] pt-[4px] pb-[6px]";
+  "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-1 px-2 pt-1 pb-1.5";
 
 const TH_TILE =
-  "flex items-start gap-[4px] bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.5)] rounded-[5px] pt-[5px] pr-[7px] pb-[5px] pl-[5px] min-w-0 transition-colors duration-100 hover:bg-[rgba(255,255,255,.07)]";
-const TH_TILE_INNER = "flex-1 min-w-0 flex flex-col gap-[3px]";
-const TH_TILE_TOP = "flex justify-between items-center gap-[4px]";
+  "flex items-start gap-1 bg-white/4 border border-border/50 rounded-5 pt-1.25 pr-1.75 pb-1.25 pl-1.25 min-w-0 transition-colors duration-100 hover:bg-white/7";
+const TH_TILE_INNER = "flex-1 min-w-0 flex flex-col gap-0.75";
+const TH_TILE_TOP = "flex justify-between items-center gap-1";
 const TH_TILE_NAME =
-  "text-[11px] font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "text-11 font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 const TH_TILE_CD =
-  "text-[11px] font-bold tabular-nums text-foreground whitespace-nowrap";
-const TH_TILE_BOTTOM = "flex items-center gap-[5px]";
+  "text-11 font-bold tabular-nums text-foreground whitespace-nowrap";
+const TH_TILE_BOTTOM = "flex items-center gap-1.25";
 const TH_TILE_UNTIL =
-  "text-[10px] text-muted whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "text-10 text-muted whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 
 // ── News & promotions ──
 const TH_NEWS_TILE =
-  "bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.5)] rounded-[5px] py-[7px] px-[10px] flex flex-col gap-[5px] min-w-0";
-const TH_NEWS_MSG = "text-[12px] font-semibold text-foreground leading-[1.35] line-clamp-2";
-const TH_NEWS_META = "flex items-center gap-[6px]";
-const TH_NEWS_DATE = "text-[10px] text-muted shrink-0";
-const TH_NEWS_TAGS = "flex gap-[4px] flex-1 min-w-0";
-const TH_NEWS_TAG = "text-[10px] font-semibold px-[5px] py-[1px] rounded-[3px] shrink-0";
+  "bg-white/4 border border-border/50 rounded-5 py-1.75 px-2.5 flex flex-col gap-1.25 min-w-0";
+const TH_NEWS_MSG = "text-12 font-semibold text-foreground leading-1.35 line-clamp-2";
+const TH_NEWS_META = "flex items-center gap-1.5";
+const TH_NEWS_DATE = "text-10 text-muted shrink-0";
+const TH_NEWS_TAGS = "flex gap-1 flex-1 min-w-0";
+const TH_NEWS_TAG = "text-10 font-semibold px-1.25 py-0.25 rounded-3 shrink-0";
 const NEWS_TAGS: Record<string, string> = {
   "news-tag-prime":
-    TH_NEWS_TAG + " bg-[rgba(230,175,50,.18)] text-[#e6af32] border border-[rgba(230,175,50,.35)]",
+    TH_NEWS_TAG + " bg-news-prime/18 text-news-prime border border-news-prime/35",
   "news-tag-stream":
-    TH_NEWS_TAG + " bg-[rgba(145,71,255,.18)] text-[#a47bff] border border-[rgba(145,71,255,.35)]",
+    TH_NEWS_TAG + " bg-news-stream/18 text-news-stream border border-news-stream/35",
   "news-tag-update":
-    TH_NEWS_TAG + " bg-[rgba(48,160,255,.18)] text-[#4ea8f0] border border-[rgba(48,160,255,.35)]",
+    TH_NEWS_TAG + " bg-news-update/18 text-news-update border border-news-update/35",
 };
 const TH_NEWS_BTN =
-  "bg-transparent border border-[rgba(48,54,61,.6)] rounded-[3px] text-muted text-[10px] px-[6px] py-[2px] cursor-pointer shrink-0 transition-colors duration-100 whitespace-nowrap hover:bg-[rgba(255,255,255,.08)] hover:text-foreground hover:border-[rgba(139,148,158,.5)]";
+  "bg-transparent border border-border/60 rounded-3 text-muted text-10 px-1.5 py-0.5 cursor-pointer shrink-0 transition-colors duration-100 whitespace-nowrap hover:bg-white/8 hover:text-foreground hover:border-muted/50";
 
 // ── Alerts ──
 const TH_ALERT_TILE =
-  "bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.5)] rounded-[5px] px-[8px] py-[6px] flex flex-col gap-[3px] min-w-0";
-const TH_ALERT_TOP = "flex justify-between items-center gap-[4px]";
+  "bg-white/4 border border-border/50 rounded-5 px-2 py-1.5 flex flex-col gap-0.75 min-w-0";
+const TH_ALERT_TOP = "flex justify-between items-center gap-1";
 const TH_ALERT_TYPE =
-  "text-[12px] font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "text-12 font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 const TH_ALERT_CD =
-  "text-[11px] font-bold tabular-nums text-foreground whitespace-nowrap shrink-0";
-const TH_ALERT_BOTTOM = "flex gap-[5px] items-center";
+  "text-11 font-bold tabular-nums text-foreground whitespace-nowrap shrink-0";
+const TH_ALERT_BOTTOM = "flex gap-1.25 items-center";
 const TH_ALERT_FACTION =
-  "text-[10px] text-muted bg-[rgba(255,255,255,.06)] px-[4px] py-0 rounded-[2px] shrink-0";
+  "text-10 text-muted bg-white/6 px-1 py-0 rounded-2 shrink-0";
 const TH_ALERT_REWARD =
-  "text-[10px] text-[#f0c040] whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "text-10 text-ducat whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 
 // ── Invasions ──
 const TH_INV_TILE =
-  "bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.5)] rounded-[5px] px-[8px] py-[6px] flex flex-col gap-[2px] min-w-0";
+  "bg-white/4 border border-border/50 rounded-5 px-2 py-1.5 flex flex-col gap-0.5 min-w-0";
 const TH_INV_NODE =
-  "text-[11px] font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
-const TH_INV_FACTIONS = "flex items-center justify-between gap-[4px] text-[10px]";
+  "text-11 font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
+const TH_INV_FACTIONS = "flex items-center justify-between gap-1 text-10";
 const TH_INV_REWARD =
   "text-muted whitespace-nowrap overflow-hidden text-ellipsis text-right min-w-0 max-w-[50%]";
 const TH_INV_BAR_WRAP =
-  "h-[3px] bg-[rgba(255,255,255,.08)] mx-[28px] my-0 rounded-[2px] overflow-hidden";
-const TH_INV_BAR_INNER = "h-full bg-accent rounded-[2px] transition-[width] duration-300";
-const TH_INV_ATT = "text-[#f85149]";
-const TH_INV_DEF = "text-[#6eb6ff]";
+  "h-0.75 bg-white/8 mx-7 my-0 rounded-2 overflow-hidden";
+const TH_INV_BAR_INNER = "h-full bg-accent rounded-2 transition-[width] duration-300";
+const TH_INV_ATT = "text-danger";
+const TH_INV_DEF = "text-state-cool";
 
 // ── Fissures ──
 const TH_FISSURE_GRID =
-  "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-[5px] pt-[6px] px-[8px] pb-[8px]";
+  "grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1.25 pt-1.5 px-2 pb-2";
 const TH_FISSURE_TILE =
-  "bg-[rgba(255,255,255,.04)] border border-[rgba(48,54,61,.5)] rounded-[5px] px-[8px] py-[6px] flex flex-col gap-[3px] transition-colors duration-100 min-w-0 hover:bg-[rgba(255,255,255,.07)]";
+  "bg-white/4 border border-border/50 rounded-5 px-2 py-1.5 flex flex-col gap-0.75 transition-colors duration-100 min-w-0 hover:bg-white/7";
 // Watched wins over hover (later rule at equal specificity) → no hover class;
 // left edge keeps the standalone `.fissure-watched` 2px accent border.
 const TH_FISSURE_WATCHED =
-  "bg-[rgba(56,139,253,.08)] border-t border-r border-b border-l-2 border-[var(--accent)] rounded-[5px] px-[8px] py-[6px] flex flex-col gap-[3px] transition-colors duration-100 min-w-0";
-const TH_FISSURE_TOP = "flex justify-between items-center gap-[4px]";
+  "bg-accent/8 border-t border-r border-b border-l-2 border-[var(--accent)] rounded-5 px-2 py-1.5 flex flex-col gap-0.75 transition-colors duration-100 min-w-0";
+const TH_FISSURE_TOP = "flex justify-between items-center gap-1";
 const TH_FISSURE_CD =
-  "text-[11px] font-bold tabular-nums text-foreground whitespace-nowrap";
+  "text-11 font-bold tabular-nums text-foreground whitespace-nowrap";
 const TH_FISSURE_MISSION =
-  "text-[12px] text-foreground font-medium whitespace-nowrap overflow-hidden text-ellipsis";
-const TH_FISSURE_BOTTOM = "flex gap-[6px] items-center";
+  "text-12 text-foreground font-medium whitespace-nowrap overflow-hidden text-ellipsis";
+const TH_FISSURE_BOTTOM = "flex gap-1.5 items-center";
 const TH_FISSURE_ENEMY =
-  "text-[10px] text-muted bg-[rgba(255,255,255,.06)] px-[4px] py-0 rounded-[2px] shrink-0";
+  "text-10 text-muted bg-white/6 px-1 py-0 rounded-2 shrink-0";
 const TH_FISSURE_NODE =
-  "text-[10px] text-muted whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
-const TH_FISSURE_TABS = "flex gap-[2px] ml-auto";
+  "text-10 text-muted whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+const TH_FISSURE_TABS = "flex gap-0.5 ml-auto";
 const TH_TAB_BASE =
-  "bg-transparent border border-[rgba(48,54,61,.8)] text-muted text-[10px] px-[7px] py-[1px] rounded-[3px] cursor-pointer transition-colors duration-100 hover:bg-[rgba(255,255,255,.1)] hover:text-foreground";
+  "bg-transparent border border-border/80 text-muted text-10 px-1.75 py-0.25 rounded-3 cursor-pointer transition-colors duration-100 hover:bg-white/10 hover:text-foreground";
 const TH_TAB_ACTIVE =
-  "bg-[rgba(255,255,255,.1)] border border-[rgba(48,54,61,.8)] text-foreground text-[10px] px-[7px] py-[1px] rounded-[3px] cursor-pointer transition-colors duration-100";
+  "bg-white/10 border border-border/80 text-foreground text-10 px-1.75 py-0.25 rounded-3 cursor-pointer transition-colors duration-100";
 const TH_WATCH_BTN =
-  "bg-transparent border-0 cursor-pointer text-muted px-[4px] py-[2px] rounded-[3px] flex items-center transition-colors duration-100 shrink-0 hover:bg-[rgba(255,255,255,.1)] hover:text-foreground";
+  "bg-transparent border-0 cursor-pointer text-muted px-1 py-0.5 rounded-3 flex items-center transition-colors duration-100 shrink-0 hover:bg-white/10 hover:text-foreground";
 const TH_WATCH_BTN_ACTIVE =
-  "bg-[rgba(255,255,255,.1)] border-0 cursor-pointer text-foreground px-[4px] py-[2px] rounded-[3px] flex items-center transition-colors duration-100 shrink-0";
-const TH_WATCH_SVG = "w-[14px] h-[14px]";
+  "bg-white/10 border-0 cursor-pointer text-foreground px-1 py-0.5 rounded-3 flex items-center transition-colors duration-100 shrink-0";
+const TH_WATCH_SVG = "w-3.5 h-3.5";
 
 // ── Watch management panel ──
 const TH_WATCH_PANEL =
-  "pt-[8px] px-[12px] pb-[10px] bg-[rgba(0,0,0,.2)] border-b border-b-[rgba(48,54,61,.5)]";
-const TH_WATCH_CHIPS = "flex flex-wrap gap-[5px] mb-[10px]";
+  "pt-2 px-3 pb-2.5 bg-black/20 border-b border-b-border/50";
+const TH_WATCH_CHIPS = "flex flex-wrap gap-1.25 mb-2.5";
 const TH_WATCH_CHIP =
-  "flex items-center gap-[4px] pt-[2px] pb-[2px] pl-[8px] pr-[6px] bg-[rgba(255,255,255,.07)] border border-[rgba(255,255,255,.1)] rounded-[12px] text-[11px]";
+  "flex items-center gap-1 pt-0.5 pb-0.5 pl-2 pr-1.5 bg-white/7 border border-white/10 rounded-12 text-11";
 const TH_CHIP_TIER = "font-bold";
 const TH_CHIP_MT = "text-muted";
 const TH_CHIP_VAR = "text-muted italic";
 const TH_CHIP_DEL =
-  "bg-transparent border-0 cursor-pointer text-muted text-[14px] pl-[2px] pr-0 py-0 leading-none transition-colors duration-100 hover:text-danger";
-const TH_WATCH_FORM = "flex flex-col gap-[6px]";
-const TH_FORM_ROW = "flex items-start gap-[8px]";
+  "bg-transparent border-0 cursor-pointer text-muted text-14 pl-0.5 pr-0 py-0 leading-none transition-colors duration-100 hover:text-danger";
+const TH_WATCH_FORM = "flex flex-col gap-1.5";
+const TH_FORM_ROW = "flex items-start gap-2";
 const TH_FORM_LABEL =
-  "text-[10px] font-bold text-muted uppercase tracking-[0.04em] w-[32px] shrink-0 pt-[3px]";
-const TH_PILL_GROUP = "flex flex-nowrap gap-[3px] flex-1";
-const TH_PILL_GROUP_WRAP = "flex flex-wrap gap-[3px] flex-1";
+  "text-10 font-bold text-muted uppercase tracking-0.04 w-8 shrink-0 pt-0.75";
+const TH_PILL_GROUP = "flex flex-nowrap gap-0.75 flex-1";
+const TH_PILL_GROUP_WRAP = "flex flex-wrap gap-0.75 flex-1";
 const TH_PILL =
-  "bg-transparent border border-[rgba(48,54,61,.8)] text-muted text-[10px] px-[7px] py-[2px] rounded-[3px] cursor-pointer whitespace-nowrap transition-colors duration-100 hover:bg-[rgba(255,255,255,.07)] hover:text-foreground";
+  "bg-transparent border border-border/80 text-muted text-10 px-1.75 py-0.5 rounded-3 cursor-pointer whitespace-nowrap transition-colors duration-100 hover:bg-white/7 hover:text-foreground";
 const TH_PILL_ACTIVE =
-  "bg-[rgba(56,139,253,.2)] border border-[var(--accent)] text-[var(--accent)] text-[10px] px-[7px] py-[2px] rounded-[3px] cursor-pointer whitespace-nowrap transition-colors duration-100";
+  "bg-accent/20 border border-[var(--accent)] text-accent text-10 px-1.75 py-0.5 rounded-3 cursor-pointer whitespace-nowrap transition-colors duration-100";
 const TH_ADD_BTN =
-  "self-end bg-[rgba(56,139,253,.15)] border border-[var(--accent)] text-[var(--accent)] text-[11px] px-[12px] py-[3px] rounded-[4px] cursor-pointer mt-[2px] transition-colors duration-100 hover:bg-[rgba(56,139,253,.3)]";
+  "self-end bg-accent/15 border border-[var(--accent)] text-accent text-11 px-3 py-0.75 rounded-4 cursor-pointer mt-0.5 transition-colors duration-100 hover:bg-accent/30";
 const TH_NOTIFY =
-  "flex items-center gap-[5px] mt-[6px] pt-[6px] border-t border-t-[rgba(48,54,61,.5)] text-muted text-[11px] cursor-pointer";
+  "flex items-center gap-1.25 mt-1.5 pt-1.5 border-t border-t-border/50 text-muted text-11 cursor-pointer";
 const TH_NOTIFY_INPUT = "m-0 cursor-pointer";
-const TH_NOTIFY_DENIED = "mt-[4px] text-danger text-[10px]";
+const TH_NOTIFY_DENIED = "mt-1 text-danger text-10";
 
 // ── Expandable tiles ──
 const TH_EXP_SHELL =
-  "bg-[rgba(255,255,255,.04)] border rounded-[5px] overflow-hidden min-w-0 transition-colors duration-100";
-const TH_EXP = TH_EXP_SHELL + " border-[rgba(48,54,61,.5)] cursor-pointer hover:bg-[rgba(255,255,255,.07)]";
-const TH_EXP_OPEN = TH_EXP_SHELL + " border-[rgba(56,139,253,.4)] col-span-full cursor-pointer hover:bg-[rgba(255,255,255,.07)]";
-const TH_EXP_AWAY = TH_EXP_SHELL + " border-[rgba(48,54,61,.5)] cursor-default opacity-[.7] hover:bg-[rgba(255,255,255,.07)]";
-const TH_EXP_AWAY_OPEN = TH_EXP_SHELL + " border-[rgba(56,139,253,.4)] col-span-full cursor-default opacity-[.7] hover:bg-[rgba(255,255,255,.07)]";
-const TH_EXP_HEADER = "flex flex-col gap-[4px] pt-[6px] px-[8px] pb-[5px]";
-const TH_EXP_NAME_ROW = "flex items-center gap-[4px]";
-const TH_EXP_META_ROW = "flex items-center gap-[5px]";
+  "bg-white/4 border rounded-5 overflow-hidden min-w-0 transition-colors duration-100";
+const TH_EXP = TH_EXP_SHELL + " border-border/50 cursor-pointer hover:bg-white/7";
+const TH_EXP_OPEN = TH_EXP_SHELL + " border-accent/40 col-span-full cursor-pointer hover:bg-white/7";
+const TH_EXP_AWAY = TH_EXP_SHELL + " border-border/50 cursor-default opacity-70 hover:bg-white/7";
+const TH_EXP_AWAY_OPEN = TH_EXP_SHELL + " border-accent/40 col-span-full cursor-default opacity-70 hover:bg-white/7";
+const TH_EXP_HEADER = "flex flex-col gap-1 pt-1.5 px-2 pb-1.25";
+const TH_EXP_NAME_ROW = "flex items-center gap-1";
+const TH_EXP_META_ROW = "flex items-center gap-1.25";
 const TH_EXP_NAME =
-  "text-[11px] font-semibold text-foreground flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis";
+  "text-11 font-semibold text-foreground flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis";
 const TH_EXP_CD =
-  "text-[11px] font-bold tabular-nums text-foreground whitespace-nowrap shrink-0 ml-auto";
-const TH_EXP_CHEVRON = "w-[10px] h-[6px] shrink-0 text-muted transition-transform duration-150";
-const TH_EXP_LOCATION = "text-[10px] text-muted pb-[4px] pr-[7px] pl-[28px]";
+  "text-11 font-bold tabular-nums text-foreground whitespace-nowrap shrink-0 ml-auto";
+const TH_EXP_CHEVRON = "w-2.5 h-1.5 shrink-0 text-muted transition-transform duration-150";
+const TH_EXP_LOCATION = "text-10 text-muted pb-1 pr-1.75 pl-7";
 const TH_EXP_BODY =
-  "border-t border-t-[rgba(48,54,61,.4)] pt-[4px] px-[7px] pb-[5px] bg-[rgba(0,0,0,.15)] cursor-default";
+  "border-t border-t-border/40 pt-1 px-1.75 pb-1.25 bg-black/15 cursor-default";
 // `.exp-tile-inventory` came later in the sheet and won the padding clash.
 const TH_EXP_BODY_INV =
-  "border-t border-t-[rgba(48,54,61,.4)] pt-[2px] px-[7px] pb-[4px] bg-[rgba(0,0,0,.15)] cursor-default max-h-[200px] overflow-y-auto";
+  "border-t border-t-border/40 pt-0.5 px-1.75 pb-1 bg-black/15 cursor-default max-h-50 overflow-y-auto";
 const TH_EXP_ROW =
-  "flex items-center gap-[6px] py-[2px] text-[11px] border-b border-b-[rgba(48,54,61,.2)] last:border-b-0";
+  "flex items-center gap-1.5 py-0.5 text-11 border-b border-b-border/20 last:border-b-0";
 const TH_EXP_ROW_TYPE = "text-foreground shrink-0";
-const TH_EXP_ROW_MOD = "text-[10px] text-[#f0c040] shrink-0";
+const TH_EXP_ROW_MOD = "text-10 text-ducat shrink-0";
 const TH_EXP_ROW_NODE =
   "text-muted flex-1 min-w-0 whitespace-nowrap overflow-hidden text-ellipsis text-right";
 
 // ── Inventory rows (Baro / Resurgence) ──
 const TH_INV_ROW =
-  "flex items-center gap-[8px] py-[3px] border-b border-b-[rgba(48,54,61,.2)] text-[11px] last:border-b-0";
+  "flex items-center gap-2 py-0.75 border-b border-b-border/20 text-11 last:border-b-0";
 const TH_INV_NAME =
   "flex-1 text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 const TH_INV_NAME_OWNED =
-  "flex-1 text-[var(--green)] whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "flex-1 text-success whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 const TH_OWNED_TAG =
-  "text-[9px] font-bold text-[var(--green)] bg-[rgba(63,185,80,.15)] border border-[rgba(63,185,80,.3)] px-[4px] py-0 rounded-[3px] shrink-0 whitespace-nowrap";
+  "text-9 font-bold text-success bg-success/15 border border-success/30 px-1 py-0 rounded-3 shrink-0 whitespace-nowrap";
 const TH_PRICE = "shrink-0 font-bold tabular-nums whitespace-nowrap";
-const TH_PRICE_AYA = TH_PRICE + " text-[#f0c040]";
+const TH_PRICE_AYA = TH_PRICE + " text-ducat";
 const TH_PRICE_CR = TH_PRICE + " text-muted";
-const TH_CURRENCY = "text-[9px] font-normal opacity-80";
+const TH_CURRENCY = "text-9 font-normal opacity-80";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -548,7 +548,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
                     <div key={i} className={TH_INV_ROW}>
                       <span className={owned ? TH_INV_NAME_OWNED : TH_INV_NAME}>{item.name}</span>
                       {owned && <span className={TH_OWNED_TAG}>Owned</span>}
-                      {item.regalAyaPrice ? <span className={`${TH_PRICE_AYA} text-[#c084fc]`}>{item.regalAyaPrice} <span className={TH_CURRENCY}>Regal Aya</span></span> : null}
+                      {item.regalAyaPrice ? <span className={`${TH_PRICE_AYA} text-state-void`}>{item.regalAyaPrice} <span className={TH_CURRENCY}>Regal Aya</span></span> : null}
                       {item.ayaPrice ? <span className={TH_PRICE_AYA}>{item.ayaPrice} <span className={TH_CURRENCY}>Aya</span></span> : null}
                     </div>
                   );
@@ -619,7 +619,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
             {ws.invasions.map((inv, i) => (
               <div key={i} className={TH_INV_TILE}>
                 <div className={TH_INV_NODE}>{inv.node}</div>
-                <div className={`${TH_INV_BAR_WRAP} my-[3px]`}>
+                <div className={`${TH_INV_BAR_WRAP} my-0.75`}>
                   <div className={TH_INV_BAR_INNER} style={{ width: `${Math.min(100, inv.pct)}%` }} />
                 </div>
                 <div className={TH_INV_FACTIONS}>
@@ -648,7 +648,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
         const FissureTile = ({ f, v }: { f: WsFissure | WsStorm; v: "normal" | "hard" | "storm" }) => (
           <div className={fissureWatches.some(w => matchesWatch(w, f, v)) ? TH_FISSURE_WATCHED : TH_FISSURE_TILE}>
             <div className={TH_FISSURE_TOP}>
-              <span className="text-[11px] font-bold shrink-0 w-[52px]" style={{ color: TIER_COLOR[f.tier] ?? "#ccc" }}>{f.tier}</span>
+              <span className="text-11 font-bold shrink-0 w-13" style={{ color: TIER_COLOR[f.tier] ?? "#ccc" }}>{f.tier}</span>
               <span className={TH_FISSURE_CD}>{cd(f.expiry)}</span>
             </div>
             <div className={TH_FISSURE_MISSION}>{f.missionType}</div>

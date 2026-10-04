@@ -41,32 +41,32 @@ function effectiveCap(item: WeaponItem): number {
 // ── Presentation ──────────────────────────────────────────────────────────────
 
 const WPN_ROOT_CLASS = "flex flex-1 min-h-0 flex-col overflow-hidden bg-background text-foreground";
-const WPN_TABS_CLASS = "flex shrink-0 gap-[2px] border-b border-border px-3 pt-2";
-const WPN_TAB_CLASS = "-mb-px cursor-pointer rounded-t-[6px] border-0 border-b-[3px] px-5 py-1.5 text-[13px] font-medium transition-[background,color] duration-150";
+const WPN_TABS_CLASS = "flex shrink-0 gap-0.5 border-b border-border px-3 pt-2";
+const WPN_TAB_CLASS = "-mb-px cursor-pointer rounded-t-6 border-0 border-b-3 px-5 py-1.5 text-13 font-medium transition-[background,color] duration-150";
 const WPN_TAB_ACTIVE_CLASS = "border-accent bg-[var(--bg-card)] text-foreground";
-const WPN_TAB_IDLE_CLASS = "border-transparent bg-transparent text-[var(--text-dim)] hover:bg-[var(--hover)] hover:text-foreground";
+const WPN_TAB_IDLE_CLASS = "border-transparent bg-transparent text-dim hover:bg-[var(--hover)] hover:text-foreground";
 const WPN_TOOLBAR_CLASS = "flex shrink-0 items-center gap-3 px-3.5 pb-1.5 pt-2.5";
-const WPN_SEARCH_CLASS = "w-40 shrink-0 rounded-[5px] border border-border bg-[var(--bg-card)] px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--text-dim)] focus:border-accent focus:outline-none";
+const WPN_SEARCH_CLASS = "w-40 shrink-0 rounded-5 border border-border bg-[var(--bg-card)] px-2 py-1 text-12 text-foreground placeholder:text-dim focus:border-accent focus:outline-none";
 const WPN_PROGRESS_WRAP_CLASS = "flex flex-1 items-center gap-2";
-const WPN_PROGRESS_BAR_CLASS = "h-1.5 max-w-[200px] flex-1 overflow-hidden rounded-[3px] bg-border";
-const WPN_PROGRESS_FILL_CLASS = "h-full rounded-[3px] bg-accent transition-[width] duration-300";
-const WPN_PROGRESS_LABEL_CLASS = "whitespace-nowrap text-[12px] text-[var(--text-dim)]";
-const WPN_FILTER_CLASS = "cursor-pointer rounded-[5px] border px-2.5 py-1 text-[12px] transition-all duration-150";
+const WPN_PROGRESS_BAR_CLASS = "h-1.5 max-w-50 flex-1 overflow-hidden rounded-3 bg-border";
+const WPN_PROGRESS_FILL_CLASS = "h-full rounded-3 bg-accent transition-[width] duration-300";
+const WPN_PROGRESS_LABEL_CLASS = "whitespace-nowrap text-12 text-dim";
+const WPN_FILTER_CLASS = "cursor-pointer rounded-5 border px-2.5 py-1 text-12 transition-all duration-150";
 const WPN_FILTER_ACTIVE_CLASS = "border-accent bg-accent text-white";
-const WPN_FILTER_IDLE_CLASS = "border-border bg-transparent text-[var(--text-dim)]";
+const WPN_FILTER_IDLE_CLASS = "border-border bg-transparent text-dim";
 const WPN_BODY_CLASS = "flex-1 overflow-y-auto px-3 pb-4 pt-2";
-const WPN_HEADER_CLASS = "mb-1.5 border-b border-border pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--text-dim)]";
-const WPN_GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-[3px]";
-const WPN_ITEM_CLASS = "flex items-center gap-2 rounded-[5px] border px-2 py-[5px] transition-[background] duration-100 hover:bg-[var(--hover)]";
-const WPN_ITEM_MASTERED_CLASS = "border-[rgba(80,200,120,0.15)] hover:border-[rgba(80,200,120,0.15)]";
+const WPN_HEADER_CLASS = "mb-1.5 border-b border-border pb-1.5 pt-1 text-11 font-semibold uppercase tracking-0.06 text-dim";
+const WPN_GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-0.75";
+const WPN_ITEM_CLASS = "flex items-center gap-2 rounded-5 border px-2 py-1.25 transition-[background] duration-100 hover:bg-[var(--hover)]";
+const WPN_ITEM_MASTERED_CLASS = "border-complete/15 hover:border-complete/15";
 const WPN_ITEM_IDLE_CLASS = "border-transparent hover:border-border";
-const WPN_NAME_CLASS = "flex-1 truncate text-[12px]";
-const WPN_MR_CLASS = "shrink-0 text-[10px] text-[var(--text-dim)]";
-const WPN_RANK_CLASS = "min-w-9 shrink-0 rounded-[4px] px-1.5 py-[2px] text-center text-[11px] font-bold";
-const WPN_RANK_DONE_CLASS = "bg-[rgba(80,200,120,0.15)] text-[#50c878]";
-const WPN_RANK_PARTIAL_CLASS = "bg-[rgba(240,192,64,0.12)] text-[#f0c040]";
-const WPN_RANK_ZERO_CLASS = "bg-[rgba(180,180,180,0.07)] text-[var(--text-dim)]";
-const WPN_EMPTY_CLASS = "py-10 text-center text-[14px] text-[var(--text-dim)]";
+const WPN_NAME_CLASS = "flex-1 truncate text-12";
+const WPN_MR_CLASS = "shrink-0 text-10 text-dim";
+const WPN_RANK_CLASS = "min-w-9 shrink-0 rounded-4 px-1.5 py-0.5 text-center text-11 font-bold";
+const WPN_RANK_DONE_CLASS = "bg-complete/15 text-complete";
+const WPN_RANK_PARTIAL_CLASS = "bg-ducat/12 text-ducat";
+const WPN_RANK_ZERO_CLASS = "bg-rank-none/7 text-dim";
+const WPN_EMPTY_CLASS = "py-10 text-center text-14 text-dim";
 
 // ── Item row ──────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ function WeaponRow({ item, rank }: { item: WeaponItem; rank: number }) {
   const rankLabel = cap > 0 ? `R${rank}/${cap}` : `R${rank}`;
 
   return (
-    <div className={`${WPN_ITEM_CLASS} ${mastered ? WPN_ITEM_MASTERED_CLASS : WPN_ITEM_IDLE_CLASS}${!mastered && rank === 0 ? " opacity-[0.45]" : ""}`}>
+    <div className={`${WPN_ITEM_CLASS} ${mastered ? WPN_ITEM_MASTERED_CLASS : WPN_ITEM_IDLE_CLASS}${!mastered && rank === 0 ? " opacity-45" : ""}`}>
       <ItemImg imageName={item.image_name} fallbackText={item.name[0]?.toUpperCase() ?? "?"} />
       <span className={WPN_NAME_CLASS}>{item.name}</span>
       {item.mastery_req != null && item.mastery_req > 0 && (

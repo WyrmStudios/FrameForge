@@ -1,12 +1,12 @@
 import { CategoryButton, CAT_COUNT, CAT_OWNED, CAT_SEP, CAT_TOTAL } from "../shared/ui/CategoryButton";
 
-const SIDEBAR = "w-[var(--sidebar-w)] shrink-0 bg-surface border-r border-border flex flex-col overflow-y-auto py-[12px]";
-const SECTION_LABEL = "px-[12px] pb-[6px] text-[10px] font-semibold uppercase tracking-[.06em] text-muted";
-const SIDEBAR_DIVIDER = "border-t border-border my-[10px]";
-const DB_COUNT = "px-[12px] pb-[6px] text-muted text-[12px]";
+const SIDEBAR = "w-[var(--sidebar-w)] shrink-0 bg-surface border-r border-border flex flex-col overflow-y-auto py-3";
+const SECTION_LABEL = "px-3 pb-1.5 text-10 font-semibold uppercase tracking-0.06 text-muted";
+const SIDEBAR_DIVIDER = "border-t border-border my-2.5";
+const DB_COUNT = "px-3 pb-1.5 text-muted text-12";
 const BTN_FETCH =
-  "mx-[12px] py-[6px] bg-background border border-border rounded-[6px] text-muted cursor-pointer text-[12px] transition-[border-color,color] duration-150 hover:enabled:border-accent hover:enabled:text-accent disabled:opacity-50 disabled:cursor-default";
-const FETCH_MSG = "pt-[6px] px-[12px] pb-0 text-[11px] text-muted break-words";
+  "mx-3 py-1.5 bg-background border border-border rounded-6 text-muted cursor-pointer text-12 transition-[border-color,color] duration-150 hover:enabled:border-accent hover:enabled:text-accent disabled:opacity-50 disabled:cursor-default";
+const FETCH_MSG = "pt-1.5 px-3 pb-0 text-11 text-muted break-words";
 
 interface InventorySidebarProps {
   categories: { id: string; label: string }[];

@@ -8,97 +8,97 @@ import type { WfmCreateOrderArgs } from "../types/tauri";
 // ── Tailwind class constants (formerly ItemMarketPopup.css) ───────────────────
 
 const IMP_OVERLAY =
-  "fixed inset-0 bg-[rgba(0,0,0,0.65)] flex items-center justify-center z-[200] p-4";
+  "fixed inset-0 bg-black/65 flex items-center justify-center z-200 p-4";
 const IMP_MODAL =
-  "bg-surface border border-[rgba(48,54,61,0.8)] rounded-[10px] w-full max-w-[680px] max-h-[calc(85vh_/_var(--ff-scale,1))] flex flex-col overflow-hidden";
+  "bg-surface border border-border/80 rounded-10 w-full max-w-170 max-h-[calc(85vh_/_var(--ff-scale,1))] flex flex-col overflow-hidden";
 
 const IMP_HEADER =
-  "flex items-center justify-between pt-[14px] px-4 pb-[12px] border-b border-b-[rgba(48,54,61,0.5)] shrink-0";
-const IMP_ITEM_IDENTITY = "flex items-center gap-[12px]";
+  "flex items-center justify-between pt-3.5 px-4 pb-3 border-b border-b-border/50 shrink-0";
+const IMP_ITEM_IDENTITY = "flex items-center gap-3";
 const IMP_THUMB =
-  "w-[52px] h-[52px] object-contain rounded-[6px] bg-[rgba(255,255,255,0.05)]";
+  "w-13 h-13 object-contain rounded-6 bg-white/5";
 const IMP_THUMB_PLACEHOLDER =
-  "w-[52px] h-[52px] rounded-[6px] bg-[rgba(255,255,255,0.07)] flex items-center justify-center text-[20px] font-bold text-muted";
-const IMP_ITEM_NAME = "text-[17px] font-bold text-foreground";
-const IMP_MEDIAN = "text-[12px] text-muted mt-[2px]";
-const IMP_MEDIAN_VALUE = "text-[#f0c040] font-semibold";
+  "w-13 h-13 rounded-6 bg-white/7 flex items-center justify-center text-20 font-bold text-muted";
+const IMP_ITEM_NAME = "text-17 font-bold text-foreground";
+const IMP_MEDIAN = "text-12 text-muted mt-0.5";
+const IMP_MEDIAN_VALUE = "text-ducat font-semibold";
 const IMP_CLOSE =
-  "bg-transparent border-0 text-muted text-[22px] cursor-pointer px-[4px] leading-none transition-colors duration-100 self-start hover:text-danger";
+  "bg-transparent border-0 text-muted text-22 cursor-pointer px-1 leading-none transition-colors duration-100 self-start hover:text-danger";
 
-const IMP_CHART_WRAP = "px-4 pt-[8px] pb-[4px] shrink-0";
-const IMP_CHART = "w-full h-[56px] block";
-const IMP_CHART_LABELS = "flex justify-between text-[10px] text-muted mt-[2px]";
+const IMP_CHART_WRAP = "px-4 pt-2 pb-1 shrink-0";
+const IMP_CHART = "w-full h-14 block";
+const IMP_CHART_LABELS = "flex justify-between text-10 text-muted mt-0.5";
 const IMP_CHART_LAST = "text-accent font-semibold";
 
 const IMP_RANK_ROW =
-  "flex items-center gap-[6px] px-4 py-[6px] border-b border-b-[var(--border)] shrink-0";
-const IMP_RANK_LABEL = "text-[11px] text-muted";
+  "flex items-center gap-1.5 px-4 py-1.5 border-b border-b-[var(--border)] shrink-0";
+const IMP_RANK_LABEL = "text-11 text-muted";
 
 const IMP_ORDERS_WRAP =
-  "grid grid-cols-2 gap-0 flex-1 overflow-hidden border-t border-t-[rgba(48,54,61,0.4)]";
+  "grid grid-cols-2 gap-0 flex-1 overflow-hidden border-t border-t-border/40";
 const IMP_COL =
-  "flex flex-col min-h-0 overflow-x-hidden overflow-y-auto first:border-r first:border-r-[rgba(48,54,61,0.4)]";
+  "flex flex-col min-h-0 overflow-x-hidden overflow-y-auto first:border-r first:border-r-border/40";
 const IMP_COL_HEADER =
-  "flex justify-between items-center px-[10px] py-[6px] text-[10px] font-bold uppercase tracking-[0.04em] text-muted border-b border-b-[rgba(48,54,61,0.3)] shrink-0";
-const IMP_COL_BEST = "font-bold text-[#f0c040]";
-const IMP_COL_SUB = "text-[10px] font-normal text-muted ml-[4px]";
-const IMP_MSG = "px-[10px] py-[12px] text-[11px] text-muted text-center";
+  "flex justify-between items-center px-2.5 py-1.5 text-10 font-bold uppercase tracking-0.04 text-muted border-b border-b-border/30 shrink-0";
+const IMP_COL_BEST = "font-bold text-ducat";
+const IMP_COL_SUB = "text-10 font-normal text-muted ml-1";
+const IMP_MSG = "px-2.5 py-3 text-11 text-muted text-center";
 
 const IMP_ORDER_ROW =
-  "flex items-center gap-[6px] px-[10px] py-[5px] border-b border-b-[rgba(48,54,61,0.2)] text-[12px] transition-[background] duration-100 last:border-b-0 hover:bg-[rgba(255,255,255,0.04)]";
-const IMP_STATUS_DOT = "w-[6px] h-[6px] rounded-full shrink-0";
+  "flex items-center gap-1.5 px-2.5 py-1.25 border-b border-b-border/20 text-12 transition-[background] duration-100 last:border-b-0 hover:bg-white/4";
+const IMP_STATUS_DOT = "w-1.5 h-1.5 rounded-full shrink-0";
 const STATUS_DOT: Record<string, string> = {
   ingame: IMP_STATUS_DOT + " bg-success",
-  online: IMP_STATUS_DOT + " bg-[#9ecaed]",
+  online: IMP_STATUS_DOT + " bg-connected",
   offline: IMP_STATUS_DOT + " bg-muted",
 };
-const IMP_ORDER_PRICE = "font-bold tabular-nums min-w-[52px]";
+const IMP_ORDER_PRICE = "font-bold tabular-nums min-w-13";
 const IMP_ORDER_PRICE_SELL = IMP_ORDER_PRICE + " text-success";
 const IMP_ORDER_PRICE_BUY = IMP_ORDER_PRICE + " text-accent";
-const IMP_ORDER_QTY = "text-[11px] text-muted min-w-[24px]";
+const IMP_ORDER_QTY = "text-11 text-muted min-w-6";
 const IMP_ORDER_USER =
-  "flex-1 whitespace-nowrap overflow-hidden text-ellipsis min-w-0 text-foreground text-[11px]";
+  "flex-1 whitespace-nowrap overflow-hidden text-ellipsis min-w-0 text-foreground text-11";
 const IMP_ORDER_RANK =
-  "text-[10px] text-muted bg-[rgba(255,255,255,0.08)] px-[5px] py-[1px] rounded-[3px] shrink-0";
+  "text-10 text-muted bg-white/8 px-1.25 py-0.25 rounded-3 shrink-0";
 const IMP_LIST_BTN =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] text-muted text-[10px] px-[6px] py-[1px] rounded-[3px] cursor-pointer shrink-0 whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-[rgba(56,139,253,0.15)] hover:border-accent hover:text-accent";
+  "bg-transparent border border-border/60 text-muted text-10 px-1.5 py-0.25 rounded-3 cursor-pointer shrink-0 whitespace-nowrap transition-[background,color,border-color] duration-100 hover:bg-accent/15 hover:border-accent hover:text-accent";
 const IMP_COPY_BTN =
-  "bg-transparent border border-[rgba(48,54,61,0.6)] text-muted text-[11px] px-[5px] py-[1px] rounded-[3px] cursor-pointer shrink-0 leading-[1.4] transition-[background,border-color,color] duration-100 hover:bg-[rgba(255,255,255,0.06)] hover:border-[rgba(100,100,100,0.6)] hover:text-foreground";
+  "bg-transparent border border-border/60 text-muted text-11 px-1.25 py-0.25 rounded-3 cursor-pointer shrink-0 leading-1.4 transition-[background,border-color,color] duration-100 hover:bg-white/6 hover:border-copy-hover/60 hover:text-foreground";
 const IMP_COPY_BTN_DONE =
-  IMP_COPY_BTN + " border-[rgba(80,200,80,0.5)]! text-success!";
+  IMP_COPY_BTN + " border-confirm/50! text-success!";
 
 const IMP_ACTION_BAR =
-  "px-[14px] py-[10px] border-t border-t-[rgba(48,54,61,0.5)] shrink-0 bg-[rgba(0,0,0,0.12)]";
-const IMP_EDIT_BAR = "flex items-center gap-[6px]";
+  "px-3.5 py-2.5 border-t border-t-border/50 shrink-0 bg-black/12";
+const IMP_EDIT_BAR = "flex items-center gap-1.5";
 const IMP_ACTION_SELL =
-  "text-[12px] font-semibold px-[16px] py-[6px] rounded-[5px] cursor-pointer border mr-[8px] transition-[background] duration-100 bg-[rgba(63,185,80,0.15)] border-[var(--green)] text-success hover:bg-[rgba(63,185,80,0.28)]";
+  "text-12 font-semibold px-4 py-1.5 rounded-5 cursor-pointer border mr-2 transition-[background] duration-100 bg-success/15 border-[var(--green)] text-success hover:bg-success/28";
 const IMP_ACTION_BUY =
-  "text-[12px] font-semibold px-[16px] py-[6px] rounded-[5px] cursor-pointer border mr-[8px] transition-[background] duration-100 bg-[rgba(56,139,253,0.15)] border-accent text-accent hover:bg-[rgba(56,139,253,0.28)]";
-const IMP_EDIT_LABEL = "text-[12px] text-muted";
+  "text-12 font-semibold px-4 py-1.5 rounded-5 cursor-pointer border mr-2 transition-[background] duration-100 bg-accent/15 border-accent text-accent hover:bg-accent/28";
+const IMP_EDIT_LABEL = "text-12 text-muted";
 const IMP_EDIT_INPUT =
-  "bg-[var(--bg)] border border-[var(--border)] rounded-[5px] text-foreground text-[13px] px-[7px] py-[4px] w-[70px] outline-none focus:border-accent";
+  "bg-[var(--bg)] border border-[var(--border)] rounded-5 text-foreground text-13 px-1.75 py-1 w-17.5 outline-none focus:border-accent";
 const IMP_EDIT_INPUT_SM =
-  "bg-[var(--bg)] border border-[var(--border)] rounded-[5px] text-foreground text-[13px] px-[7px] py-[4px] w-[48px] outline-none focus:border-accent";
+  "bg-[var(--bg)] border border-[var(--border)] rounded-5 text-foreground text-13 px-1.75 py-1 w-12 outline-none focus:border-accent";
 
-const IMP_CREATE_FORM = "flex flex-col gap-[6px]";
-const IMP_CREATE_ROW = "flex items-center gap-[8px] flex-wrap";
-const IMP_CREATE_LABEL = "text-[11px] text-muted shrink-0";
-const IMP_TYPE_BTNS = "flex gap-[3px]";
+const IMP_CREATE_FORM = "flex flex-col gap-1.5";
+const IMP_CREATE_ROW = "flex items-center gap-2 flex-wrap";
+const IMP_CREATE_LABEL = "text-11 text-muted shrink-0";
+const IMP_TYPE_BTNS = "flex gap-0.75";
 const IMP_TYPE_BTN =
-  "bg-[rgba(255,255,255,0.05)] border border-[rgba(48,54,61,0.6)] text-muted text-[11px] px-[10px] py-[3px] rounded-[4px] cursor-pointer";
+  "bg-white/5 border border-border/60 text-muted text-11 px-2.5 py-0.75 rounded-4 cursor-pointer";
 const IMP_TYPE_BTN_ACTIVE =
-  "bg-[rgba(56,139,253,0.2)] border border-accent text-accent text-[11px] px-[10px] py-[3px] rounded-[4px] cursor-pointer";
+  "bg-accent/20 border border-accent text-accent text-11 px-2.5 py-0.75 rounded-4 cursor-pointer";
 const IMP_NUM_INPUT =
-  "bg-[rgba(0,0,0,0.25)] border border-[rgba(48,54,61,0.8)] rounded-[4px] text-foreground text-[12px] px-[8px] py-[4px] outline-none w-[72px] focus:border-accent";
+  "bg-black/25 border border-border/80 rounded-4 text-foreground text-12 px-2 py-1 outline-none w-18 focus:border-accent";
 const IMP_NUM_INPUT_SM =
-  "bg-[rgba(0,0,0,0.25)] border border-[rgba(48,54,61,0.8)] rounded-[4px] text-foreground text-[12px] px-[8px] py-[4px] outline-none w-[48px] focus:border-accent";
-const IMP_PLAT_LABEL = "text-[12px] text-[#f0c040]";
+  "bg-black/25 border border-border/80 rounded-4 text-foreground text-12 px-2 py-1 outline-none w-12 focus:border-accent";
+const IMP_PLAT_LABEL = "text-12 text-ducat";
 const IMP_POST_BTN =
-  "bg-accent border-0 rounded-[5px] text-white text-[12px] font-semibold px-[16px] py-[5px] cursor-pointer transition-[opacity] duration-100 hover:opacity-[0.85] disabled:opacity-40 disabled:cursor-default";
-const IMP_CREATE_ERROR = "text-[11px] text-danger";
-const IMP_CREATE_SUCCESS = "text-[12px] font-semibold text-success";
+  "bg-accent border-0 rounded-5 text-white text-12 font-semibold px-4 py-1.25 cursor-pointer transition-[opacity] duration-100 hover:opacity-85 disabled:opacity-40 disabled:cursor-default";
+const IMP_CREATE_ERROR = "text-11 text-danger";
+const IMP_CREATE_SUCCESS = "text-12 font-semibold text-success";
 const IMP_LOGIN_HINT =
-  "px-[14px] py-[10px] text-[11px] text-muted text-center border-t border-t-[rgba(48,54,61,0.5)] bg-[rgba(0,0,0,0.12)]";
+  "px-3.5 py-2.5 text-11 text-muted text-center border-t border-t-border/50 bg-black/12";
 
 async function invokeWfm<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -398,7 +398,7 @@ export default function ItemMarketPopup({ urlName, displayName, imageName, onClo
               {lowestSell && <span className={IMP_COL_BEST}>Cheapest: {fmt(lowestSell)}p</span>}
             </div>
             {loadingO ? <div className={IMP_MSG}>Loading…</div> :
-             ordersError ? <div className={IMP_MSG + " !px-2.5 !py-2 !text-[11px] !text-danger"}>{ordersError}</div> :
+             ordersError ? <div className={IMP_MSG + " px-2.5! py-2! text-11! text-danger!"}>{ordersError}</div> :
              !orders?.sell.length ? <div className={IMP_MSG}>No sellers found</div> :
              orders.sell.map((o, i) => (
                <OrderRow key={i} o={o} type="sell" displayName={displayName}

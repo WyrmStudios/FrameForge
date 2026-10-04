@@ -1,11 +1,11 @@
 import type { ViewMode } from "../types/ui";
 import { VIEW_MODE_OPTIONS } from "../constants/ui";
 
-const VIEW_TOGGLE = "flex items-center gap-[2px] shrink-0";
+const VIEW_TOGGLE = "flex items-center gap-0.5 shrink-0";
 const VIEW_BTN =
-  "bg-transparent border border-transparent rounded-[4px] cursor-pointer text-muted px-[5px] py-[3px] flex items-center justify-center transition-[color,border-color,background] duration-120 leading-none";
-const VIEW_BTN_HOVER = "hover:text-foreground! hover:bg-[rgba(255,255,255,.06)]!";
-const VIEW_BTN_ON = "text-accent! border-[rgba(56,139,253,.4)]! bg-[rgba(56,139,253,.08)]!";
+  "bg-transparent border border-transparent rounded-4 cursor-pointer text-muted px-1.25 py-0.75 flex items-center justify-center transition-[color,border-color,background] duration-120 leading-none";
+const VIEW_BTN_HOVER = "hover:text-foreground! hover:bg-white/6!";
+const VIEW_BTN_ON = "text-accent! border-accent/40! bg-accent/8!";
 
 
 function ViewIcon({ mode }: { mode: ViewMode }) {

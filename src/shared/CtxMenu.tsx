@@ -39,7 +39,7 @@ export function useContextMenu() {
 }
 
 const MENU_CLASS =
-  "fixed z-[999] min-w-40 rounded-[8px] bg-surface shadow-[0_4px_16px_rgba(0,0,0,.5)] border";
+  "fixed z-999 min-w-40 rounded-8 bg-surface shadow-[0_4px_16px_rgba(0,0,0,.5)] border";
 
 const ITEM_CLASS =
   "block w-full cursor-default whitespace-nowrap border-none px-3.5 py-1.5 text-left text-foreground";
@@ -49,7 +49,7 @@ const SEP_CLASS = "h-px bg-border";
 export function CtxMenu({ state, onClose }: { state: CtxMenuState; onClose: () => void }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <div className={`${MENU_CLASS} ${hovered ? "border-[rgba(56,139,253,.5)]" : "border-border"}`}
+    <div className={`${MENU_CLASS} ${hovered ? "border-accent/50" : "border-border"}`}
          style={{ left: state.x, top: state.y }}
          onMouseDown={e => e.stopPropagation()}
          onMouseEnter={() => setHovered(true)}
@@ -69,7 +69,7 @@ export function CtxMenu({ state, onClose }: { state: CtxMenuState; onClose: () =
 function HoverItem({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <button className={`${ITEM_CLASS} ${hovered ? "bg-[rgba(56,139,253,.15)]" : "bg-transparent"}`}
+    <button className={`${ITEM_CLASS} ${hovered ? "bg-accent/15" : "bg-transparent"}`}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
             onClick={onClick}>

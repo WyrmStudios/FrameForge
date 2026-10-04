@@ -40,13 +40,13 @@ export default function ConsoleLogin({ onLogin }: Props) {
   };
 
   return (
-    <div className="mt-3 border-t border-white/6 border-b border-[rgba(48,54,61,.6)] px-5 pt-3 pb-3 last:border-b-0">
-      <div className="mb-2.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.07em] text-muted">
+    <div className="mt-3 border-t border-t-white/6 border-b border-b-border/60 px-5 pt-3 pb-3 last:border-b-0">
+      <div className="mb-2.5 flex items-center gap-2 text-10 font-bold uppercase tracking-0.07 text-muted">
         Console / Web Login
-        <span className="rounded-[4px] border border-[#ffb400]/30 bg-[#ffb400]/15 px-[5px] py-px text-[9px] font-bold tracking-[.06em] text-[#ffb400]">EXPERIMENTAL</span>
+        <span className="rounded-4 border border-experimental/30 bg-experimental/15 px-1.25 py-px text-9 font-bold tracking-0.06 text-experimental">EXPERIMENTAL</span>
       </div>
 
-      <div className="mb-2.5 text-[11px] leading-[1.6] text-muted">
+      <div className="mb-2.5 text-11 leading-1.6 text-muted">
         Opens warframe.com in a secure browser window. Log in with any method —
         PlayStation, Xbox, Nintendo, or email/password. FrameForge intercepts
         the session automatically and closes the window.
@@ -63,7 +63,7 @@ export default function ConsoleLogin({ onLogin }: Props) {
 
       {status === "waiting" && (
         <div className="flex items-center gap-2.5">
-          <span className="text-[12px] text-muted">Waiting for login…</span>
+          <span className="text-12 text-muted">Waiting for login…</span>
           <SecondaryButton onClick={cancel}>
             Cancel
           </SecondaryButton>
@@ -71,7 +71,7 @@ export default function ConsoleLogin({ onLogin }: Props) {
       )}
 
       {msg && (
-        <div className={`mt-2 text-[11px] ${status === "error" ? "text-red" : "text-green"}`}>
+        <div className={`mt-2 text-11 ${status === "error" ? "text-red" : "text-green"}`}>
           {msg}
         </div>
       )}

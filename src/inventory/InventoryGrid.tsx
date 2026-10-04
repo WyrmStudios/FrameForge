@@ -21,81 +21,81 @@ const ITEM_GRID_CLASS: Record<ViewMode, string> = {
 };
 
 const INV_SKELETON =
-  "min-h-[120px] bg-[linear-gradient(90deg,var(--surface)_25%,rgba(255,255,255,.04)_50%,var(--surface)_75%)] bg-[length:200%_100%] animate-[skeleton-shimmer_1.5s_ease-in-out_infinite]";
+  "min-h-30 bg-[linear-gradient(90deg,var(--surface)_25%,rgba(255,255,255,.04)_50%,var(--surface)_75%)] bg-[length:200%_100%] animate-[skeleton-shimmer_1.5s_ease-in-out_infinite]";
 
-const EMPTY_MSG = "px-6 py-10 text-center leading-[1.6] text-muted";
+const EMPTY_MSG = "px-6 py-10 text-center leading-1.6 text-muted";
 
 const INV_CARD_BASE =
-  "relative flex w-full min-w-0 cursor-default flex-col items-center gap-[5px] self-stretch rounded-[9px] border border-border bg-surface px-2.5 pt-2.5 pb-3 transition-[border-color] duration-[120ms] hover:border-[rgba(56,139,253,0.5)]";
+  "relative flex w-full min-w-0 cursor-default flex-col items-center gap-1.25 self-stretch rounded-9 border border-border bg-surface px-2.5 pt-2.5 pb-3 transition-[border-color] duration-120 hover:border-accent/50";
 const INV_CARD_BASE_EM =
-  "relative flex w-full min-w-0 cursor-default flex-col gap-[.385em] self-stretch rounded-[9px] border border-border bg-surface text-[length:var(--inventory-card-base-size,13px)] transition-[border-color] duration-[120ms] hover:border-[rgba(56,139,253,0.5)]";
+  "relative flex w-full min-w-0 cursor-default flex-col gap-[.385em] self-stretch rounded-9 border border-border bg-surface text-[length:var(--inventory-card-base-size,13px)] transition-[border-color] duration-120 hover:border-accent/50";
 const INV_CARD_PAD_EM = "px-[.769em] pt-[.769em] pb-[.923em]";
 const INV_CARD_PAD_EM_TEXT = "px-[.769em] pt-[3em] pb-[.923em]";
 const INV_CARD_PAD_MOD = "px-[.923em] pt-[2.154em] pb-[.923em]";
 const INV_CARD_PAD_MOD_TEXT = "px-[.923em] pt-[3em] pb-[.923em]";
 const INV_ICON_CELL =
-  "relative flex min-w-0 cursor-pointer flex-col items-center justify-center gap-[5px] self-stretch h-[76px] w-[76px] rounded-[8px] border border-border bg-surface p-1.5 transition-[border-color] duration-[120ms] hover:border-[rgba(56,139,253,0.5)]";
+  "relative flex min-w-0 cursor-pointer flex-col items-center justify-center gap-1.25 self-stretch h-19 w-19 rounded-8 border border-border bg-surface p-1.5 transition-[border-color] duration-120 hover:border-accent/50";
 const INV_FAV_STAR =
-  "absolute left-[.538em] top-[.462em] z-[2] cursor-pointer border-0 bg-transparent p-0 text-[1.077em] leading-none transition-colors duration-100";
-const INV_FAV_STAR_ON = "text-[#f0c040]";
-const INV_FAV_STAR_OFF = "text-[rgba(255,255,255,0.25)] hover:text-[rgba(240,192,64,0.8)]";
+  "absolute left-[.538em] top-[.462em] z-2 cursor-pointer border-0 bg-transparent p-0 text-[1.077em] leading-none transition-colors duration-100";
+const INV_FAV_STAR_ON = "text-ducat";
+const INV_FAV_STAR_OFF = "text-white/25 hover:text-ducat/80";
 const INV_MASTERY_ROW = "flex h-[1.538em] w-full items-center justify-center";
-const INV_MASTERY_STAR = "text-[1.077em] leading-none text-[#f0c040]";
+const INV_MASTERY_STAR = "text-[1.077em] leading-none text-ducat";
 const INV_MASTERY_RANK =
-  "rounded-[3px] bg-[rgba(255,255,255,0.06)] px-[.462em] py-[.154em] text-[.846em] font-semibold text-muted";
+  "rounded-3 bg-white/6 px-[.462em] py-[.154em] text-[.846em] font-semibold text-muted";
 const INV_CARD_IMG_WRAP =
   "relative flex h-[var(--inventory-card-image-size,56px)] w-[var(--inventory-card-image-size,56px)] shrink-0 items-center justify-center";
 const INV_FOUNDRY_ICON =
   "absolute right-[-.538em] top-[-.385em] text-[1em] drop-shadow-[0_0_3px_rgba(0,0,0,0.9)]";
 const INV_CARD_NAME =
-  "line-clamp-2 w-full overflow-hidden text-center text-[1em] font-medium leading-[1.35]";
+  "line-clamp-2 w-full overflow-hidden text-center text-[1em] font-medium leading-1.35";
 const INV_CARD_CAT =
-  "mt-[-1px] w-full overflow-hidden text-ellipsis whitespace-nowrap text-center text-[.769em] font-semibold uppercase tracking-[0.04em] text-[rgba(139,148,158,0.6)]";
+  "-mt-0.25 w-full overflow-hidden text-ellipsis whitespace-nowrap text-center text-[.769em] font-semibold uppercase tracking-0.04 text-muted/60";
 const INV_CARD_NAME_MOD =
-  "line-clamp-2 w-full overflow-hidden text-left text-[1em] font-medium leading-[1.35]";
+  "line-clamp-2 w-full overflow-hidden text-left text-[1em] font-medium leading-1.35";
 const INV_CARD_CAT_MOD =
-  "mt-[-1px] w-full overflow-hidden text-ellipsis whitespace-nowrap text-left text-[.769em] font-semibold uppercase tracking-[0.04em] text-[rgba(139,148,158,0.6)]";
+  "-mt-0.25 w-full overflow-hidden text-ellipsis whitespace-nowrap text-left text-[.769em] font-semibold uppercase tracking-0.04 text-muted/60";
 const INV_CARD_IMG_WRAP_MOD =
   "inv-card-img-wrap relative flex h-[var(--inventory-mod-image-size,48px)] w-[var(--inventory-mod-image-size,48px)] shrink-0 items-center justify-center";
 const INV_MOD_TOTAL =
   "inv-card-qty mod-total flex w-full items-center justify-between gap-[.313em] border-t border-border mt-[.462em] pt-[.385em] text-[1em] font-bold tabular-nums text-foreground";
 const INV_ITEM_UPDATED = "item-updated text-[.846em] text-muted whitespace-nowrap";
 const INV_CARD_SIDE =
-  "absolute top-[.462em] right-[.538em] z-[2] flex flex-col items-end gap-[.308em]";
+  "absolute top-[.462em] right-[.538em] z-2 flex flex-col items-end gap-[.308em]";
 const INV_CARD_SIDE_ROW =
-  "absolute top-[.462em] right-[.538em] z-[2] flex flex-row items-center gap-[.308em]";
+  "absolute top-[.462em] right-[.538em] z-2 flex flex-row items-center gap-[.308em]";
 const INV_WIKI_BTN =
-  "cursor-pointer rounded-[4px] border border-[rgba(56,139,253,0.4)] bg-[rgba(0,0,0,0.4)] px-[.6em] py-[.3em] text-[.769em] font-bold leading-[1.3] text-[#6ea8fe] transition-[background] duration-100 hover:bg-[rgba(56,139,253,0.25)] hover:text-[#a8c8ff]";
+  "cursor-pointer rounded-4 border border-accent/40 bg-black/40 px-[.6em] py-[.3em] text-[.769em] font-bold leading-1.3 text-wiki-link transition-[background] duration-100 hover:bg-accent/25 hover:text-wiki-link-hover";
 const INV_ROW_ICON =
   "inv-row-icon relative flex h-[var(--inventory-list-icon-wrap-size,30px)] w-[var(--inventory-list-icon-wrap-size,30px)] shrink-0 items-center";
 const INV_ROW_NAME =
   "inv-row-name min-w-0 flex-1 text-[1em] font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
 const INV_ROW_CAT =
-  "inv-row-cat w-[10em] shrink-0 text-[.846em] text-muted text-right uppercase tracking-[.03em] max-[900px]:hidden";
+  "inv-row-cat w-[10em] shrink-0 text-[.846em] text-muted text-right uppercase tracking-0.03 max-[900px]:hidden";
 const INV_ROW_QTY =
-  "inv-row-qty flex w-[5em] shrink-0 items-center justify-end gap-[4px] text-right text-[1.077em] font-bold text-foreground max-[900px]:w-[4em]";
+  "inv-row-qty flex w-[5em] shrink-0 items-center justify-end gap-1 text-right text-[1.077em] font-bold text-foreground max-[900px]:w-[4em]";
 const INV_ROW_VALUES =
-  "inv-row-values flex shrink-0 items-center justify-start gap-[4px] w-[7.385em] max-[900px]:w-auto";
-const INV_FOUNDRY_ROW = "inv-foundry-icon-row absolute right-[-6px] top-[-4px] text-[9px]";
+  "inv-row-values flex shrink-0 items-center justify-start gap-1 w-[7.385em] max-[900px]:w-auto";
+const INV_FOUNDRY_ROW = "inv-foundry-icon-row absolute -right-1.5 -top-1 text-9";
 
 function invRowFavClass(view: ViewMode, isFavorite: boolean): string {
-  const size = view === "list" ? "text-[14px]" : "text-[11px]";
+  const size = view === "list" ? "text-14" : "text-11";
   const color = isFavorite
-    ? "text-[#f0c040]"
-    : "text-[rgba(255,255,255,0.25)] hover:text-[rgba(240,192,64,0.8)]";
+    ? "text-ducat"
+    : "text-white/25 hover:text-ducat/80";
   return `inv-fav-star-row shrink-0 cursor-pointer border-0 bg-transparent p-0 leading-none transition-colors duration-100 ${size} ${color}`;
 }
 
 function invCardRowClass(view: ViewMode): string {
   return view === "list"
-    ? "relative flex w-full min-w-0 flex-row items-center gap-[12px] px-[16px] py-[.615em] min-h-[3.385em] self-stretch border border-border border-b-[rgba(48,54,61,0.35)] bg-surface cursor-default transition-[border-color] duration-[120ms] hover:border-[rgba(56,139,253,0.5)] max-[900px]:gap-[6px] max-[900px]:px-[8px]"
-    : "relative flex w-full min-w-0 flex-row items-center gap-[8px] px-[12px] py-[.308em] min-h-[2.308em] self-stretch border border-border border-b-[rgba(48,54,61,0.35)] bg-surface cursor-default transition-[border-color] duration-[120ms] hover:border-[rgba(56,139,253,0.5)] max-[900px]:gap-[6px] max-[900px]:px-[8px]";
+    ? "relative flex w-full min-w-0 flex-row items-center gap-3 px-4 py-[.615em] min-h-[3.385em] self-stretch border border-border border-b-border/35 bg-surface cursor-default transition-[border-color] duration-120 hover:border-accent/50 max-[900px]:gap-1.5 max-[900px]:px-2"
+    : "relative flex w-full min-w-0 flex-row items-center gap-2 px-3 py-[.308em] min-h-[2.308em] self-stretch border border-border border-b-border/35 bg-surface cursor-default transition-[border-color] duration-120 hover:border-accent/50 max-[900px]:gap-1.5 max-[900px]:px-2";
 }
 
 function invWikiRowClass(view: ViewMode): string {
   return view === "list"
-    ? "inv-wiki-row shrink-0 cursor-pointer border border-[rgba(56,139,253,0.3)] bg-transparent px-[7px] py-[4px] text-[.769em] font-bold leading-[1.3] text-[#6ea8fe] transition-all duration-100 hover:bg-[rgba(56,139,253,0.2)] hover:text-[#a8c8ff]"
-    : "inv-wiki-row shrink-0 cursor-pointer border border-[rgba(56,139,253,0.3)] bg-transparent px-[5px] py-[2px] text-[.769em] font-bold leading-[1.3] text-[#6ea8fe] transition-all duration-100 hover:bg-[rgba(56,139,253,0.2)] hover:text-[#a8c8ff]";
+    ? "inv-wiki-row shrink-0 cursor-pointer border border-accent/30 bg-transparent px-1.75 py-1 text-[.769em] font-bold leading-1.3 text-wiki-link transition-all duration-100 hover:bg-accent/20 hover:text-wiki-link-hover"
+    : "inv-wiki-row shrink-0 cursor-pointer border border-accent/30 bg-transparent px-1.25 py-0.5 text-[.769em] font-bold leading-1.3 text-wiki-link transition-all duration-100 hover:bg-accent/20 hover:text-wiki-link-hover";
 }
 
 function invCardQtyClass(isZero: boolean): string {
@@ -104,12 +104,12 @@ function invCardQtyClass(isZero: boolean): string {
 
 function invItemDeltaClass(view: ViewMode, d: number): string {
   const size = view === "list" || view === "list-compact"
-    ? "text-[.857em] px-[6px] py-[1px]"
+    ? "text-[.857em] px-1.5 py-0.25"
     : "text-[.75em] px-[.375em] py-[.063em]";
   const tone = d > 0
-    ? "text-success bg-[rgba(63,185,80,0.12)]"
-    : "text-danger bg-[rgba(248,81,73,0.12)]";
-  return `item-delta ${deltaClass(d)} shrink-0 rounded-[4px] font-semibold ${size} ${tone}`;
+    ? "text-success bg-success/12"
+    : "text-danger bg-danger/12";
+  return `item-delta ${deltaClass(d)} shrink-0 rounded-4 font-semibold ${size} ${tone}`;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -161,9 +161,9 @@ function valueTitle(plat: number | null, ducats: number | null | undefined): str
 
 function PriceChip({ kind, value }: { kind: "plat" | "ducat"; value: number }) {
   return kind === "plat" ? (
-    <span className="inline-flex items-center gap-[2px] rounded-[4px] bg-[rgba(179,157,219,.10)] px-[.091em] py-[.455em] text-[.846em] font-bold leading-[1.4] text-[#b39ddb] tabular-nums" title={`Market: ${fmt(value)} plat`}><PlatIcon />{fmt(value)}</span>
+    <span className="inline-flex items-center gap-0.5 rounded-4 bg-price-platinum/10 px-[.091em] py-[.455em] text-[.846em] font-bold leading-1.4 text-price-platinum tabular-nums" title={`Market: ${fmt(value)} plat`}><PlatIcon />{fmt(value)}</span>
   ) : (
-    <span className="inline-flex items-center gap-[2px] rounded-[4px] bg-[rgba(240,192,64,.10)] px-[.091em] py-[.455em] text-[.846em] font-bold leading-[1.4] text-[#f0c040] tabular-nums" title={`Ducats: ${fmt(value)}`}><DucatIcon />{fmt(value)}</span>
+    <span className="inline-flex items-center gap-0.5 rounded-4 bg-ducat/10 px-[.091em] py-[.455em] text-[.846em] font-bold leading-1.4 text-ducat tabular-nums" title={`Ducats: ${fmt(value)}`}><DucatIcon />{fmt(value)}</span>
   );
 }
 
@@ -233,7 +233,7 @@ const InvModCard = memo(function InvModCard({ unique_name, name, category, image
   const hasPositive = rankDeltas != null && rankDeltas.some(d => d.delta > 0);
   const hasNegative = rankDeltas != null && rankDeltas.some(d => d.delta < 0);
   const mixedChange = isRecent && hasPositive && hasNegative;
-  const baseClass = `inv-card${isRecent ? (mixedChange ? " inv-card-mixed border-l-2 border-l-[#e0973e] bg-[rgba(224,151,62,0.04)]!" : (recentDelta != null && recentDelta > 0 ? " inv-card-gained border-l-2 border-l-success bg-[rgba(63,185,80,0.04)]!" : " inv-card-lost border-l-2 border-l-danger bg-[rgba(248,81,73,0.04)]!")) : ""}`;
+  const baseClass = `inv-card${isRecent ? (mixedChange ? " inv-card-mixed border-l-2 border-l-inv-mixed bg-inv-mixed/4!" : (recentDelta != null && recentDelta > 0 ? " inv-card-gained border-l-2 border-l-success bg-success/4!" : " inv-card-lost border-l-2 border-l-danger bg-danger/4!")) : ""}`;
 
   if (view === "icons") {
     return (
@@ -282,11 +282,11 @@ const InvModCard = memo(function InvModCard({ unique_name, name, category, image
           const rankDelta = rankDeltas?.find(rd => rd.rank === r.rank);
           return (
             <div key={r.rank} className={`mod-rank-row contents${r.count === 0 ? " mod-rank-zero" : ""}`}>
-              <span className={r.count === 0 ? "mod-rank-label text-[.846em] font-semibold tabular-nums text-[rgba(139,148,158,0.3)]" : "mod-rank-label text-[.846em] font-semibold tabular-nums text-muted"}>R{r.rank}</span>
+              <span className={r.count === 0 ? "mod-rank-label text-[.846em] font-semibold tabular-nums text-muted/30" : "mod-rank-label text-[.846em] font-semibold tabular-nums text-muted"}>R{r.rank}</span>
               <span className="mod-rank-value flex items-center justify-end gap-[.308em]">
-                <span className={r.count === 0 ? "mod-rank-count text-[.846em] font-bold tabular-nums text-right text-[rgba(139,148,158,0.3)]" : "mod-rank-count text-[.846em] font-bold tabular-nums text-right text-foreground"}>{r.count}</span>
+                <span className={r.count === 0 ? "mod-rank-count text-[.846em] font-bold tabular-nums text-right text-muted/30" : "mod-rank-count text-[.846em] font-bold tabular-nums text-right text-foreground"}>{r.count}</span>
                 {isRecent && rankDelta && (
-                  <span className={`mod-rank-delta ${rankDelta.delta > 0 ? "text-success bg-[rgba(63,185,80,0.12)]" : "text-danger bg-[rgba(248,81,73,0.12)]"} text-[.846em] font-semibold px-[.231em] rounded-[2px]`}>
+                  <span className={`mod-rank-delta ${rankDelta.delta > 0 ? "text-success bg-success/12" : "text-danger bg-danger/12"} text-[.846em] font-semibold px-[.231em] rounded-2`}>
                     {rankDelta.delta > 0 ? `+${rankDelta.delta}` : rankDelta.delta}
                   </span>
                 )}
@@ -342,7 +342,7 @@ const InvCard = memo(function InvCard({
   const isMastered = masteryRank != null && masteryRank >= 30;
   const showRank = masteryRank != null && masteryRank > 0;
   const recentLabel = secAgo !== null ? (Math.floor(secAgo / 60) === 0 ? "· now" : `· ${Math.floor(secAgo / 60)}m`) : null;
-  const baseClass = `inv-card${isZero ? " inv-card-zero opacity-[0.35]" : ""}${isRecent ? (recentDelta != null && recentDelta > 0 ? " inv-card-gained border-l-2 border-l-success bg-[rgba(63,185,80,0.04)]!" : " inv-card-lost border-l-2 border-l-danger bg-[rgba(248,81,73,0.04)]!") : ""}`;
+  const baseClass = `inv-card${isZero ? " inv-card-zero opacity-35" : ""}${isRecent ? (recentDelta != null && recentDelta > 0 ? " inv-card-gained border-l-2 border-l-success bg-success/4!" : " inv-card-lost border-l-2 border-l-danger bg-danger/4!") : ""}`;
 
   if (view === "icons") {
     return (
@@ -467,7 +467,7 @@ export default memo(function InventoryGrid({
           <div key={i} className={`inv-card ${INV_CARD_BASE} ${INV_SKELETON}`} />
         ))
       ) : items.length === 0 ? (
-        <div className={`${EMPTY_MSG} col-[1/-1]`}>
+        <div className={`${EMPTY_MSG} col-span-full`}>
           {monitoring
             ? "No items found. Complete a mission or visit a relay to sync inventory."
             : "Start the monitor to begin tracking your inventory."}

@@ -14,7 +14,7 @@ type CurrentFiltersByModule = {
 };
 
 const POPUP_CONTROL_CLASS = "cursor-pointer rounded border border-border bg-white/4 text-muted [font:inherit] hover:border-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
-const POPUP_ICON_CLASS = `${POPUP_CONTROL_CLASS} w-[23px] shrink-0 p-[3px] text-xs leading-none disabled:cursor-default disabled:opacity-45`;
+const POPUP_ICON_CLASS = `${POPUP_CONTROL_CLASS} w-5.75 shrink-0 p-0.75 text-xs leading-none disabled:cursor-default disabled:opacity-45`;
 
 function presetFilters<M extends FilterPresetModule>(module: M, filters: CurrentFiltersByModule[M]): FilterPresetFiltersByModule[M] {
   if (module === "foundry") {
@@ -298,16 +298,16 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
   const stopDrag = (event: ReactPointerEvent<HTMLElement>) => event.stopPropagation();
 
   const renderPresetRow = (preset: ModulePreset<M>) => <div
-    className="flex items-center gap-1 p-[3px]"
+    className="flex items-center gap-1 p-0.75"
     key={preset.id}
     ref={element => {
       if (element) presetRowRefs.current.set(preset.id, element);
       else presetRowRefs.current.delete(preset.id);
     }}
   >
-    <span className="inline-block w-3 touch-none select-none whitespace-pre-wrap font-mono text-[13px]/[9px] font-bold tracking-[-2px] text-muted cursor-grab active:cursor-grabbing" onPointerDown={event => startPresetDrag(event, preset)} aria-hidden="true">::</span>
+    <span className="inline-block w-3 touch-none select-none whitespace-pre-wrap font-mono text-13/[9px] font-bold tracking-[-2px] text-muted cursor-grab active:cursor-grabbing" onPointerDown={event => startPresetDrag(event, preset)} aria-hidden="true">::</span>
     {editingId === preset.id ? <form className="flex min-w-0 flex-1 items-center gap-1" onPointerDown={stopDrag} onSubmit={event => { event.preventDefault(); saveName(); }}>
-      <input className="min-w-0 flex-1 rounded-xl border border-accent bg-background px-[5px] py-[3px] text-foreground [font:inherit] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" ref={inputRef} value={name} onChange={event => setName(event.target.value)} aria-label="Preset name" />
+      <input className="min-w-0 flex-1 rounded-xl border border-accent bg-background px-1.25 py-0.75 text-foreground [font:inherit] focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" ref={inputRef} value={name} onChange={event => setName(event.target.value)} aria-label="Preset name" />
       <button className={POPUP_ICON_CLASS} type="submit" disabled={!name.trim()} aria-label="Save preset name" title="Save">✓</button>
       <button className={POPUP_ICON_CLASS} type="button" onClick={() => { setEditingId(null); setName(""); }} aria-label="Cancel rename" title="Cancel">×</button>
     </form> : <FilterChip className="min-w-0 flex-1 overflow-hidden text-left text-ellipsis" onPointerDown={stopDrag} onClick={() => apply(preset)} title="Apply preset">{preset.name}</FilterChip>}
@@ -316,58 +316,58 @@ export default function FilterPresets<M extends FilterPresetModule>({ module, fi
     <button className={`${POPUP_ICON_CLASS} hover:border-red hover:text-red`} onPointerDown={stopDrag} onClick={() => setDeleteId(preset.id)} aria-label={`Delete ${preset.name}`} title="Delete">×</button>
   </div>;
 
-  const manager = <section ref={popupRef} className={variant === "toolbar" ? "fixed z-[700] flex w-[310px] max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-[0_8px_28px_rgba(0,0,0,.7)]" : "settings-filter-presets flex min-h-0 flex-1 flex-col"} style={variant === "toolbar" ? { left: position.left, top: position.top, maxHeight: position.maxHeight } : undefined} role="dialog" aria-label={`${module} filter presets`}>
-        <header className="flex items-center gap-2 border-b border-border px-2.5 py-[9px] text-xs">
+  const manager = <section ref={popupRef} className={variant === "toolbar" ? "fixed z-700 flex w-77.5 max-w-[calc(100vw-16px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-[0_8px_28px_rgba(0,0,0,.7)]" : "settings-filter-presets flex min-h-0 flex-1 flex-col"} style={variant === "toolbar" ? { left: position.left, top: position.top, maxHeight: position.maxHeight } : undefined} role="dialog" aria-label={`${module} filter presets`}>
+        <header className="flex items-center gap-2 border-b border-border px-2.5 py-2.25 text-xs">
           <strong className="flex-1">Filter presets</strong>
           {variant === "toolbar" && <>
-            <button className={`${POPUP_CONTROL_CLASS} h-[23px] w-[23px] text-base leading-none`} onClick={() => { close(); onOpenSettings?.(module); }} aria-label="Manage presets in Settings" title="Manage presets">⚙</button>
-            <button ref={addButtonRef} className={`${POPUP_CONTROL_CLASS} h-[23px] w-[23px] text-base leading-none`} onClick={() => { setSaving(true); setEditingId(null); setName(""); }} aria-label="Save current filters">+</button>
+            <button className={`${POPUP_CONTROL_CLASS} h-5.75 w-5.75 text-base leading-none`} onClick={() => { close(); onOpenSettings?.(module); }} aria-label="Manage presets in Settings" title="Manage presets">⚙</button>
+            <button ref={addButtonRef} className={`${POPUP_CONTROL_CLASS} h-5.75 w-5.75 text-base leading-none`} onClick={() => { setSaving(true); setEditingId(null); setName(""); }} aria-label="Save current filters">+</button>
           </>}
         </header>
-        {saving && <form className="flex gap-[5px] border-b border-border px-2.5 py-2" onPointerDown={stopDrag} onSubmit={event => { event.preventDefault(); saveName(); }}>
-          <input className="min-w-0 flex-1 rounded border border-border bg-background px-[6px] py-1 text-foreground [font:inherit] focus:border-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" ref={inputRef} value={name} onChange={event => setName(event.target.value)} placeholder="Preset name" aria-label="Preset name" />
-          <button className={`${POPUP_CONTROL_CLASS} px-[6px] py-1 text-[11px] disabled:cursor-default disabled:opacity-50`} type="submit" disabled={!name.trim()}>Save</button>
-          <button className={`${POPUP_CONTROL_CLASS} px-[6px] py-1 text-[11px]`} type="button" onClick={() => { setSaving(false); setEditingId(null); setName(""); }}>Cancel</button>
+        {saving && <form className="flex gap-1.25 border-b border-border px-2.5 py-2" onPointerDown={stopDrag} onSubmit={event => { event.preventDefault(); saveName(); }}>
+          <input className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-1 text-foreground [font:inherit] focus:border-accent focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" ref={inputRef} value={name} onChange={event => setName(event.target.value)} placeholder="Preset name" aria-label="Preset name" />
+          <button className={`${POPUP_CONTROL_CLASS} px-1.5 py-1 text-11 disabled:cursor-default disabled:opacity-50`} type="submit" disabled={!name.trim()}>Save</button>
+          <button className={`${POPUP_CONTROL_CLASS} px-1.5 py-1 text-11`} type="button" onClick={() => { setSaving(false); setEditingId(null); setName(""); }}>Cancel</button>
         </form>}
         <div className="min-h-0 flex-1 overflow-y-auto p-1">
-          {modulePresets.length === 0 && <p className="px-[6px] py-2 text-[11px] text-muted">No saved presets.</p>}
-          <section className="py-[3px]" ref={element => {
+          {modulePresets.length === 0 && <p className="px-1.5 py-2 text-11 text-muted">No saved presets.</p>}
+          <section className="py-0.75" ref={element => {
             if (element) sectionRefs.current.set(false, element);
             else sectionRefs.current.delete(false);
           }} aria-label="Saved presets">
-            <h2 className="px-[6px] py-[3px] text-[10px] font-bold uppercase tracking-[.06em] text-muted">Saved</h2>
+            <h2 className="px-1.5 py-0.75 text-10 font-bold uppercase tracking-0.06 text-muted">Saved</h2>
             <div className="flex flex-col">
               {unpinnedPresets.filter(preset => !drag?.started || drag.id !== preset.id).flatMap((preset, index) => <Fragment key={preset.id}>
-                {drag?.started && !drag.targetPinned && drag.targetIndex === index && <div className="mx-[3px] my-px h-0.5 rounded-[1px] bg-accent" aria-hidden="true" />}
+                {drag?.started && !drag.targetPinned && drag.targetIndex === index && <div className="mx-0.75 my-px h-0.5 rounded-1 bg-accent" aria-hidden="true" />}
                 {renderPresetRow(preset)}
               </Fragment>)}
-              {drag?.started && !drag.targetPinned && drag.targetIndex === unpinnedPresets.filter(preset => preset.id !== drag.id).length && <div className="mx-[3px] my-px h-0.5 rounded-[1px] bg-accent" aria-hidden="true" />}
+              {drag?.started && !drag.targetPinned && drag.targetIndex === unpinnedPresets.filter(preset => preset.id !== drag.id).length && <div className="mx-0.75 my-px h-0.5 rounded-1 bg-accent" aria-hidden="true" />}
             </div>
           </section>
-          <section className="py-[3px]" ref={element => {
+          <section className="py-0.75" ref={element => {
             if (element) sectionRefs.current.set(true, element);
             else sectionRefs.current.delete(true);
           }} aria-label="Pinned presets">
-            <h2 className="px-[6px] py-[3px] text-[10px] font-bold uppercase tracking-[.06em] text-muted">Pinned</h2>
+            <h2 className="px-1.5 py-0.75 text-10 font-bold uppercase tracking-0.06 text-muted">Pinned</h2>
             <div className="flex flex-col">
               {pinnedPresets.filter(preset => !drag?.started || drag.id !== preset.id).flatMap((preset, index) => <Fragment key={preset.id}>
-                {drag?.started && drag.targetPinned && drag.targetIndex === index && <div className="mx-[3px] my-px h-0.5 rounded-[1px] bg-accent" aria-hidden="true" />}
+                {drag?.started && drag.targetPinned && drag.targetIndex === index && <div className="mx-0.75 my-px h-0.5 rounded-1 bg-accent" aria-hidden="true" />}
                 {renderPresetRow(preset)}
               </Fragment>)}
-              {drag?.started && drag.targetPinned && drag.targetIndex === pinnedPresets.filter(preset => preset.id !== drag.id).length && <div className="mx-[3px] my-px h-0.5 rounded-[1px] bg-accent" aria-hidden="true" />}
+              {drag?.started && drag.targetPinned && drag.targetIndex === pinnedPresets.filter(preset => preset.id !== drag.id).length && <div className="mx-0.75 my-px h-0.5 rounded-1 bg-accent" aria-hidden="true" />}
             </div>
           </section>
         </div>
-        {deleteId && <div className="flex items-center gap-[5px] border-t border-border px-2.5 py-2 text-[11px]" role="alert" onPointerDown={stopDrag}>
+        {deleteId && <div className="flex items-center gap-1.25 border-t border-border px-2.5 py-2 text-11" role="alert" onPointerDown={stopDrag}>
           <span className="flex-1">Delete this preset?</span>
-          <button className={`${POPUP_CONTROL_CLASS} border-[rgba(248,81,73,.55)] px-[6px] py-1 text-[11px] text-red hover:border-red hover:text-red`} onClick={() => deletePreset(deleteId)}>Delete</button>
-          <button className={`${POPUP_CONTROL_CLASS} px-[6px] py-1 text-[11px]`} onClick={() => setDeleteId(null)}>Cancel</button>
+          <button className={`${POPUP_CONTROL_CLASS} border-danger/55 px-1.5 py-1 text-11 text-red hover:border-red hover:text-red`} onClick={() => deletePreset(deleteId)}>Delete</button>
+          <button className={`${POPUP_CONTROL_CLASS} px-1.5 py-1 text-11`} onClick={() => setDeleteId(null)}>Cancel</button>
         </div>}
       </section>;
 
   if (variant === "settings") return manager;
   return <>
-    {pinnedPresets.map(preset => <FilterChip key={preset.id} className="max-w-[150px] overflow-hidden text-ellipsis" active={isPresetActive(preset)} onClick={() => apply(preset, true)}>{preset.name}</FilterChip>)}
+    {pinnedPresets.map(preset => <FilterChip key={preset.id} className="max-w-37.5 overflow-hidden text-ellipsis" active={isPresetActive(preset)} onClick={() => apply(preset, true)}>{preset.name}</FilterChip>)}
     <FilterChip ref={triggerRef} className="inventory-preset-custom" active={open} onClick={() => open ? close() : setOpen(true)} aria-expanded={open} aria-haspopup="dialog">Custom</FilterChip>
     <FilterChip reset onClick={clearFilters} disabled={!canClearFilters}>{filtersBeforeClear ? "Restore filters" : "Clear filters"}</FilterChip>
     {open && createPortal(manager, document.body)}

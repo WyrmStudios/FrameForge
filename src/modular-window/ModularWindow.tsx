@@ -7,10 +7,10 @@ import { getTimerInfo, fmtMs, matchesWatch } from "../TimerHelper";
 import type { FissureWatch } from "../types/settings";
 import type { CatalogItem, InventoryItem, RecipeComponent, RecipeComponentStatus } from "../types/items";
 
-const TRACKING_TOGGLE = "flex gap-[2px]";
+const TRACKING_TOGGLE = "flex gap-0.5";
 const TRACKING_TOGGLE_BTN =
-  "px-[7px] py-[2px] rounded-[4px] border border-border bg-transparent text-muted cursor-pointer text-[10px] transition-all duration-150 hover:border-accent! hover:text-accent!";
-const TRACKING_TOGGLE_ON = "border-accent! text-accent! bg-[rgba(56,139,253,.1)]!";
+  "px-1.75 py-0.5 rounded-4 border border-border bg-transparent text-muted cursor-pointer text-10 transition-all duration-150 hover:border-accent! hover:text-accent!";
+const TRACKING_TOGGLE_ON = "border-accent! text-accent! bg-accent/10!";
 import type { MatchedFissure } from "../types/worldstate";
 import { useWorldState } from "../worldstate";
 
@@ -21,76 +21,76 @@ const MW_WINDOW =
 const MW_WINDOW_DOCKED =
   "max-w-[min(500px,max(160px,calc(100vw_-_582px)))]";
 const MW_RESIZE =
-  "absolute z-[2] top-0 bottom-0 left-0 w-[8px] cursor-col-resize bg-transparent transition-[background] duration-150 hover:bg-[rgba(56,139,253,0.35)]";
+  "absolute z-2 top-0 bottom-0 left-0 w-2 cursor-col-resize bg-transparent transition-[background] duration-150 hover:bg-accent/35";
 const MW_INNER =
   "flex-1 flex flex-col overflow-y-auto overflow-x-hidden min-h-0 min-w-0";
 const MW_HEADER =
-  "flex items-center px-[12px] pt-[8px] pb-[6px] border-b border-b-[var(--border)] shrink-0";
+  "flex items-center px-3 pt-2 pb-1.5 border-b border-b-[var(--border)] shrink-0";
 const MW_TITLE =
-  "text-[11px] font-bold text-muted uppercase tracking-[0.05em] flex-1";
+  "text-11 font-bold text-muted uppercase tracking-wider flex-1";
 
 const MW_SECTION_WRAP = "flex flex-col shrink-0";
 const MW_SECTION_HEADER =
-  "flex items-center gap-[5px] pt-[5px] pb-[4px] pr-[8px] pl-[10px] shrink-0 select-none";
+  "flex items-center gap-1.25 pt-1.25 pb-1 pr-2 pl-2.5 shrink-0 select-none";
 const MW_SECTION_LABEL =
-  "text-[10px] font-bold text-muted uppercase tracking-[0.04em] flex-1";
-const MW_SECTION_ARROWS = "flex gap-[1px] shrink-0";
+  "text-10 font-bold text-muted uppercase tracking-0.04 flex-1";
+const MW_SECTION_ARROWS = "flex gap-0.25 shrink-0";
 const MW_ARROW_BTN =
-  "bg-transparent border-0 cursor-pointer text-muted px-[4px] py-[3px] flex items-center justify-center rounded-[3px] transition-[background,color] duration-100 leading-none enabled:hover:bg-[rgba(255,255,255,0.1)] enabled:hover:text-foreground disabled:opacity-20 disabled:cursor-default";
+  "bg-transparent border-0 cursor-pointer text-muted px-1 py-0.75 flex items-center justify-center rounded-3 transition-[background,color] duration-100 leading-none enabled:hover:bg-white/10 enabled:hover:text-foreground disabled:opacity-20 disabled:cursor-default";
 const MW_ARROW_BTN_ITEM =
-  "bg-transparent border-0 cursor-pointer text-muted px-[5px] py-[2px] flex items-center justify-center rounded-[3px] transition-[background,color] duration-100 leading-none enabled:hover:bg-[rgba(255,255,255,0.1)] enabled:hover:text-foreground disabled:opacity-20 disabled:cursor-default";
-const MW_ARROW_SVG = "w-[10px] h-[6px] block";
-const MW_ARROW_SVG_ITEM = "w-[13px] h-[8px] block";
+  "bg-transparent border-0 cursor-pointer text-muted px-1.25 py-0.5 flex items-center justify-center rounded-3 transition-[background,color] duration-100 leading-none enabled:hover:bg-white/10 enabled:hover:text-foreground disabled:opacity-20 disabled:cursor-default";
+const MW_ARROW_SVG = "w-2.5 h-1.5 block";
+const MW_ARROW_SVG_ITEM = "w-3.25 h-2 block";
 const MW_EMPTY =
-  "px-[12px] py-[8px] text-[11px] text-muted text-center leading-[1.4]";
+  "px-3 py-2 text-11 text-muted text-center leading-1.4";
 const MW_DIVIDER = "h-px bg-[var(--border)] shrink-0";
 
 const MW_TRACKED_LIST = "shrink-0";
 const MW_GROUP =
-  "border-b-2 border-b-[rgba(48,54,61,0.7)] last:border-b-0";
+  "border-b-2 border-b-border/70 last:border-b-0";
 const MW_TRACKED_ROW =
-  "flex items-center gap-[4px] pt-[3px] pb-[3px] pr-[8px] pl-[4px] bg-[rgba(255,255,255,0.02)] transition-[background] duration-100 hover:bg-[rgba(255,255,255,0.06)]";
+  "flex items-center gap-1 pt-0.75 pb-0.75 pr-2 pl-1 bg-white/2 transition-[background] duration-100 hover:bg-white/6";
 const MW_ITEM_ARROWS = "flex flex-col gap-0 shrink-0";
-const MW_NAME_AREA = "flex items-center gap-[4px] flex-1 min-w-0";
+const MW_NAME_AREA = "flex items-center gap-1 flex-1 min-w-0";
 const MW_NAME_AREA_REQS =
-  "flex items-center gap-[4px] flex-1 min-w-0 cursor-pointer group";
+  "flex items-center gap-1 flex-1 min-w-0 cursor-pointer group";
 const MW_CHEVRON =
-  "w-[10px] h-[6px] shrink-0 text-muted transition-transform duration-150";
+  "w-2.5 h-1.5 shrink-0 text-muted transition-transform duration-150";
 const MW_CHEVRON_COLLAPSED =
-  "w-[10px] h-[6px] shrink-0 text-muted transition-transform duration-150 -rotate-90";
+  "w-2.5 h-1.5 shrink-0 text-muted transition-transform duration-150 -rotate-90";
 const MW_ITEM_NAME =
-  "text-[11px] text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
-const MW_ITEM_STATUS = "text-[10px] font-bold shrink-0 w-[14px] text-center";
+  "text-11 text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+const MW_ITEM_STATUS = "text-10 font-bold shrink-0 w-3.5 text-center";
 const MW_REMOVE_BTN =
-  "bg-transparent border-0 cursor-pointer text-muted text-[14px] p-0 shrink-0 leading-none transition-colors duration-100 hover:text-danger";
+  "bg-transparent border-0 cursor-pointer text-muted text-14 p-0 shrink-0 leading-none transition-colors duration-100 hover:text-danger";
 const MW_INLINE_REQS =
-  "pt-[2px] pb-[5px] pr-[8px] pl-[28px] border-t border-t-[rgba(48,54,61,0.4)] bg-[rgba(0,0,0,0.18)]";
+  "pt-0.5 pb-1.25 pr-2 pl-7 border-t border-t-border/40 bg-black/18";
 const MW_REQ_ROW =
-  "flex items-center justify-between gap-[6px] py-[2px] text-[11px]";
+  "flex items-center justify-between gap-1.5 py-0.5 text-11";
 const MW_REQ_NAME =
   "flex-1 whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
-const MW_REQ_COUNTS = "flex items-center gap-[2px] shrink-0 text-[11px] tabular-nums";
-const MW_REQ_ALL_GOOD = "pt-[3px] pb-[4px] text-[11px] text-success";
+const MW_REQ_COUNTS = "flex items-center gap-0.5 shrink-0 text-11 tabular-nums";
+const MW_REQ_ALL_GOOD = "pt-0.75 pb-1 text-11 text-success";
 const MW_QTY_HAVE = "text-success";
 const MW_QTY_NEED = "text-danger";
 const MW_QTY_SEP = "text-muted";
 const MW_QTY_REQUIRED = "text-muted";
-const MW_SHORTAGE = "shrink-0 rounded-[4px] bg-[rgba(248,81,73,.12)] px-[5px] py-px text-[11px] font-semibold text-danger";
+const MW_SHORTAGE = "shrink-0 rounded-4 bg-danger/12 px-1.25 py-px text-11 font-semibold text-danger";
 
 const MW_FAV_LIST = "shrink-0";
 const MW_FAV_ITEM =
-  "flex items-center gap-[4px] pt-[3px] pb-[3px] pr-[8px] pl-[4px] border-b border-b-[rgba(48,54,61,0.35)] transition-[background] duration-100 last:border-b-0 hover:bg-[rgba(255,255,255,0.03)]";
+  "flex items-center gap-1 pt-0.75 pb-0.75 pr-2 pl-1 border-b border-b-border/35 transition-[background] duration-100 last:border-b-0 hover:bg-white/3";
 const MW_FAV_NAME =
-  "flex-1 text-[11px] text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
+  "flex-1 text-11 text-foreground whitespace-nowrap overflow-hidden text-ellipsis min-w-0";
 const MW_FAV_QTY =
-  "text-[12px] font-bold text-accent shrink-0 tabular-nums min-w-[24px] text-right";
+  "text-12 font-bold text-accent shrink-0 tabular-nums min-w-6 text-right";
 const MW_FAV_QTY_CD =
-  "text-[11px] font-bold text-accent shrink-0 tabular-nums min-w-[60px] text-right";
+  "text-11 font-bold text-accent shrink-0 tabular-nums min-w-15 text-right";
 const MW_FAV_STAR =
-  "bg-transparent border-0 cursor-pointer text-[#f0c040] text-[13px] p-0 shrink-0 leading-none transition-colors duration-100 hover:text-[rgba(139,148,158,0.6)]";
+  "bg-transparent border-0 cursor-pointer text-ducat text-13 p-0 shrink-0 leading-none transition-colors duration-100 hover:text-muted/60";
 const MW_TIMER_STATE =
-  "text-[10px] font-semibold text-muted shrink-0 px-[5px] py-[1px] rounded-[3px] bg-[rgba(255,255,255,0.06)]";
-const MW_FISSURE_TIER = "text-[11px] font-bold shrink-0 w-[46px]";
+  "text-10 font-semibold text-muted shrink-0 px-1.25 py-0.25 rounded-3 bg-white/6";
+const MW_FISSURE_TIER = "text-11 font-bold shrink-0 w-11.5";
 
 function fmt(n: number) { return n.toLocaleString(); }
 
@@ -338,7 +338,7 @@ export default function ModularWindow({
                     </svg>
                   )}
                   <span className={MW_ITEM_NAME +
-                    (isOwned ? " text-[#f0c040]" : allDone ? " text-success" : "") +
+                    (isOwned ? " text-ducat" : allDone ? " text-success" : "") +
                     (hasNeeds ? " group-hover:text-foreground" : "")}>{item.name}</span>
                 </div>
                 <span className={MW_ITEM_STATUS}>
@@ -485,10 +485,10 @@ export default function ModularWindow({
                   <div className="flex items-center gap-1">
                     <span className={MW_FISSURE_TIER} style={{ color: TIER_COLOR[f.tier] ?? "#ccc" }}>{f.tier}</span>
                     <span className={MW_FAV_NAME}>{f.missionType}</span>
-                    <span className="shrink-0 text-[10px] text-muted">{variantLabel[variant]}</span>
+                    <span className="shrink-0 text-10 text-muted">{variantLabel[variant]}</span>
                     <span className={`${MW_FAV_QTY_CD} ml-auto`}>{fmtMs(ms)}</span>
                   </div>
-                  <div className="mt-px pl-0.5 text-[10px] text-muted">
+                  <div className="mt-px pl-0.5 text-10 text-muted">
                     {f.enemy && <span className="mr-1.5">{f.enemy}</span>}
                     {f.node && <span>{f.node}</span>}
                   </div>

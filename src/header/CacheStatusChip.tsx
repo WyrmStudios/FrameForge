@@ -32,10 +32,10 @@ const DISPLAY: Record<string, string> = {
 };
 
 const SOURCE_CLASS: Record<string, string> = {
-  fresh: "text-[#3fb950]",
-  refreshed: "text-[#3fb950]",
-  stale: "text-[#d29922]",
-  fallback: "text-[#6e7681]",
+  fresh: "text-success",
+  refreshed: "text-success",
+  stale: "text-warning",
+  fallback: "text-inactive",
 };
 
 export default function CacheStatusChip() {
@@ -85,20 +85,20 @@ export default function CacheStatusChip() {
       </div>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%_+_6px)] z-[999] min-w-55 rounded-[8px] border border-border bg-surface px-3 py-2.5 shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
+        <div className="absolute right-0 top-[calc(100%+6px)] z-999 min-w-55 rounded-8 border border-border bg-surface px-3 py-2.5 shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
           <div className="mb-2.5 flex flex-col gap-1.5">
             {Object.entries(statuses).map(([key, s]) => (
-              <div key={key} className="flex items-center justify-between gap-2 text-[12px]">
+              <div key={key} className="flex items-center justify-between gap-2 text-12">
                 <span className="font-medium text-foreground">
                   {DISPLAY[key] ?? key}
                 </span>
-                <span className={`text-[11px] tabular-nums ${SOURCE_CLASS[s.source] ?? "text-[#6e7681]"}`}>
+                <span className={`text-11 tabular-nums ${SOURCE_CLASS[s.source] ?? "text-inactive"}`}>
                   {s.source} · {age(s.last_updated)}
                 </span>
               </div>
             ))}
             {Object.keys(statuses).length === 0 && (
-              <span className="text-[12px] text-muted">
+              <span className="text-12 text-muted">
                 No cache data yet
               </span>
             )}
@@ -106,7 +106,7 @@ export default function CacheStatusChip() {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className={`w-full cursor-pointer rounded-[5px] border-none bg-accent px-2.5 py-[5px] text-[12px] font-semibold text-[#1e1e2e] ${refreshing ? "opacity-60" : "opacity-100"}`}
+            className={`w-full cursor-pointer rounded-5 border-none bg-accent px-2.5 py-1.25 text-12 font-semibold text-accent-ink ${refreshing ? "opacity-60" : "opacity-100"}`}
           >
             {refreshing ? "Refreshing…" : "Refresh all data"}
           </button>
