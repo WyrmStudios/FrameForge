@@ -45,6 +45,8 @@ export default function InventoryToolbar({
   const isCardView = view === "cards" || view === "text-cards";
   const isListView = view === "list" || view === "list-compact";
   const imagesVisible = view === "cards" || view === "list";
+  const setStandardSort = (sortMode: InventoryFilters["sortMode"]) =>
+    onFiltersChange(previous => ({ ...previous, filterRecent: false, filterPlat: false, filterDucats: false, sortMode }));
   return (
     <>
       <div className={TOOLBAR}>
@@ -79,8 +81,8 @@ export default function InventoryToolbar({
         <FilterPresets module="inventory" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
         <FilterSeparator />
         <FilterLabel>Sort:</FilterLabel>
-        <FilterChip active={sortMode === "qty-desc" || sortMode === "qty-asc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: previous.sortMode === "qty-desc" ? "qty-asc" : "qty-desc" }))}>Qty {sortMode === "qty-asc" ? "↑" : "↓"}</FilterChip>
-        <FilterChip active={sortMode === "name-asc" || sortMode === "name-desc"} onClick={() => onFiltersChange(previous => ({ ...previous, sortMode: previous.sortMode === "name-asc" ? "name-desc" : "name-asc" }))}>{sortMode === "name-desc" ? "Z-A" : "A-Z"}</FilterChip>
+        <FilterChip active={sortMode === "qty-desc" || sortMode === "qty-asc"} onClick={() => setStandardSort(sortMode === "qty-desc" ? "qty-asc" : "qty-desc")}>Qty {sortMode === "qty-asc" ? "↑" : "↓"}</FilterChip>
+        <FilterChip active={sortMode === "name-asc" || sortMode === "name-desc"} onClick={() => setStandardSort(sortMode === "name-asc" ? "name-desc" : "name-asc")}>{sortMode === "name-desc" ? "Z-A" : "A-Z"}</FilterChip>
         <span className={`${ITEM_COUNT_LABEL} ml-auto`}>{itemCount} item{itemCount !== 1 ? "s" : ""}{itemCount === 1000 ? " (capped)" : ""}</span>
         <ViewToggle
           view={view === "text-cards" ? "cards" : view === "list-compact" ? "list" : view}

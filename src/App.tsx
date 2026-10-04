@@ -215,18 +215,18 @@ export default function App() {
   }, [sortMode]);
   const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => {
     const filterRecent = !previous.filterRecent;
-    return { ...previous, filterRecent, sortMode: filterRecent ? "recent" : prevSortRef.current };
+    return { ...previous, filterRecent, filterPlat: false, filterDucats: false, sortMode: filterRecent ? "recent" : prevSortRef.current };
   }), []);
   const toggleInventoryPlat = useCallback(() => setInventoryFilters(previous => {
     if (!previous.filterPlat || (previous.sortMode !== "plat-desc" && previous.sortMode !== "plat-asc")) {
-      return { ...previous, filterPlat: true, filterRecent: false, sortMode: "plat-desc" };
+      return { ...previous, filterPlat: true, filterDucats: false, filterRecent: false, sortMode: "plat-desc" };
     }
     if (previous.sortMode === "plat-desc") return { ...previous, sortMode: "plat-asc" };
     return { ...previous, filterPlat: false, sortMode: prevSortRef.current };
   }), []);
   const toggleInventoryDucats = useCallback(() => setInventoryFilters(previous => {
     if (!previous.filterDucats || (previous.sortMode !== "ducat-desc" && previous.sortMode !== "ducat-asc")) {
-      return { ...previous, filterDucats: true, filterRecent: false, sortMode: "ducat-desc" };
+      return { ...previous, filterDucats: true, filterPlat: false, filterRecent: false, sortMode: "ducat-desc" };
     }
     if (previous.sortMode === "ducat-desc") return { ...previous, sortMode: "ducat-asc" };
     return { ...previous, filterDucats: false, sortMode: prevSortRef.current };
