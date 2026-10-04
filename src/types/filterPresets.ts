@@ -42,7 +42,7 @@ function parseInventoryFilters(value: unknown): InventoryFilters | null {
     typeof value.filterPrime !== "boolean" || typeof value.filterVaulted !== "boolean" ||
     typeof value.filterUnvaulted !== "boolean" ||
     !(typeof value.filterRank === "number" || value.filterRank === "unranked" || value.filterRank === null) ||
-    !["qty-desc", "qty-asc", "name-asc", "name-desc", "plat-desc", "plat-asc", "ducat-desc", "ducat-asc", "recent"].includes(value.sortMode as string)) return null;
+    !["qty-desc", "qty-asc", "name-asc", "name-desc", "plat-desc", "plat-asc", "ducat-desc", "ducat-asc", "ducat-ratio-desc", "ducat-ratio-asc", "recent"].includes(value.sortMode as string)) return null;
   const storedSort = value.sortMode as string;
   const sortMode: InventoryFilters["sortMode"] = value.filterPlat === true
     ? (storedSort === "plat-asc" ? "plat-asc" : "plat-desc")

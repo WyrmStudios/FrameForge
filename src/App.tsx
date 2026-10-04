@@ -211,13 +211,15 @@ export default function App() {
     : bulkPricesLoaded ? "ready" as const : "loading" as const;
   const isPlatinumSort = sortMode === "plat-desc" || sortMode === "plat-asc";
   const isDucatSort = sortMode === "ducat-desc" || sortMode === "ducat-asc";
-  const lastNonPlatinumSortRef = useRef<InventoryFilters["sortMode"]>("qty-desc");
+  const isDucatRatioSort = sortMode === "ducat-ratio-desc" || sortMode === "ducat-ratio-asc";
+  const needsPlatinumPrices = isPlatinumSort || isDucatRatioSort;
+  const lastPriceIndependentSortRef = useRef<InventoryFilters["sortMode"]>("qty-desc");
   // Bulk prices refresh hourly in the background — re-fetch on each Inventory
   // activation so the chips reflect the current map.
   useEffect(() => { if (activeModule === "inventory") refreshBulkPrices(); }, [activeModule, refreshBulkPrices]);
   useEffect(() => {
-    if (!isPlatinumSort) lastNonPlatinumSortRef.current = sortMode;
-  }, [isPlatinumSort, sortMode]);
+    if (!needsPlatinumPrices) lastPriceIndependentSortRef.current = sortMode;
+  }, [needsPlatinumPrices, sortMode]);
   const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => ({
     ...previous,
     filterRecent: !previous.filterRecent,
@@ -571,8 +573,12 @@ export default function App() {
         plat != null || (i.ducats != null && i.ducats > 0) || i.category === "Mods" || i.category === "Arcanes"
       );
       if (filterTradeable && !isTradeable) continue;
-      if (isPlatinumSort && platinumPriceStatus === "ready" && !(plat != null && plat > 0)) continue;
-      if (isDucatSort && !(i.ducats != null && i.ducats > 0)) continue;
+      if (isDucatRatioSort) {
+        if (platinumPriceStatus === "ready" && (!(plat != null && plat > 0) || !(i.ducats != null && i.ducats > 0))) continue;
+      } else {
+        if (isPlatinumSort && platinumPriceStatus === "ready" && !(plat != null && plat > 0)) continue;
+        if (isDucatSort && !(i.ducats != null && i.ducats > 0)) continue;
+      }
       if (filterRank !== null) {
         if (i.category === "Mods" || i.category === "Arcanes") {
           const copies = modCopiesMap[i.unique_name];
@@ -586,12 +592,14 @@ export default function App() {
       }
       out.push({ ...i, qty, plat });
     }
-    const activeSortMode = isPlatinumSort && platinumPriceStatus !== "ready" ? lastNonPlatinumSortRef.current : sortMode;
+    const activeSortMode = needsPlatinumPrices && platinumPriceStatus !== "ready" ? lastPriceIndependentSortRef.current : sortMode;
     out.sort((a, b) => {
       if (activeSortMode === "plat-asc") return (a.plat ?? 0) - (b.plat ?? 0) || a.name.localeCompare(b.name);
       if (activeSortMode === "plat-desc") return (b.plat ?? 0) - (a.plat ?? 0) || a.name.localeCompare(b.name);
       if (activeSortMode === "ducat-asc") return (a.ducats ?? 0) - (b.ducats ?? 0) || a.name.localeCompare(b.name);
       if (activeSortMode === "ducat-desc") return (b.ducats ?? 0) - (a.ducats ?? 0) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-ratio-asc") return (a.ducats! / a.plat!) - (b.ducats! / b.plat!) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-ratio-desc") return (b.ducats! / b.plat!) - (a.ducats! / a.plat!) || a.name.localeCompare(b.name);
       const aOwned = a.qty > 0 ? 1 : 0;
       const bOwned = b.qty > 0 ? 1 : 0;
       if (bOwned !== aOwned) return bOwned - aOwned;
@@ -601,7 +609,7 @@ export default function App() {
       return b.qty - a.qty || a.name.localeCompare(b.name);
     });
     return out.slice(0, 1000);
-  }, [catalog, inventory, inventoryFilters, bulkPrices, isDucatSort, isPlatinumSort, platinumPriceStatus, lastChanged, modCopiesMap]);
+  }, [catalog, inventory, inventoryFilters, bulkPrices, isDucatRatioSort, isDucatSort, isPlatinumSort, needsPlatinumPrices, platinumPriceStatus, lastChanged, modCopiesMap]);
 
   const resetInventoryFilters = ({
     recent,

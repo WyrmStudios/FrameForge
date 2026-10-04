@@ -47,7 +47,8 @@ export default function InventoryToolbar({
   const toggleSort = (primary: InventoryFilters["sortMode"], secondary: InventoryFilters["sortMode"]) =>
     onFiltersChange(previous => ({ ...previous, sortMode: previous.sortMode === primary ? secondary : primary }));
   const platinumSortActive = sortMode === "plat-desc" || sortMode === "plat-asc";
-  const itemCountLabel = platinumSortActive && platinumPriceStatus !== "ready"
+  const ducatRatioSortActive = sortMode === "ducat-ratio-desc" || sortMode === "ducat-ratio-asc";
+  const itemCountLabel = (platinumSortActive || ducatRatioSortActive) && platinumPriceStatus !== "ready"
     ? platinumPriceStatus === "loading" ? "Loading Platinum prices…" : "Platinum prices unavailable"
     : `${itemCount} item${itemCount !== 1 ? "s" : ""}${itemCount === 1000 ? " (capped)" : ""}`;
   return (
@@ -82,6 +83,7 @@ export default function InventoryToolbar({
         <FilterChip active={sortMode === "name-asc" || sortMode === "name-desc"} onClick={() => toggleSort("name-asc", "name-desc")}>{sortMode === "name-desc" ? "Z-A" : "A-Z"}</FilterChip>
         <FilterChip active={platinumSortActive} onClick={() => toggleSort("plat-desc", "plat-asc")}>Plat{platinumPriceStatus === "ready" ? sortMode === "plat-desc" ? " ↓" : sortMode === "plat-asc" ? " ↑" : "" : ""}</FilterChip>
         <FilterChip active={sortMode === "ducat-desc" || sortMode === "ducat-asc"} onClick={() => toggleSort("ducat-desc", "ducat-asc")}>Ducats{sortMode === "ducat-desc" ? " ↓" : sortMode === "ducat-asc" ? " ↑" : ""}</FilterChip>
+        <FilterChip active={ducatRatioSortActive} title="Ducats per Platinum: descending favors Ducats; ascending favors trading" onClick={() => toggleSort("ducat-ratio-desc", "ducat-ratio-asc")}>D/P{platinumPriceStatus === "ready" ? sortMode === "ducat-ratio-desc" ? " ↓" : sortMode === "ducat-ratio-asc" ? " ↑" : "" : ""}</FilterChip>
         <span className={`${ITEM_COUNT_LABEL} ml-auto`} aria-live="polite">{itemCountLabel}</span>
         <ViewToggle
           view={view === "text-cards" ? "cards" : view === "list-compact" ? "list" : view}

@@ -1,4 +1,4 @@
-export type InventorySortMode = "qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "plat-desc" | "plat-asc" | "ducat-desc" | "ducat-asc";
+export type InventorySortMode = "qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "plat-desc" | "plat-asc" | "ducat-desc" | "ducat-asc" | "ducat-ratio-desc" | "ducat-ratio-asc";
 
 export interface InventoryFilters {
   category: string;
