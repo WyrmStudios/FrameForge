@@ -24,6 +24,7 @@ interface InventoryToolbarProps {
   onToggleRecent: () => void;
   onTogglePlat: () => void;
   onToggleDucats: () => void;
+  bulkPricesLoaded: boolean;
   availableRanks: number[];
   showRankFilters: boolean;
   itemCount: number;
@@ -39,7 +40,7 @@ interface InventoryToolbarProps {
 }
 
 export default function InventoryToolbar({
-  filters, onFiltersChange, onToggleRecent, onTogglePlat, onToggleDucats, availableRanks, showRankFilters, itemCount, view, onViewChange, cardColumns, onCardColumnsChange, listTextScale, onListTextScaleChange, filterPresets, onFilterPresetsChange, onOpenSettings,
+  filters, onFiltersChange, onToggleRecent, onTogglePlat, onToggleDucats, bulkPricesLoaded, availableRanks, showRankFilters, itemCount, view, onViewChange, cardColumns, onCardColumnsChange, listTextScale, onListTextScaleChange, filterPresets, onFilterPresetsChange, onOpenSettings,
 }: InventoryToolbarProps) {
   const { search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterPlat, filterDucats, filterRank, sortMode } = filters;
   const isCardView = view === "cards" || view === "text-cards";
@@ -83,7 +84,7 @@ export default function InventoryToolbar({
         <FilterLabel>Sort:</FilterLabel>
         <FilterChip active={sortMode === "qty-desc" || sortMode === "qty-asc"} onClick={() => setStandardSort(sortMode === "qty-desc" ? "qty-asc" : "qty-desc")}>Qty {sortMode === "qty-asc" ? "↑" : "↓"}</FilterChip>
         <FilterChip active={sortMode === "name-asc" || sortMode === "name-desc"} onClick={() => setStandardSort(sortMode === "name-asc" ? "name-desc" : "name-asc")}>{sortMode === "name-desc" ? "Z-A" : "A-Z"}</FilterChip>
-        <span className={`${ITEM_COUNT_LABEL} ml-auto`}>{itemCount} item{itemCount !== 1 ? "s" : ""}{itemCount === 1000 ? " (capped)" : ""}</span>
+        <span className={`${ITEM_COUNT_LABEL} ml-auto`}>{filterPlat && !bulkPricesLoaded ? "Loading Platinum prices…" : <>{itemCount} item{itemCount !== 1 ? "s" : ""}{itemCount === 1000 ? " (capped)" : ""}</>}</span>
         <ViewToggle
           view={view === "text-cards" ? "cards" : view === "list-compact" ? "list" : view}
           onChange={onViewChange}
