@@ -58,12 +58,6 @@ import type { ChangeLogEntry, ModCopy } from "./types/inventory";
 import type { BlobStatusPayload, SettingsFile, SettingsPatch, WarframeCredentials, WarframeInventoryRequest, WfmCredentials, WfmSession } from "./types/tauri";
 import "./styles/App.css";
 
-function inventoryValueSort(sortMode: InventoryFilters["sortMode"]): "plat" | "ducat" | null {
-  if (sortMode === "plat-desc" || sortMode === "plat-asc") return "plat";
-  if (sortMode === "ducat-desc" || sortMode === "ducat-asc") return "ducat";
-  return null;
-}
-
 const _winLabel = getCurrentWindow().label;
 // Support all URL formats: query string (?overlay), hash (#overlay), or window label.
 // v2.0.0 used query strings and they worked fine — keep as primary detection path.
@@ -210,33 +204,24 @@ export default function App() {
   const [foundryFilters, setFoundryFilters] = useState<FoundryFilters>(FOUNDRY_FILTERS_DEFAULT);
   const [marketFilters, setMarketFilters] = useState<MarketFilters>(MARKET_FILTERS_DEFAULT);
   const [relicFilters, setRelicFilters] = useState<RelicFilters>(RELIC_FILTERS_DEFAULT);
-  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterPlat, filterDucats, filterRank, sortMode } = inventoryFilters;
-  const { bulkPrices, loaded: bulkPricesLoaded, refresh: refreshBulkPrices } = useBulkPrices();
+  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterRank, sortMode } = inventoryFilters;
+  const { bulkPrices, loaded: bulkPricesLoaded, error: bulkPricesError, refresh: refreshBulkPrices } = useBulkPrices();
+  const platinumPriceStatus = bulkPricesError || (bulkPricesLoaded && bulkPrices.size === 0)
+    ? "unavailable" as const
+    : bulkPricesLoaded ? "ready" as const : "loading" as const;
+  const isPlatinumSort = sortMode === "plat-desc" || sortMode === "plat-asc";
+  const isDucatSort = sortMode === "ducat-desc" || sortMode === "ducat-asc";
+  const lastNonPlatinumSortRef = useRef<InventoryFilters["sortMode"]>("qty-desc");
   // Bulk prices refresh hourly in the background — re-fetch on each Inventory
   // activation so the chips reflect the current map.
   useEffect(() => { if (activeModule === "inventory") refreshBulkPrices(); }, [activeModule, refreshBulkPrices]);
-  const prevSortRef = useRef(sortMode);
   useEffect(() => {
-    if (sortMode !== "recent" && inventoryValueSort(sortMode) === null) prevSortRef.current = sortMode;
-  }, [sortMode]);
-  const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => {
-    const filterRecent = !previous.filterRecent;
-    return { ...previous, filterRecent, filterPlat: false, filterDucats: false, sortMode: filterRecent ? "recent" : prevSortRef.current };
-  }), []);
-  const toggleInventoryPlat = useCallback(() => setInventoryFilters(previous => {
-    if (!previous.filterPlat || inventoryValueSort(previous.sortMode) !== "plat") {
-      return { ...previous, filterPlat: true, filterDucats: false, filterRecent: false, sortMode: "plat-desc" };
-    }
-    if (previous.sortMode === "plat-desc") return { ...previous, sortMode: "plat-asc" };
-    return { ...previous, filterPlat: false, sortMode: prevSortRef.current };
-  }), []);
-  const toggleInventoryDucats = useCallback(() => setInventoryFilters(previous => {
-    if (!previous.filterDucats || inventoryValueSort(previous.sortMode) !== "ducat") {
-      return { ...previous, filterDucats: true, filterPlat: false, filterRecent: false, sortMode: "ducat-desc" };
-    }
-    if (previous.sortMode === "ducat-desc") return { ...previous, sortMode: "ducat-asc" };
-    return { ...previous, filterDucats: false, sortMode: prevSortRef.current };
-  }), []);
+    if (!isPlatinumSort) lastNonPlatinumSortRef.current = sortMode;
+  }, [isPlatinumSort, sortMode]);
+  const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => ({
+    ...previous,
+    filterRecent: !previous.filterRecent,
+  })), []);
   const [inventoryView, setInventoryView] = useState<ViewMode>(() =>
     (localStorage.getItem(PREFERENCE_KEYS.INVENTORY_VIEW) as ViewMode | null) ?? "cards"
   );
@@ -568,9 +553,6 @@ export default function App() {
 
   const visibleItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
-    // Changelog order map: lower index = more recent position in changelog
-    const changeOrder = new Map<string, number>();
-    changeLog.forEach((c, i) => { if (!changeOrder.has(c.unique_name)) changeOrder.set(c.unique_name, i); });
     const out: (CatalogItem & { qty: number; plat: number | null })[] = [];
     for (const i of catalog) {
       if (i.name === "Blueprint") continue;
@@ -589,8 +571,8 @@ export default function App() {
         plat != null || (i.ducats != null && i.ducats > 0) || i.category === "Mods" || i.category === "Arcanes"
       );
       if (filterTradeable && !isTradeable) continue;
-      if (filterPlat && bulkPricesLoaded && !(plat != null && plat > 0)) continue;
-      if (filterDucats && !(i.ducats != null && i.ducats > 0)) continue;
+      if (isPlatinumSort && platinumPriceStatus === "ready" && !(plat != null && plat > 0)) continue;
+      if (isDucatSort && !(i.ducats != null && i.ducats > 0)) continue;
       if (filterRank !== null) {
         if (i.category === "Mods" || i.category === "Arcanes") {
           const copies = modCopiesMap[i.unique_name];
@@ -604,17 +586,8 @@ export default function App() {
       }
       out.push({ ...i, qty, plat });
     }
-    const activeSortMode = filterPlat && !bulkPricesLoaded ? prevSortRef.current : sortMode;
+    const activeSortMode = isPlatinumSort && platinumPriceStatus !== "ready" ? lastNonPlatinumSortRef.current : sortMode;
     out.sort((a, b) => {
-      if (activeSortMode === "recent" || filterRecent) {
-        const at = lastChanged[a.unique_name] ?? 0;
-        const bt = lastChanged[b.unique_name] ?? 0;
-        if (bt !== at) return bt - at;
-        // Tiebreak by changelog arrival order (lower index = more recent)
-        const ai = changeOrder.get(a.unique_name) ?? Infinity;
-        const bi = changeOrder.get(b.unique_name) ?? Infinity;
-        return ai - bi || a.name.localeCompare(b.name);
-      }
       if (activeSortMode === "plat-asc") return (a.plat ?? 0) - (b.plat ?? 0) || a.name.localeCompare(b.name);
       if (activeSortMode === "plat-desc") return (b.plat ?? 0) - (a.plat ?? 0) || a.name.localeCompare(b.name);
       if (activeSortMode === "ducat-asc") return (a.ducats ?? 0) - (b.ducats ?? 0) || a.name.localeCompare(b.name);
@@ -628,7 +601,7 @@ export default function App() {
       return b.qty - a.qty || a.name.localeCompare(b.name);
     });
     return out.slice(0, 1000);
-  }, [catalog, inventory, inventoryFilters, bulkPrices, bulkPricesLoaded, lastChanged, modCopiesMap, changeLog]);
+  }, [catalog, inventory, inventoryFilters, bulkPrices, isDucatSort, isPlatinumSort, platinumPriceStatus, lastChanged, modCopiesMap]);
 
   const resetInventoryFilters = ({
     recent,
@@ -645,7 +618,7 @@ export default function App() {
       category: categoryId,
       search: searchTerm,
       filterRecent: recent,
-      sortMode: recent ? "recent" : previous.sortMode,
+      sortMode: previous.sortMode,
     }));
   };
 
@@ -828,9 +801,7 @@ export default function App() {
                 filters={inventoryFilters}
                 onFiltersChange={setInventoryFilters}
                 onToggleRecent={toggleInventoryRecent}
-                onTogglePlat={toggleInventoryPlat}
-                onToggleDucats={toggleInventoryDucats}
-                bulkPricesLoaded={bulkPricesLoaded}
+                platinumPriceStatus={platinumPriceStatus}
                 availableRanks={availableRanks}
                 showRankFilters={apiModCopies.length > 0}
                 itemCount={visibleItems.length}

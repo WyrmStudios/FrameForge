@@ -11,9 +11,10 @@ import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 type Snapshot = {
   bulkPrices: Map<string, number>;
   loaded: boolean;
+  error: boolean;
 };
 
-let current: Snapshot = { bulkPrices: new Map(), loaded: false };
+let current: Snapshot = { bulkPrices: new Map(), loaded: false, error: false };
 let inFlight: Promise<void> | null = null;
 let refreshQueued = false;
 let listenerReady: Promise<void> | null = null;
@@ -25,15 +26,17 @@ function publish(next: Snapshot) {
 }
 
 function fetchOnce(): Promise<void> {
-  inFlight ??= invoke<Record<string, number>>(TAURI_COMMANDS.GET_BULK_PRICES)
+  if (inFlight) return inFlight;
+  if (!current.loaded && current.error) publish({ ...current, error: false });
+  inFlight = invoke<Record<string, number>>(TAURI_COMMANDS.GET_BULK_PRICES)
     .then(raw => {
       if (refreshQueued) return;
       const prices = new Map<string, number>();
       for (const [name, price] of Object.entries(raw ?? {})) prices.set(name, price);
-      publish({ bulkPrices: prices, loaded: true });
+      publish({ bulkPrices: prices, loaded: true, error: false });
     })
     .catch(() => {
-      if (!refreshQueued) publish({ ...current, loaded: false });
+      if (!refreshQueued && !current.loaded) publish({ ...current, error: true });
     })
     .finally(() => {
       inFlight = null;
@@ -64,6 +67,7 @@ function ensureListener(): Promise<void> {
 export interface UseBulkPricesReturn {
   bulkPrices: Map<string, number>;
   loaded: boolean;
+  error: boolean;
   refresh: () => void;
 }
 

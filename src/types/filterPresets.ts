@@ -43,13 +43,17 @@ function parseInventoryFilters(value: unknown): InventoryFilters | null {
     typeof value.filterUnvaulted !== "boolean" ||
     !(typeof value.filterRank === "number" || value.filterRank === "unranked" || value.filterRank === null) ||
     !["qty-desc", "qty-asc", "name-asc", "name-desc", "plat-desc", "plat-asc", "ducat-desc", "ducat-asc", "recent"].includes(value.sortMode as string)) return null;
+  const storedSort = value.sortMode as string;
+  const sortMode: InventoryFilters["sortMode"] = value.filterPlat === true
+    ? (storedSort === "plat-asc" ? "plat-asc" : "plat-desc")
+    : value.filterDucats === true
+      ? (storedSort === "ducat-asc" ? "ducat-asc" : "ducat-desc")
+      : storedSort === "recent" ? "qty-desc" : storedSort as InventoryFilters["sortMode"];
   return {
     category: value.category, search: value.search, filterOwned: value.filterOwned, filterRecent: value.filterRecent,
     filterPrime: value.filterPrime, filterVaulted: value.filterVaulted, filterUnvaulted: value.filterUnvaulted,
-    // Optional so presets saved before these keys existed still load.
-    filterTradeable: value.filterTradeable === true, filterPlat: value.filterPlat === true,
-    filterDucats: value.filterDucats === true,
-    filterRank: value.filterRank, sortMode: value.sortMode as InventoryFilters["sortMode"],
+    filterTradeable: value.filterTradeable === true,
+    filterRank: value.filterRank, sortMode,
   };
 }
 
