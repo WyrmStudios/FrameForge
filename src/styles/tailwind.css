@@ -134,5 +134,10 @@
   --tracking-0\.06: 0.06em;
   --tracking-0\.07: 0.07em;
   --blur-10: 10px;
+  /* --text-dim has never been defined anywhere in this repo: it was introduced
+     in v1.7.0 (Syndicates.css) as a colour intent, but no :root ever declared
+     it. var(--text-dim) is invalid at computed-value time, so every text-dim
+     utility inherits --text (#e6edf3) and renders identically to having no
+     declaration. */
   --color-dim: var(--text-dim);
 }
