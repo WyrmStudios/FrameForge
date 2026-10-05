@@ -14,6 +14,8 @@ import { useBulkPrices } from "./hooks/useBulkPrices";
 import { useOverlays } from "./hooks/useOverlays";
 import { useTimerPreferences } from "./hooks/useTimerPreferences";
 import { useFissureNotifications } from "./hooks/useFissureNotifications";
+import { useArbitrationPreferences } from "./hooks/useArbitrationPreferences";
+import { useArbitrationAlerts } from "./hooks/useArbitrationAlerts";
 import { CATEGORIES } from "./constants/categories";
 import { APP_TITLE, IS_DEV } from "./constants/app";
 
@@ -28,6 +30,8 @@ import RivenAnalyzer from "./riven/RivenAnalyzer";
 import RivenOverlayWindow from "./riven/RivenOverlayWindow";
 import RelicPickOverlay from "./relic-overlay/RelicPickOverlay";
 import TimerHelper from "./TimerHelper";
+import Arbitrations from "./arbitration/Arbitrations";
+import ArbitrationOverlay from "./arbitration/ArbitrationOverlay";
 import Statistics from "./statistics/Statistics";
 import Overlay from "./relic-overlay/Overlay";
 import ModularWindow from "./modular-window/ModularWindow";
@@ -68,7 +72,8 @@ const IS_MODULAR       = _params.has("modular")      || _hash === "#modular"    
 const IS_RIVEN_OVERLAY      = _params.has("rivenoverlay")      || _hash === "#rivenoverlay"      || _winLabel === "riven-overlay";
 const IS_RELIC_PICK_OVERLAY = _params.has("relicpickoverlay") || _hash === "#relicpickoverlay" || _winLabel === "relic-pick-overlay";
 const IS_OVERLAY_TEST       = _params.has("overlaytest")       || _hash === "#overlaytest"       || _winLabel === "overlay-test";
-const IS_ANY_OVERLAY = IS_OVERLAY || IS_MODULAR || IS_RIVEN_OVERLAY || IS_RELIC_PICK_OVERLAY;
+const IS_ARBITRATION_OVERLAY = _params.has("arbitrationoverlay") || _hash === "#arbitrationoverlay" || _winLabel === "arbitration-overlay";
+const IS_ANY_OVERLAY = IS_ARBITRATION_OVERLAY || IS_OVERLAY || IS_MODULAR || IS_RIVEN_OVERLAY || IS_RELIC_PICK_OVERLAY;
 
 // Overlay windows return from the router before any hook can run, which rules
 // out applying the scale from an effect.
@@ -108,6 +113,7 @@ export default function App() {
   // Isolated overlay test — no data, no events, just proves the window appears.
   if (IS_OVERLAY_TEST) return <OverlayTestPage />;
   // If we're the overlay window, render only the overlay UI
+  if (IS_ARBITRATION_OVERLAY) return <ArbitrationOverlay />;
   if (IS_OVERLAY) return <Overlay />;
   if (IS_RIVEN_OVERLAY) return <RivenOverlayWindow />;
   if (IS_RELIC_PICK_OVERLAY) return <RelicPickOverlay />;
@@ -127,6 +133,7 @@ export default function App() {
   const settings = useSettings(inv.setMonitoring);
   const modular = useModularWindow();
   const timerPreferences = useTimerPreferences();
+  const arbitrationPreferences = useArbitrationPreferences();
 
   const {
     memoryScannerEnabled, setMemoryScannerEnabled,
@@ -162,6 +169,16 @@ export default function App() {
   const { tracked, favorites, modularWidth, modularSectionOrder, modularPopout, toggleTracked, toggleFavorite, applySettings: applyModularSettings, setTracked, setFavorites, setModularWidth, setModularSectionOrder, setModularPopout } = modular;
   const { timerFavorites, fissureWatches, fissureNotifications, applySettings: applyTimerSettings, setTimerFavorites, setFissureWatches, setFissureNotifications } = timerPreferences;
   useFissureNotifications(fissureWatches, fissureNotifications);
+  const {
+    arbFavorites, setArbFavorites,
+    arbLeadMins, setArbLeadMins,
+    arbTierFilter, setArbTierFilter,
+    arbAlertTiers, setArbAlertTiers,
+    arbScheduleDays, setArbScheduleDays,
+    arbOverlayEnabled, setArbOverlayEnabled,
+    applySettings: applyArbitrationSettings,
+  } = arbitrationPreferences;
+  const arbitrationAlerts = useArbitrationAlerts(arbFavorites, arbAlertTiers, arbLeadMins, settings.settingsLoadedRef);
 
   const {
     catalog, quantities, apiQuantities, apiModCopies, scannerMods,
@@ -274,7 +291,7 @@ export default function App() {
     wfmLoggedInRef.current = loggedIn;
   }, []);
 
-  settingsRef.current = { overlayEnabled, overlayPriority, overlayOffsets, rivenEnabled, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, wfmRecordSales, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled, filterPresets };
+  settingsRef.current = { arbitrationFavorites: arbFavorites, arbitrationLeadMins: arbLeadMins, arbitrationOverlayEnabled: arbOverlayEnabled, arbitrationTierFilter: arbTierFilter, arbitrationAlertTiers: arbAlertTiers, arbitrationScheduleDays: arbScheduleDays, overlayEnabled, overlayPriority, overlayOffsets, rivenEnabled, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, wfmRecordSales, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled, filterPresets };
 
   // ── Debug data sizes — reload when the Debugging settings tab opens ─────────
   const reloadDebugSizes = useCallback(() => {
@@ -347,12 +364,14 @@ export default function App() {
       if (settings) {
         applyModularSettings(settings);
         applyTimerSettings(settings);
+        applyArbitrationSettings(settings);
+        arbitrationAlerts.restoreFired(settings);
         settingsLoadedRef.current = true;
       }
     });
     invoke<number>("get_diag_folder_size").then(setDiagFolderSize).catch(() => {});
     getVersion().then(v => { setAppVersion(v); }).catch(() => {});
-  }, [loadSettings, applyModularSettings, applyTimerSettings]);
+  }, [loadSettings, applyModularSettings, applyTimerSettings, applyArbitrationSettings, arbitrationAlerts.restoreFired]);
 
   useEffect(() => {
     const unlisten = listen(TAURI_EVENTS.SETTINGS_UPDATED, () => {
@@ -362,11 +381,12 @@ export default function App() {
           const updated = JSON.parse(json) as SettingsFile;
           applyModularSettings(updated);
           applyTimerSettings(updated);
+          applyArbitrationSettings(updated);
         } catch {}
       }).catch(() => {});
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [applyModularSettings, applyTimerSettings]);
+  }, [applyModularSettings, applyTimerSettings, applyArbitrationSettings]);
 
   // Refresh diagnostics folder size every minute so the Clear button stays current.
   useEffect(() => {
@@ -429,7 +449,7 @@ export default function App() {
 
   useEffect(() => {
     if (settingsLoadedRef.current) saveAllSettings();
-  }, [tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, modularSectionOrder, modularPopout, filterPresets]); // eslint-disable-line
+  }, [tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, arbFavorites, arbLeadMins, arbTierFilter, arbAlertTiers, arbScheduleDays, memoryScannerEnabled, companionApiEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, modularSectionOrder, modularPopout, filterPresets]); // eslint-disable-line
 
   const commitModularWidth = useCallback((width: number) => {
     const patch: SettingsPatch = { modularWidth: width };
@@ -772,7 +792,7 @@ export default function App() {
         </div>
       </header>
 
-      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} {...{ settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange: setFissureNotifications, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion }} />
+      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} {...{ settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange: setFissureNotifications, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion, arbOverlayEnabled, setArbOverlayEnabled }} />
 
       {showInventoryBatchPreview && <InventoryBatchPreview onClose={closeInventoryBatchPreview} />}
 
@@ -901,6 +921,31 @@ export default function App() {
               fissureNotifications={fissureNotifications}
               onFissureNotificationsChange={setFissureNotifications}
               inventory={inventory}
+            />
+          </ErrorBoundary>
+        </KeepMountedWhenHidden>
+        )}
+
+        {/* ── Arbitrations module ── */}
+        {visitedModules.has("arbitrations") && (
+        <KeepMountedWhenHidden active={activeModule === "arbitrations"}>
+          <ErrorBoundary>
+            <Arbitrations
+              favorites={arbFavorites}
+              onToggleFavorite={id => setArbFavorites(prev =>
+                prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+              )}
+              leadMins={arbLeadMins}
+              onLeadChange={setArbLeadMins}
+              permissionDenied={arbitrationAlerts.permissionDenied}
+              onPermissionChange={arbitrationAlerts.setPermissionDenied}
+              tierFilter={arbTierFilter}
+              onTierFilterChange={setArbTierFilter}
+              alertTiers={arbAlertTiers}
+              onAlertTiersChange={setArbAlertTiers}
+              scheduleDays={arbScheduleDays}
+              onScheduleDaysChange={setArbScheduleDays}
+              clockFormat={clockFormat} systemLocale={systemLocale}
             />
           </ErrorBoundary>
         </KeepMountedWhenHidden>

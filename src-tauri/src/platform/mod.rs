@@ -10,6 +10,9 @@ mod windows;
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(target_os = "windows")]
+pub use windows::{file_identity, FileId};
+
 // ─── Credential Store ─────────────────────────────────────────────────────────
 
 /// Encrypted credential storage (OS keychain / credential manager).

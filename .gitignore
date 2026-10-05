@@ -39,3 +39,6 @@ src-tauri/target/
 
 # Dev build data root (pnpm tauri dev) - separate from the installed app's files
 .frameforge-dev/
+
+# Log-tail test scratch files (written by src-tauri/src/log_tail.rs tests)
+src-tauri/tmp/

@@ -307,3 +307,33 @@ pub fn set_overlay_topmost() {
         }
     }
 }
+
+// ── File Identity ──────────────────────────────────────────────────────────────
+
+/// Identity of an open file: volume serial plus file index. Two launches write
+/// two files at the same path, and the pair is what tells them apart.
+pub type FileId = (u32, u32, u32);
+
+/// Reads the identity of `file` through the handle already open on it.
+///
+/// `MetadataExt::file_index` and `volume_serial_number` report the same two
+/// numbers without `unsafe`, but both are still unstable (`windows_by_handle`),
+/// so this call is the stable way to get them.
+pub fn file_identity(file: &std::fs::File) -> std::io::Result<FileId> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // The handle stays open for this call; the API initializes info on success.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
+}

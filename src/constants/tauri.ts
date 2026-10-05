@@ -30,6 +30,8 @@ export const TAURI_EVENTS = {
   WFM_TOP_PROGRESS: "wfm-top-progress",
   WFM_TOP_UPDATED: "wfm-top-updated",
   OVERLAY_OUTLINE: "overlay-outline",
+  ARBITRATION_RUN_ENDED: "arbitration-run-ended",
+  ARBITRATION_RUNS_CHANGED: "arbitration-runs-changed",
 } as const;
 
 // Feature 3 — api.warframe.com/api/inventory.php
@@ -58,6 +60,7 @@ export const TAURI_COMMANDS = {
   SAVE_API_INVENTORY: "save_api_inventory",
   SET_MEM_TRIGGER_ENABLED: "set_mem_trigger_enabled",
   SET_RELIC_PICK_ENABLED: "set_relic_pick_enabled",
+  SET_ARBITRATION_OVERLAY_ENABLED: "set_arbitration_overlay_enabled",
   WFM_CREATE_ORDER: "wfm_create_order",
   WFM_GET_ITEM_INFO: "wfm_get_item_info",
   WFM_GET_SESSION: "wfm_get_session",

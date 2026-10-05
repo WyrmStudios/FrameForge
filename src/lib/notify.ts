@@ -22,13 +22,29 @@ export function ensurePermission(): Promise<boolean> {
   return pending;
 }
 
+// Reports permission without asking for it, for callers that need to know at a
+// moment when raising the dialog would be wrong.
+export async function permissionGranted(): Promise<boolean> {
+  try {
+    return await isPermissionGranted();
+  } catch (e) {
+    console.error("notification permission check failed", e);
+    return false;
+  }
+}
+
 // Never prompts and never throws: a missing notification daemon or a denied
 // permission must not break the caller's poll loop.
-export async function notify(title: string, body: string): Promise<void> {
+//
+// The result says the notification was handed over, not that anyone saw it:
+// sendNotification returns void, so the platform never reports delivery.
+export async function notify(title: string, body: string): Promise<boolean> {
   try {
-    if (!(await isPermissionGranted())) return;
+    if (!(await isPermissionGranted())) return false;
     sendNotification({ title, body });
+    return true;
   } catch (e) {
     console.error("notification failed", e);
+    return false;
   }
 }

@@ -1,4 +1,5 @@
 import type { FilterPresetSettings } from "./filterPresets";
+import type { TierKey } from "../arbitration/arbitrationTiers";
 
 export type ClockFormat = "auto" | "12h" | "24h";
 export type RelicOverlayPriority = "completion" | "plat" | "ducat" | "setPlat";
@@ -44,6 +45,8 @@ export function parseOverlayOffsets(v: unknown): OverlayOffsets {
 }
 
 export interface SettingsSnapshot {
+  arbitrationFavorites: string[]; arbitrationLeadMins: number; arbitrationOverlayEnabled: boolean;
+  arbitrationTierFilter: TierKey[]; arbitrationAlertTiers: TierKey[]; arbitrationScheduleDays: number;
   overlayEnabled: boolean; overlayPriority: RelicOverlayPriority; overlayOffsets: OverlayOffsets;
   rivenEnabled: boolean; textScale: number; colorblindMode: boolean;
   clockFormat: ClockFormat; companionApiEnabled: boolean; memoryScannerEnabled: boolean;

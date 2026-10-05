@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_LEAD_MINS } from "../arbitration/arbitrationAlerts";
+import { DEFAULT_SCHEDULE_DAYS } from "../arbitration/arbitrationSchedule";
+import { TIER_KEYS } from "../arbitration/arbitrationTiers";
 import { PREFERENCE_KEYS } from "../constants/preferences";
 import { TAURI_COMMANDS } from "../constants/tauri";
 import {
@@ -131,6 +134,12 @@ export function useSettings(
   // ── Refs ────────────────────────────────────────────────────────────────────
   const settingsLoadedRef = useRef(false);
   const settingsRef = useRef<SettingsSnapshot>({
+    arbitrationFavorites: [],
+    arbitrationLeadMins: DEFAULT_LEAD_MINS,
+    arbitrationOverlayEnabled: false,
+    arbitrationTierFilter: [...TIER_KEYS],
+    arbitrationAlertTiers: [],
+    arbitrationScheduleDays: DEFAULT_SCHEDULE_DAYS,
     overlayEnabled: true,
     overlayPriority: DEFAULT_RELIC_OVERLAY_PRIORITY,
     overlayOffsets: DEFAULT_OVERLAY_OFFSETS,

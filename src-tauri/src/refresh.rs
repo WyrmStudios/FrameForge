@@ -50,6 +50,12 @@ fn first_due(task: &Task, now: Instant) -> Instant {
 }
 
 const TASKS: &[Task] = &[
+    Task {
+        name: "arbitrations",
+        interval: Duration::from_secs(3600),
+        due_at_launch: true,
+        run: crate::arbitrations::refresh_feed,
+    },
     // Just under the 60s frontend poll, so a window's own tick is served from
     // the cache this fills rather than from the network.
     Task {

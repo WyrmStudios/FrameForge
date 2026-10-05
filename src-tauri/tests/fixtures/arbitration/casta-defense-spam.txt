@@ -1,0 +1,26 @@
+0.099 Sys [Diag]: Current time: Fri Jul 10 21:30:00 2026 [UTC: Fri Jul 10 19:30:00 2026]
+2.005 Sys [Info]: Warframe startup chatter
+300.000 Script [Info]: ThemedSquadOverlay.lua: Pending mission: SolNode149_EliteAlert
+305.000 Script [Info]: ThemedSquadOverlay.lua: Mission name: Casta (Ceres) - Arbitration
+308.000 Sys [Info]: SyncAutoPopulatedConsumables for mission MT_DEFENSE with location SolNode149
+310.000 Game [Info]: OnStateStarted, mission type=MT_DEFENSE
+320.000 Script [Info]: WaveDefend.lua: Defense wave: 1
+321.000 Game [Warning]: OnAgentCreated /Npc/GrineerLancerAgent3 Live 1 Spawned 0 Ticking 1 Paused 0 IgnoredTicking 0 MonitoredTicking 1 AllyLive 4 AllyActive 4 NeutralActive 0
+321.500 AI [Info]: OnAgentCreated /Npc/GrineerLancerAgent4 DamagePct 0.5 MonitoredTicking 2
+322.000 AI [Info]: OnAgentCreated /Npc/GrineerLancerAgent5 Live 3 Spawned 2 Ticking 3 Paused 0 IgnoredTicking 0 MonitoredTicking 3 AllyLive 4 AllyActive 4 NeutralActive 0
+322.500 AI [Info]: OnAgentCreated /Npc/TurretAgent1 Live 4 Spawned 3 Ticking 4 Paused 0 IgnoredTicking 0 MonitoredTicking 4 AllyLive 4 AllyActive 4 NeutralActive 0
+323.000 AI [Info]: OnAgentCreated /Npc/GrineerLancerAgent6 Live 5 Spawned 4 Ticking 5 Paused 0 IgnoredTicking 0 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+323.100 Sys [Info]: Resloader 0x000001F89DF86F50 (/Lotus/Interface/Icons/StoreIcons/Resources/CraftingComponents/Elitium.png) starting
+323.200 Sys [Info]: Created /Lotus/Interface/SurvivalReward.swf
+324.000 AI [Info]: OnAgentCreated /Npc/DecorCrateAgent1 Live 6 Spawned 5 Ticking 5 Paused 0 IgnoredTicking 1 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+324.100 AI [Info]: OnAgentCreated /Npc/DecorCrateAgent2 Live 7 Spawned 6 Ticking 5 Paused 0 IgnoredTicking 2 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+324.200 AI [Info]: OnAgentCreated /Npc/DecorCrateAgent3 Live 8 Spawned 7 Ticking 5 Paused 0 IgnoredTicking 3 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+325.000 AI [Info]: OnAgentCreated /Npc/GrineerLancerAgent7 Live 9 Spawned 8 Ticking 6 Paused 0 IgnoredTicking 3 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+326.000 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent8 Live 10 Spawned 9 Ticking 7 Paused 0 IgnoredTicking 3 MonitoredTicking 7 AllyLive 4 AllyActive 4 NeutralActive 0
+330.000 Script [Info]: EndOfMatch.lua: Initialize
+330.001 Script [Info]: EndOfMatch.lua: Mission Succeeded
+355.000 Sys [Info]: Created /Lotus/Interface/DefenseReward.swf
+360.000 Sys [Info]: Created /Lotus/Interface/DefenseReward.swf
+365.000 Sys [Error]: SetCallbacks on unknown clip: 'Rewards.Element.Btn', movie: '/Lotus/Interface/DefenseReward.swf'
+400.000 Sys [Info]: Created /Lotus/Interface/DefenseReward.swf
+410.000 Sys [Info]: EOM missionLocationUnlocked=1

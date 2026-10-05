@@ -8,6 +8,7 @@ import FilterPresets from "./shared/FilterPresets";
 import { ActionButton, DangerButton, SecondaryButton } from "./shared/ui/ActionButton";
 import { ModalCloseButton } from "./shared/ui/ModalCloseButton";
 import { PREFERENCE_KEYS } from "./constants/preferences";
+import { IS_DEV } from "./constants/app";
 import { CLOCK_FORMAT_OPTIONS, FOUNDRY_PAGE_SIZE_OPTIONS, RELIC_OVERLAY_PRIORITY_OPTIONS, RELIC_PICK_LINES_OPTIONS, RELIC_PICK_PRIORITY_OPTIONS } from "./constants/settings";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "./constants/tauri";
 import type { ArchonShard, QuantityMap } from "./types/items";
@@ -40,6 +41,7 @@ const disabledClass = (disabled: boolean, debugOpacity = false) => disabled ? de
 const clearButtonClass = (hasData: boolean) => hasData ? "border-[var(--red)]! text-danger!" : "";
 
 export interface SettingsModalProps {
+  arbOverlayEnabled: boolean; setArbOverlayEnabled: Setter<boolean>;
   open: boolean;
   onClose: () => void;
   settingsTab: SettingsTab;
@@ -88,7 +90,7 @@ function BulkPriceRefreshButton() {
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
-  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion } = props;
+  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion, arbOverlayEnabled, setArbOverlayEnabled } = props;
 
   // Outline toggles for the reward and pick overlays; the riven overlay shows
   // itself directly (Settings → Overlays).
@@ -96,6 +98,7 @@ export default function SettingsModal(props: SettingsModalProps) {
   const [outlinePick,   setOutlinePick]   = useState(false);
   const [rivenShown,    setRivenShown]    = useState(false);
   const [notifPermissionDenied, setNotifPermissionDenied] = useState(false);
+  const [arbOverlayTestResult, setArbOverlayTestResult] = useState<string | null>(null);
   if (!props.open) return null;
   const onClose = props.onClose;
 
@@ -471,6 +474,27 @@ export default function SettingsModal(props: SettingsModalProps) {
                         invoke(TAURI_COMMANDS.SET_MEM_TRIGGER_ENABLED, { enabled: next });
                       }}
                     >{memTriggerEnabled ? "On" : "Off"}</SecondaryButton>
+                  </div>
+                </div>
+
+                {/* Arbitration Summary Overlay */}
+                <div className={SECTION_CLASS}>
+                  <div className={SECTION_TITLE_CLASS}>Arbitration Summary Overlay</div>
+                  <div className={ROW_CLASS}>
+                    <div className={ROW_INFO_CLASS}>
+                      <span className={ROW_LABEL_CLASS}>Enable</span>
+                      <span className={ROW_DESC_CLASS}>Briefly show a completed arbitration run's numbers over the game. Runs are recorded either way.</span>
+                    </div>
+                    <SecondaryButton
+                      className={toggleButtonClass(arbOverlayEnabled)}
+                      onClick={() => {
+                        const next = !arbOverlayEnabled;
+                        setArbOverlayEnabled(next);
+                        settingsRef.current = { ...settingsRef.current, arbitrationOverlayEnabled: next };
+                        saveAllSettings();
+                        invoke(TAURI_COMMANDS.SET_ARBITRATION_OVERLAY_ENABLED, { enabled: next });
+                      }}
+                    >{arbOverlayEnabled ? "On" : "Off"}</SecondaryButton>
                   </div>
                 </div>
 
@@ -1002,6 +1026,25 @@ export default function SettingsModal(props: SettingsModalProps) {
                       try { setRelicPickTestResult(await invoke<string>("test_relic_pick_overlay", { era: relicPickTestEra })); }
                       catch (e) { setRelicPickTestResult(`Error: ${e}`); }
                     }}>Launch</SecondaryButton>
+
+                    {IS_DEV && (
+                      <>
+                        <div className={ROW_INFO_CLASS}>
+                          <span className={ROW_LABEL_CLASS}>Test Arbitration Summary Overlay</span>
+                          <span className={ROW_DESC_CLASS}>
+                            Fire the post-run overlay with a sample run. Ignores the enable setting.
+                            {arbOverlayTestResult && <span className="mt-0.5 block text-11 text-accent">{arbOverlayTestResult}</span>}
+                          </span>
+                        </div>
+                        <div />
+                        <SecondaryButton onClick={async () => {
+                          setArbOverlayTestResult(null);
+                          try { setArbOverlayTestResult(await invoke<string>("test_arbitration_overlay")); }
+                          catch (e) { setArbOverlayTestResult(`Error: ${e}`); }
+                        }}>Launch</SecondaryButton>
+                        <div />
+                      </>
+                    )}
 
                     {/* EE.log tail — reveals what string to trigger on */}
                     <div className={ROW_INFO_CLASS}>
