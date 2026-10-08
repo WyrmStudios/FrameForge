@@ -1,12 +1,12 @@
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::io::Write;
 
-use tracing::info;
 use tauri::{Emitter, Manager, State};
+use tracing::info;
 
 use app_state::{load_corrections, AppState};
 use catalogue::load_items_cache;
@@ -100,17 +100,28 @@ pub(crate) fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 fn sanitize_chat_item_name(s: &str) -> String {
-    let rank = s.chars().filter(|&c| ('\u{E000}'..='\u{F8FF}').contains(&c)).count();
-    let clean = s.chars()
+    let rank = s
+        .chars()
+        .filter(|&c| ('\u{E000}'..='\u{F8FF}').contains(&c))
+        .count();
+    let clean = s
+        .chars()
         .filter(|&c| !('\u{E000}'..='\u{F8FF}').contains(&c) && !c.is_control())
         .collect::<String>()
         .trim()
         .to_string();
-    if rank > 0 { format!("{clean} (R{rank})") } else { clean }
+    if rank > 0 {
+        format!("{clean} (R{rank})")
+    } else {
+        clean
+    }
 }
 
 pub(crate) fn append_to_file(path: &std::path::Path, text: &str) -> std::io::Result<()> {
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     f.write_all(text.as_bytes())
 }
 
@@ -141,24 +152,30 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
         relics_run_prices_cache_path,
         corrections_path,
     } = paths;
-    let items = load_items_cache(items_cache_path)
-        .unwrap_or_else(wfcd::fallback_items);
-    let weapon_dispositions: HashMap<String, f32> = items.iter()
+    let items = load_items_cache(items_cache_path).unwrap_or_else(wfcd::fallback_items);
+    let weapon_dispositions: HashMap<String, f32> = items
+        .iter()
         .filter_map(|i| i.omega_attenuation.map(|d| (i.unique_name.clone(), d)))
         .collect();
     let recipes = load_recipes_cache(recipes_cache_path);
     let relic_drops: HashMap<String, Vec<String>> = std::fs::read_to_string(relic_drops_cache_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
 
     // Relic rewards: invalidate on old format or age > 24 h.
     let relic_rewards: HashMap<String, Vec<wfcd::RelicReward>> = {
         let cache_age_ok = std::fs::metadata(relic_rewards_cache_path)
             .and_then(|m| m.modified())
-            .map(|t| t.elapsed().unwrap_or(std::time::Duration::MAX) < std::time::Duration::from_secs(86_400))
+            .map(|t| {
+                t.elapsed().unwrap_or(std::time::Duration::MAX)
+                    < std::time::Duration::from_secs(86_400)
+            })
             .unwrap_or(false);
         let loaded: Option<HashMap<String, Vec<wfcd::RelicReward>>> = if cache_age_ok {
             std::fs::read_to_string(relic_rewards_cache_path)
-                .ok().and_then(|s| serde_json::from_str(&s).ok())
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
         } else {
             None
         };
@@ -179,9 +196,13 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
     // Inventory state → split into quantities, uniques, mods.
     let inv_state = load_inventory_state_cache(inventory_state_cache_path);
 
-    let quantities: HashMap<String, i64> = inv_state.items.iter()
+    let quantities: HashMap<String, i64> = inv_state
+        .items
+        .iter()
         .filter(|(k, v)| {
-            if v.is_flavour { return true; }
+            if v.is_flavour {
+                return true;
+            }
             v.mod_ranks.is_none()
                 && (!is_unique_path(k) || matches!(v.category.as_str(), "Blueprints" | "Parts"))
                 && v.amount > 0
@@ -189,20 +210,29 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
         .map(|(k, v)| (k.clone(), if v.is_flavour { 1 } else { v.amount }))
         .collect();
 
-    let unique: HashMap<String, i64> = inv_state.items.iter()
+    let unique: HashMap<String, i64> = inv_state
+        .items
+        .iter()
         .filter(|(k, v)| {
-            v.mod_ranks.is_none() && is_unique_path(k) && v.amount > 0
+            v.mod_ranks.is_none()
+                && is_unique_path(k)
+                && v.amount > 0
                 && !matches!(v.category.as_str(), "Blueprints" | "Parts")
         })
         .map(|(k, _)| (k.clone(), 1i64))
         .collect();
 
-    let mods: HashMap<String, memory_scanner::ModCount> = inv_state.items.iter()
+    let mods: HashMap<String, memory_scanner::ModCount> = inv_state
+        .items
+        .iter()
         .filter(|(_, v)| v.mod_ranks.is_some())
         .map(|(k, v)| {
             let mc = memory_scanner::ModCount {
                 total: v.amount,
-                by_rank: v.mod_ranks.as_ref().unwrap()
+                by_rank: v
+                    .mod_ranks
+                    .as_ref()
+                    .unwrap()
                     .iter()
                     .filter_map(|(r, &c)| r.parse::<u8>().ok().map(|rank| (rank, c)))
                     .collect(),
@@ -211,14 +241,20 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
         })
         .collect();
 
-    let syndicate_catalog: HashMap<String, Vec<SyndicateOffer>> = std::fs::read_to_string(syndicate_catalog_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let syndicate_catalog: HashMap<String, Vec<SyndicateOffer>> =
+        std::fs::read_to_string(syndicate_catalog_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
 
     let auction_ids: Vec<String> = std::fs::read_to_string(auction_ids_path)
-        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
 
     let relics_run = load_relics_run_cache(relics_run_prices_cache_path);
-    let relics_run_prices = relics_run.as_ref()
+    let relics_run_prices = relics_run
+        .as_ref()
         .map(|(by_name, _)| by_name.clone())
         .unwrap_or_default();
     let wfm_prices: HashMap<String, Option<u32>> = relics_run
@@ -228,9 +264,19 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
     let corrections = load_corrections(corrections_path);
 
     InitialState {
-        items, weapon_dispositions, recipes, relic_drops, relic_rewards,
-        quantities, unique, mods, syndicate_catalog, auction_ids,
-        relics_run_prices, wfm_prices, corrections,
+        items,
+        weapon_dispositions,
+        recipes,
+        relic_drops,
+        relic_rewards,
+        quantities,
+        unique,
+        mods,
+        syndicate_catalog,
+        auction_ids,
+        relics_run_prices,
+        wfm_prices,
+        corrections,
     }
 }
 
@@ -249,8 +295,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Local HTTP server for cached item images.
     {
         let img_cache_dir = app.state::<AppState>().img_cache_dir.clone();
-        let std_listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| e.to_string())?;
+        let std_listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         let port = std_listener.local_addr().map_err(|e| e.to_string())?.port();
         *app.state::<AppState>().img_server_port.lock().unwrap() = port;
         tauri::async_runtime::spawn(async move {
@@ -263,15 +308,21 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Main window: set icon, restore geometry, show.
     if let Some(window) = app.get_webview_window("main") {
-        let icon = tauri::image::Image::from_bytes(
-            include_bytes!("../icons/icon.png")
-        ).map_err(|e| e.to_string())?;
+        let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+            .map_err(|e| e.to_string())?;
         window.set_icon(icon).map_err(|e| e.to_string())?;
         if cfg!(debug_assertions) {
             let _ = window.set_title("FrameForge Dev");
         }
         let state = app.state::<AppState>();
-        restore_window_state(app.handle(), &window, &state.settings_path, "window", 400, 300);
+        restore_window_state(
+            app.handle(),
+            &window,
+            &state.settings_path,
+            "window",
+            400,
+            300,
+        );
         let _ = window.show();
     }
 
@@ -279,9 +330,10 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // NEVER hide relic-overlay — breaks DirectComposition on transparent WebView2.
     if let Some(win) = app.get_webview_window("relic-overlay") {
         let _ = win.show();
-        let _ = win.set_position(tauri::Position::Physical(
-            tauri::PhysicalPosition { x: 0, y: -3000 }
-        ));
+        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+            x: 0,
+            y: -3000,
+        }));
     }
 
     // Single EE.log tailer — started once, unconditionally, and runs for the app's
@@ -290,7 +342,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // reading); the relic-reward OCR trigger inside it self-gates on `monitor_active`.
     {
         let state = app.state::<AppState>();
-        let relic_rewards_map = state.relic_rewards.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let relic_rewards_map = state
+            .relic_rewards
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         reward_watcher::spawn_reward_watcher_thread(reward_watcher::RewardWatcherDeps {
             app: app.handle().clone(),
             flag: state.monitor_active.clone(),
@@ -304,11 +360,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let app_handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
             let state = app_handle.state::<AppState>();
-            let (by_name, by_slug) = match load_relics_run_cache(&state.relics_run_prices_cache_path) {
+            let (by_name, by_slug) = match load_relics_run_cache(
+                &state.relics_run_prices_cache_path,
+            ) {
                 Some(cached) => cached,
                 None => {
                     let data = tauri::async_runtime::spawn_blocking(fetch_relics_run_data)
-                        .await.unwrap_or_default();
+                        .await
+                        .unwrap_or_default();
                     if !data.0.is_empty() {
                         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                         let j = serde_json::json!({ "date": today, "by_name": &data.0, "by_slug": &data.1 });
@@ -319,8 +378,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     data
                 }
             };
-            if by_name.is_empty() { return; }
-            *state.relics_run_prices.lock().unwrap_or_else(|e| e.into_inner()) = by_name;
+            if by_name.is_empty() {
+                return;
+            }
+            *state
+                .relics_run_prices
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = by_name;
             for (slug, price) in by_slug {
                 if !state.wfm.is_price_cached(&slug) {
                     state.wfm.cache_price(slug, Some(price));
@@ -345,8 +409,16 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     }
 
     let catalog = {
-        let items = state.wfcd_items.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let relic_drops = state.relic_drops.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let items = state
+            .wfcd_items
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let relic_drops = state
+            .relic_drops
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         monitor::build_monitor_catalog(&items, &state.corrections, &relic_drops)
     };
 
@@ -354,30 +426,32 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 
     let (blob_tx, blob_rx) = std::sync::mpsc::channel::<memory_scanner::BlobInventory>();
 
-    blob_capture::spawn_blob_capture_thread(blob_capture::BlobCaptureDeps {
-        app: app.clone(),
-        flag: flag.clone(),
-        db_path: state.db_path.clone(),
-        inventory_state_cache_path: state.inventory_state_cache_path.clone(),
-        shared_quantities: state.current_quantities.clone(),
-        shared_unique: state.unique_quantities.clone(),
-        shared_mods: state.current_mods.clone(),
-        shared_crafting: state.current_crafting.clone(),
-        blob_log_enabled: state.blob_log_enabled.clone(),
-        blob_log_dir: state.blob_log_dir.clone(),
-        debug_cat_enabled: state.debug_cat_enabled.clone(),
-        unmatched_paths_dir: state.unmatched_paths_dir.clone(),
-        force_pid_check: state.force_pid_check.clone(),
-        blob_rx,
-        blob_tx,
-    }, catalog);
+    blob_capture::spawn_blob_capture_thread(
+        blob_capture::BlobCaptureDeps {
+            app: app.clone(),
+            flag: flag.clone(),
+            db_path: state.db_path.clone(),
+            inventory_state_cache_path: state.inventory_state_cache_path.clone(),
+            shared_quantities: state.current_quantities.clone(),
+            shared_unique: state.unique_quantities.clone(),
+            shared_mods: state.current_mods.clone(),
+            shared_crafting: state.current_crafting.clone(),
+            blob_log_enabled: state.blob_log_enabled.clone(),
+            blob_log_dir: state.blob_log_dir.clone(),
+            debug_cat_enabled: state.debug_cat_enabled.clone(),
+            unmatched_paths_dir: state.unmatched_paths_dir.clone(),
+            force_pid_check: state.force_pid_check.clone(),
+            blob_rx,
+            blob_tx,
+        },
+        catalog,
+    );
 
     // The EE.log tailer itself runs unconditionally from app startup (see `setup_app`) —
     // only the relic-reward OCR trigger and this scan-only legacy worker are tied to
     // the memory scanner's on/off state.
     let debug_path = std::env::temp_dir().join("frameforge_reward_debug.txt");
-    let last_found_path = std::env::temp_dir().join("frameforge_last_reward.txt");
-    monitor::start_legacy_reward_worker(flag, debug_path, last_found_path);
+    monitor::start_legacy_reward_worker(flag, debug_path);
 
     Ok(())
 }
@@ -422,8 +496,15 @@ pub fn run() {
     let raw_scan_path = raw_scan_dir.join("raw_scan.txt");
     let memory_probe_path = memory_probe_dir.join("memory_probe.txt");
 
-    for dir in &[&blob_log_dir, &api_log_dir, &auto_capture_dir, &manual_capture_dir,
-                 &memory_probe_dir, &raw_scan_dir, &unmatched_paths_dir] {
+    for dir in &[
+        &blob_log_dir,
+        &api_log_dir,
+        &auto_capture_dir,
+        &manual_capture_dir,
+        &memory_probe_dir,
+        &raw_scan_dir,
+        &unmatched_paths_dir,
+    ] {
         let _ = std::fs::create_dir_all(dir);
     }
 
@@ -449,19 +530,25 @@ pub fn run() {
     // ── Version-based cache invalidation ───────────────────────────────────
     {
         const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-        let last_version = read_settings_map(&settings_path)
-            .ok()
-            .and_then(|m| m.get("lastVersion").and_then(|v| v.as_str().map(String::from)));
+        let last_version = read_settings_map(&settings_path).ok().and_then(|m| {
+            m.get("lastVersion")
+                .and_then(|v| v.as_str().map(String::from))
+        });
         if last_version.as_deref() != Some(CURRENT_VERSION) {
             for path in &[
-                &items_cache_path, &recipes_cache_path,
-                &relic_drops_cache_path, &relic_rewards_cache_path,
+                &items_cache_path,
+                &recipes_cache_path,
+                &relic_drops_cache_path,
+                &relic_rewards_cache_path,
             ] {
                 let _ = std::fs::remove_file(path);
             }
             wfcd::clear_cached_etags();
             let _ = merge_settings(&settings_path, |map| {
-                map.insert("lastVersion".to_string(), serde_json::Value::String(CURRENT_VERSION.to_string()));
+                map.insert(
+                    "lastVersion".to_string(),
+                    serde_json::Value::String(CURRENT_VERSION.to_string()),
+                );
             });
         }
     }
@@ -478,10 +565,21 @@ pub fn run() {
         relics_run_prices_cache_path: &relics_run_prices_cache_path,
         corrections_path: &config_dir.join("corrections.json"),
     });
+    let diagnostics_enabled = read_settings_map(&settings_path)
+        .ok()
+        .and_then(|settings| {
+            settings
+                .get("ocrDiagnosticsEnabled")
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(false);
+    diagnostics::set_ocr_pipeline_diagnostics_enabled(diagnostics_enabled);
 
     // ── Tauri builder ──────────────────────────────────────────────────────
     tauri::Builder::default()
-        .register_uri_scheme_protocol("ffauth", |ctx, req| console_login::handle_ffauth(ctx.app_handle(), &req))
+        .register_uri_scheme_protocol("ffauth", |ctx, req| {
+            console_login::handle_ffauth(ctx.app_handle(), &req)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -510,6 +608,7 @@ pub fn run() {
             api_quantities_cache: Arc::new(Mutex::new(HashMap::new())),
             api_mod_copies_cache: Arc::new(Mutex::new(Vec::new())),
             last_ocr_frame: Arc::new(Mutex::new(None)),
+            reward_diagnostic_session: Mutex::new(None),
             current_crafting: Arc::new(Mutex::new(vec![])),
             monitor_active: Arc::new(AtomicBool::new(false)),
             raw_scan_active: Arc::new(AtomicBool::new(false)),
@@ -664,7 +763,7 @@ pub fn run() {
             relic_pick::move_overlay_offscreen,
             diagnostics::get_diag_folder_size,
             diagnostics::clear_diag_folder,
-            diagnostics::save_auto_diag_capture,
+            diagnostics::set_ocr_pipeline_diagnostics,
             diagnostics::capture_diagnostics,
             image_cache::get_img_cache_dir,
             image_cache::prewarm_image_cache,
@@ -695,7 +794,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             let label = window.label().to_string();
             if label == "main" || label == "modular-popout" {
-                let prefix = if label == "main" { "window" } else { "modularWin" };
+                let prefix = if label == "main" {
+                    "window"
+                } else {
+                    "modularWin"
+                };
                 match event {
                     tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
                         let app = window.app_handle();

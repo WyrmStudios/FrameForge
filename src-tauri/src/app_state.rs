@@ -3,29 +3,37 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::wfcd::{RecipeComponent, RelicReward, SyndicateOffer, WfcdItem};
 use crate::memory_scanner;
+use crate::reward_pipeline::RewardDiagnosticSession;
+use crate::wfcd::{RecipeComponent, RelicReward, SyndicateOffer, WfcdItem};
 use crate::wfm::Wfm;
 
-use crate::monitor::CraftingJob;
 use crate::companion_api::ApiModCopy;
+use crate::monitor::CraftingJob;
 
 type OcrFrame = (Vec<u8>, u32, u32);
-type WorldstateCache = (std::time::Instant, Arc<serde_json::Value>, Arc<serde_json::Value>);
+type WorldstateCache = (
+    std::time::Instant,
+    Arc<serde_json::Value>,
+    Arc<serde_json::Value>,
+);
 
 /// Bundled corrections file embedded at compile time. Never absent at runtime.
 const BUNDLED_CORRECTIONS: &str = include_str!("../resources/corrections.json");
 
 /// Load and merge corrections: bundled entries first, then user file overrides on a per-path basis.
 pub(crate) fn load_corrections(user_path: &std::path::Path) -> HashMap<String, CorrectionEntry> {
-    let mut map: HashMap<String, CorrectionEntry> = serde_json::from_str::<Vec<CorrectionEntry>>(BUNDLED_CORRECTIONS)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| (e.path.clone(), e))
-        .collect();
+    let mut map: HashMap<String, CorrectionEntry> =
+        serde_json::from_str::<Vec<CorrectionEntry>>(BUNDLED_CORRECTIONS)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| (e.path.clone(), e))
+            .collect();
     if let Ok(content) = std::fs::read_to_string(user_path) {
         if let Ok(entries) = serde_json::from_str::<Vec<CorrectionEntry>>(&content) {
-            for e in entries { map.insert(e.path.clone(), e); }
+            for e in entries {
+                map.insert(e.path.clone(), e);
+            }
         }
     }
     map
@@ -35,16 +43,16 @@ pub(crate) fn load_corrections(user_path: &std::path::Path) -> HashMap<String, C
 /// Fields are all optional so a minimal entry can omit unused columns.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct CorrectionEntry {
-    pub path:          String,
+    pub path: String,
     /// Display name override. Required unless category is "Ignored".
-    pub name:          Option<String>,
+    pub name: Option<String>,
     /// Display category override, or "Ignored" to suppress the path everywhere.
-    pub category:      Option<String>,
+    pub category: Option<String>,
     /// Explicit WFM tradeability flag. `false` means skip all WFM price lookups.
     /// When absent the app auto-detects from ducat_price / category.
     pub tradeable_wfm: Option<bool>,
     /// True when this item is stackable (quantity shown rather than binary owned).
-    pub is_stackable:  Option<bool>,
+    pub is_stackable: Option<bool>,
 }
 
 pub struct AppState {
@@ -116,6 +124,8 @@ pub struct AppState {
     /// Most recent OCR frame (top ~48% of Warframe window, BGRA, width, height).
     /// Stored by the OCR loop so auto-capture can write it without a second GPU readback.
     pub last_ocr_frame: Arc<Mutex<Option<OcrFrame>>>,
+    /// Latest active or completed relic-reward diagnostic session for frontend commands.
+    pub reward_diagnostic_session: Mutex<Option<Arc<RewardDiagnosticSession>>>,
     /// Local image cache directory — craftable item images downloaded here on first run.
     pub img_cache_dir: PathBuf,
     /// Port of the local HTTP image server (set in setup hook, 0 until started).

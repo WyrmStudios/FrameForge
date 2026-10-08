@@ -26,7 +26,7 @@ interface UseSettingsReturn {
   memoryScannerEnabled: boolean;
   blobLogEnabled: boolean;
   apiLogEnabled: boolean;
-  autoDiagEnabled: boolean;
+  ocrDiagnosticsEnabled: boolean;
   overlaysEnabled: boolean;
   overlayEnabled: boolean;
   overlayPriority: RelicOverlayPriority;
@@ -53,7 +53,7 @@ interface UseSettingsReturn {
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  setAutoDiagEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setOcrDiagnosticsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlaysEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayPriority: React.Dispatch<React.SetStateAction<RelicOverlayPriority>>;
@@ -93,7 +93,7 @@ export function useSettings(
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
   const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [apiLogEnabled, setApiLogEnabled] = useState(false);
-  const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
+  const [ocrDiagnosticsEnabled, setOcrDiagnosticsEnabled] = useState(false);
   const [overlaysEnabled, setOverlaysEnabled] = useState<boolean>(
     () => localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false"
   );
@@ -145,7 +145,7 @@ export function useSettings(
     memoryScannerEnabled: false,
     blobLogEnabled: false,
     apiLogEnabled: false,
-    autoDiagEnabled: false,
+    ocrDiagnosticsEnabled: false,
     tracked: [] as string[],
     favorites: [] as string[],
     timerFavorites: [] as string[],
@@ -197,10 +197,7 @@ export function useSettings(
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled === "boolean") setApiLogEnabled(s.apiLogEnabled);
-        if (typeof s.autoDiagEnabled === "boolean") {
-          setAutoDiagEnabled(s.autoDiagEnabled);
-          localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(s.autoDiagEnabled));
-        }
+        if (typeof s.ocrDiagnosticsEnabled === "boolean") setOcrDiagnosticsEnabled(s.ocrDiagnosticsEnabled);
         const overlaysEnabled = typeof s.overlaysEnabled === "boolean" ? s.overlaysEnabled : true;
         setOverlaysEnabled(overlaysEnabled);
         localStorage.setItem(PREFERENCE_KEYS.OVERLAYS_ENABLED, String(overlaysEnabled));
@@ -292,12 +289,16 @@ export function useSettings(
     invoke("set_api_log", { enabled: apiLogEnabled }).catch(() => {});
   }, [apiLogEnabled]); // eslint-disable-line
 
+  useEffect(() => {
+    invoke("set_ocr_pipeline_diagnostics", { enabled: ocrDiagnosticsEnabled }).catch(() => {});
+  }, [ocrDiagnosticsEnabled]);
+
   return {
     // Settings state
     memoryScannerEnabled,
     blobLogEnabled,
     apiLogEnabled,
-    autoDiagEnabled,
+    ocrDiagnosticsEnabled,
     overlaysEnabled,
     overlayEnabled,
     overlayPriority,
@@ -324,7 +325,7 @@ export function useSettings(
     setMemoryScannerEnabled,
     setBlobLogEnabled,
     setApiLogEnabled,
-    setAutoDiagEnabled,
+    setOcrDiagnosticsEnabled,
     setOverlaysEnabled,
     setOverlayEnabled,
     setOverlayPriority,

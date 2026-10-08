@@ -3,16 +3,32 @@ use tauri::State;
 use tracing::{info, warn};
 
 use crate::app_state::AppState;
-use crate::append_to_file;
 
 type MemoryPattern = (&'static str, &'static [u8], usize, usize, u64, u64);
+
+static OCR_PIPELINE_DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn ocr_pipeline_diagnostics_enabled() -> bool {
+    OCR_PIPELINE_DIAGNOSTICS_ENABLED.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_ocr_pipeline_diagnostics_enabled(enabled: bool) {
+    OCR_PIPELINE_DIAGNOSTICS_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub(crate) fn set_ocr_pipeline_diagnostics(enabled: bool) {
+    set_ocr_pipeline_diagnostics_enabled(enabled);
+}
 
 #[tauri::command]
 pub(crate) fn get_app_version(app: tauri::AppHandle) -> String {
     // Use the Tauri runtime version — same source the updater plugin uses for comparison.
     // Falls back to CARGO_PKG_VERSION in dev mode where package_info may not be set.
     let runtime = app.package_info().version.to_string();
-    if !runtime.is_empty() { return runtime; }
+    if !runtime.is_empty() {
+        return runtime;
+    }
     env!("CARGO_PKG_VERSION").to_string()
 }
 
@@ -20,10 +36,16 @@ pub(crate) fn get_app_version(app: tauri::AppHandle) -> String {
 pub(crate) fn set_app_version(version: String) -> Result<(), String> {
     let tauri_conf = std::path::Path::new("src-tauri/tauri.conf.json");
     let package_json = std::path::Path::new("package.json");
-    let cargo_toml  = std::path::Path::new("src-tauri/Cargo.toml");
-    if tauri_conf.exists()  { update_version_in_file(tauri_conf, &version)?; }
-    if package_json.exists(){ update_version_in_file(package_json, &version)?; }
-    if cargo_toml.exists()  { update_cargo_toml_version(cargo_toml, &version)?; }
+    let cargo_toml = std::path::Path::new("src-tauri/Cargo.toml");
+    if tauri_conf.exists() {
+        update_version_in_file(tauri_conf, &version)?;
+    }
+    if package_json.exists() {
+        update_version_in_file(package_json, &version)?;
+    }
+    if cargo_toml.exists() {
+        update_cargo_toml_version(cargo_toml, &version)?;
+    }
     Ok(())
 }
 
@@ -72,9 +94,9 @@ pub(crate) fn read_scan_log(state: State<AppState>) -> Result<String, String> {
 #[tauri::command]
 pub(crate) async fn dump_memory_probe(state: State<'_, AppState>) -> Result<String, String> {
     let log_path = state.memory_probe_path.clone();
-    let lines = tokio::task::spawn_blocking(|| {
-        crate::memory_scanner::dump_inventory_regions(40)
-    }).await.map_err(|e| e.to_string())?;
+    let lines = tokio::task::spawn_blocking(|| crate::memory_scanner::dump_inventory_regions(40))
+        .await
+        .map_err(|e| e.to_string())?;
     let output = lines.join("\n");
     std::fs::write(&log_path, &output).map_err(|e| e.to_string())?;
     Ok(output)
@@ -103,8 +125,8 @@ pub(crate) async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String
     }
 
     // Freshly started — truncate the output file and spawn the loop
-    let out_path  = state.raw_scan_path.clone();
-    let flag      = state.raw_scan_active.clone();
+    let out_path = state.raw_scan_path.clone();
+    let flag = state.raw_scan_active.clone();
 
     // Truncate / create the file now so the frontend can see it immediately
     std::fs::write(&out_path, "").map_err(|e| e.to_string())?;
@@ -117,21 +139,33 @@ pub(crate) async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String
             let header = format!("\n=== Pass {} at {} ===\n", pass, ts);
 
             // Open for append each pass so file grows in real time
-            match std::fs::OpenOptions::new().create(true).append(true).open(&out_path) {
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&out_path)
+            {
                 Ok(mut f) => {
                     use std::io::Write;
                     let _ = f.write_all(header.as_bytes());
                     match crate::memory_scanner::raw_scan_pass(&mut f) {
-                        Ok(n)  => { let _ = writeln!(f, "--- pass {} done: {} strings ---", pass, n); }
-                        Err(e) => { let _ = writeln!(f, "--- pass {} error: {} ---", pass, e); }
+                        Ok(n) => {
+                            let _ = writeln!(f, "--- pass {} done: {} strings ---", pass, n);
+                        }
+                        Err(e) => {
+                            let _ = writeln!(f, "--- pass {} error: {} ---", pass, e);
+                        }
                     }
                 }
-                Err(e) => { warn!(error = %e, "raw_scan open failed"); }
+                Err(e) => {
+                    warn!(error = %e, "raw_scan open failed");
+                }
             }
 
             // Sleep between passes so the user has time to navigate menus
             for _ in 0..50 {
-                if !flag.load(Ordering::SeqCst) { break; }
+                if !flag.load(Ordering::SeqCst) {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
@@ -144,68 +178,90 @@ pub(crate) async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String
 pub(crate) fn clear_cache(state: State<AppState>) -> Result<(), String> {
     // Clear change log from DB
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM quantity_changes", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM quantity_changes", [])
+        .map_err(|e| e.to_string())?;
     drop(conn);
 
     // Reset all in-memory inventory state
-    state.current_quantities.lock().map_err(|e| e.to_string())?.clear();
-    state.unique_quantities.lock().map_err(|e| e.to_string())?.clear();
-    state.current_mods.lock().map_err(|e| e.to_string())?.clear();
-    state.api_quantities_cache.lock().map_err(|e| e.to_string())?.clear();
-    state.api_mod_copies_cache.lock().map_err(|e| e.to_string())?.clear();
+    state
+        .current_quantities
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    state
+        .unique_quantities
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    state
+        .current_mods
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    state
+        .api_quantities_cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    state
+        .api_mod_copies_cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
 
     // Delete cache and hint files so nothing reloads on next start
     let _ = std::fs::remove_file(&state.quantities_cache_path);
     let _ = std::fs::remove_file(&state.inventory_state_cache_path);
-    let _ = std::fs::remove_file(state.inventory_state_cache_path.with_file_name("section_baseline.json"));
+    let _ = std::fs::remove_file(
+        state
+            .inventory_state_cache_path
+            .with_file_name("section_baseline.json"),
+    );
     let _ = std::fs::remove_file(state.log_path.with_file_name("inventory_hints.json"));
     let _ = std::fs::remove_file(state.log_path.with_file_name("mod_hints.json"));
 
     Ok(())
 }
 
-/// Append text to both the global overlay session log and the per-session diagnostic file.
-/// The diagnostic target is found by picking the most recently modified folder under
-/// %TEMP%\frameforge\diagnostics\ that contains an ocr_session_log.txt.
-pub(crate) fn append_to_diag(global_log: &std::path::Path, text: &str) {
-    let _ = append_to_file(global_log, text);
-    let diag_base = std::env::temp_dir().join("frameforge").join("diagnostics");
-    if let Ok(entries) = std::fs::read_dir(&diag_base) {
-        let mut folders: Vec<std::path::PathBuf> = entries
-            .filter_map(|e| e.ok().map(|d| d.path()))
-            .filter(|p| p.is_dir())
-            .collect();
-        folders.sort();
-        if let Some(latest) = folders.last() {
-            let diag_log = latest.join("ocr_session_log.txt");
-            if diag_log.exists() {
-                let _ = append_to_file(&diag_log, text);
-            }
-        }
-    }
-}
-
 /// Read the riven overlay session log.
 #[tauri::command]
 pub(crate) fn get_riven_session_log() -> String {
     let path = std::env::temp_dir().join("frameforge_riven_session.txt");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| "(no riven session log yet — open the riven reroll screen first)".into())
+    std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        "(no riven session log yet — open the riven reroll screen first)".into()
+    })
 }
 
 /// Read the current overlay session log.
 #[tauri::command]
-pub(crate) fn get_overlay_session_log() -> String {
-    let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
-    std::fs::read_to_string(&path).unwrap_or_else(|_| "(no session log yet — trigger a Void Fissure first)".into())
+pub(crate) fn get_overlay_session_log(state: State<AppState>) -> String {
+    let session = state
+        .reward_diagnostic_session
+        .lock()
+        .ok()
+        .and_then(|session| session.clone());
+    session
+        .and_then(|session| std::fs::read_to_string(session.log_path()).ok())
+        .unwrap_or_else(|| "(no session log yet — trigger a Void Fissure first)".into())
 }
 
 /// Frontend tracing — App.tsx and Overlay.tsx call this to write diagnostic
 /// lines into the same session log that gets copied to the diagnostics folder.
+/// Logged as `{"event":"fe"}` JSONL so the log stays one consistent stream.
 #[tauri::command]
-pub(crate) fn log_relic_fe(msg: String) {
-    let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
-    let _ = append_to_file(&path, &format!("[FE] {}\n", msg));
+pub(crate) fn log_relic_fe(msg: String, state: State<AppState>) {
+    let session = state
+        .reward_diagnostic_session
+        .lock()
+        .ok()
+        .and_then(|session| session.clone());
+    let Some(session) = session else { return };
+    let event = serde_json::json!({
+        "t": chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+        "event": "fe",
+        "msg": msg,
+    });
+    session.log(&event);
 }
 
 /// Force-set the relic-overlay window to HWND_TOPMOST via SetWindowPos.
@@ -213,7 +269,7 @@ pub(crate) fn log_relic_fe(msg: String) {
 /// Warframe's continuous HWND_TOPMOST reassertion.
 #[tauri::command]
 pub(crate) fn set_overlay_topmost() {
-    use crate::platform::{WindowManager, Platform};
+    use crate::platform::{Platform, WindowManager};
     Platform::set_overlay_topmost();
 }
 
@@ -225,12 +281,11 @@ pub(crate) fn set_overlay_topmost() {
 /// Nothing at all = window creation failed or WebView not rendering.
 #[tauri::command]
 pub(crate) fn inject_overlay_diagnostic(app: tauri::AppHandle) -> String {
-    use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindowBuilder, WebviewUrl};
+    use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 
     // Find Warframe's client area to anchor the diagnostic window to the right monitor.
-    use crate::platform::{WindowManager, Platform};
-    let rect = Platform::get_warframe_window_rect()
-        .unwrap_or([0, 0, 1920, 1080]);
+    use crate::platform::{Platform, WindowManager};
+    let rect = Platform::get_warframe_window_rect().unwrap_or([0, 0, 1920, 1080]);
     let (wf_x, wf_y, wf_w, wf_h) = (rect[0], rect[1], rect[2], rect[3]);
 
     // Place diagnostic at the vertical centre of the Warframe client area, full width.
@@ -243,15 +298,21 @@ pub(crate) fn inject_overlay_diagnostic(app: tauri::AppHandle) -> String {
         Some(w) => w,
         None => {
             // Pre-declared window missing — create a fresh one from Rust.
-            match WebviewWindowBuilder::new(&app, "relic-overlay",
-                WebviewUrl::App("index.html#overlay".into()))
-                .title("FrameForge Overlay")
-                .position(diag_x as f64, diag_y as f64)
-                .inner_size(diag_w as f64, diag_h as f64)
-                .transparent(true).decorations(false)
-                .always_on_top(true).skip_taskbar(true)
-                .resizable(false).focused(false)
-                .build()
+            match WebviewWindowBuilder::new(
+                &app,
+                "relic-overlay",
+                WebviewUrl::App("index.html#overlay".into()),
+            )
+            .title("FrameForge Overlay")
+            .position(diag_x as f64, diag_y as f64)
+            .inner_size(diag_w as f64, diag_h as f64)
+            .transparent(true)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .build()
             {
                 Ok(w) => w,
                 Err(e) => return format!("create-err:{e}"),
@@ -259,8 +320,14 @@ pub(crate) fn inject_overlay_diagnostic(app: tauri::AppHandle) -> String {
         }
     };
 
-    let _ = win.set_position(tauri::Position::Physical(PhysicalPosition { x: diag_x, y: diag_y }));
-    let _ = win.set_size(tauri::Size::Physical(PhysicalSize { width: diag_w, height: diag_h }));
+    let _ = win.set_position(tauri::Position::Physical(PhysicalPosition {
+        x: diag_x,
+        y: diag_y,
+    }));
+    let _ = win.set_size(tauri::Size::Physical(PhysicalSize {
+        width: diag_w,
+        height: diag_h,
+    }));
     let _ = win.set_always_on_top(true);
     let _ = win.show();
 
@@ -302,7 +369,7 @@ pub(crate) fn toggle_debug_categorization(state: State<AppState>) -> bool {
 /// and the Tauri init script is injected properly — query strings prevent this.
 #[tauri::command]
 pub(crate) fn debug_create_window(app: tauri::AppHandle) -> Result<String, String> {
-    use tauri::{Manager, WebviewWindowBuilder, WebviewUrl};
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     if let Some(existing) = app.get_webview_window("relic-overlay-solid") {
         let _ = existing.close();
         std::thread::sleep(std::time::Duration::from_millis(150));
@@ -327,22 +394,45 @@ pub(crate) fn debug_create_window(app: tauri::AppHandle) -> Result<String, Strin
 }
 
 fn dir_size_bytes(dir: &std::path::Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0; };
-    entries.filter_map(|e| e.ok()).map(|e| {
-        let p = e.path();
-        if p.is_dir() { dir_size_bytes(&p) }
-        else { std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) }
-    }).sum()
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            let p = e.path();
+            if p.is_dir() {
+                dir_size_bytes(&p)
+            } else {
+                std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0)
+            }
+        })
+        .sum()
 }
 
+fn reward_diagnostic_temp_paths() -> [std::path::PathBuf; 2] {
+    let temp_dir = std::env::temp_dir();
+    [
+        temp_dir.join("frameforge_capture_debug.bmp"),
+        temp_dir.join("frameforge_last_reward.txt"),
+    ]
+}
 
-/// Return the total size of %TEMP%\frameforge\diagnostics\ in bytes.
+/// Return the total size of relic-reward diagnostics, including legacy temp files.
 #[tauri::command]
 pub(crate) fn get_diag_folder_size(state: State<AppState>) -> u64 {
     dir_size_bytes(&state.auto_capture_dir)
+        + reward_diagnostic_temp_paths()
+            .iter()
+            .map(|path| {
+                std::fs::metadata(path)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0)
+            })
+            .sum::<u64>()
 }
 
-/// Delete all timestamped capture folders inside the auto-capture directory.
+/// Delete all relic-reward diagnostics, including legacy temp files.
 /// Returns the size after deletion (always 0 on success).
 #[tauri::command]
 pub(crate) fn clear_diag_folder(state: State<AppState>) -> u64 {
@@ -350,9 +440,18 @@ pub(crate) fn clear_diag_folder(state: State<AppState>) -> u64 {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let p = entry.path();
-            if p.is_dir() { let _ = std::fs::remove_dir_all(&p); }
-            else          { let _ = std::fs::remove_file(&p); }
+            if p.is_dir() {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::remove_file(&p);
+            }
         }
+    }
+    for path in reward_diagnostic_temp_paths() {
+        let _ = std::fs::remove_file(path);
+    }
+    if let Ok(mut session) = state.reward_diagnostic_session.lock() {
+        *session = None;
     }
     0
 }
@@ -360,18 +459,25 @@ pub(crate) fn clear_diag_folder(state: State<AppState>) -> u64 {
 #[tauri::command]
 pub(crate) fn open_debug_folder(state: State<AppState>, which: String) -> Result<(), String> {
     let path: std::path::PathBuf = match which.as_str() {
-        "blobs"           => state.blob_log_dir.clone(),
-        "api_logs"        => state.api_log_dir.clone(),
-        "raw_scan"        => state.raw_scan_path.parent().ok_or("no parent")?.to_path_buf(),
-        "probe"           => state.memory_probe_path.parent().ok_or("no parent")?.to_path_buf(),
-        "diag"            => state.auto_capture_dir.clone(),
-        "manual_capture"  => state.manual_capture_dir.clone(),
+        "blobs" => state.blob_log_dir.clone(),
+        "api_logs" => state.api_log_dir.clone(),
+        "raw_scan" => state
+            .raw_scan_path
+            .parent()
+            .ok_or("no parent")?
+            .to_path_buf(),
+        "probe" => state
+            .memory_probe_path
+            .parent()
+            .ok_or("no parent")?
+            .to_path_buf(),
+        "diag" => state.auto_capture_dir.clone(),
+        "manual_capture" => state.manual_capture_dir.clone(),
         "unmatched_paths" => state.unmatched_paths_dir.clone(),
         _ => return Err("Unknown debug folder".into()),
     };
     std::fs::create_dir_all(&path).ok();
-    tauri_plugin_opener::open_path(&path, None::<&str>)
-        .map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -387,17 +493,24 @@ pub(crate) fn clear_debug_data(state: State<AppState>, which: String) -> Result<
         }
     };
     match which.as_str() {
-        "blobs"           => clear_dir(&state.blob_log_dir),
-        "api_logs"        => clear_dir(&state.api_log_dir),
-        "raw_scan"        => { let _ = std::fs::remove_file(&state.raw_scan_path); }
-        "probe"           => { let _ = std::fs::remove_file(&state.memory_probe_path); }
+        "blobs" => clear_dir(&state.blob_log_dir),
+        "api_logs" => clear_dir(&state.api_log_dir),
+        "raw_scan" => {
+            let _ = std::fs::remove_file(&state.raw_scan_path);
+        }
+        "probe" => {
+            let _ = std::fs::remove_file(&state.memory_probe_path);
+        }
         "unmatched_paths" => clear_dir(&state.unmatched_paths_dir),
-        "manual_capture"  => {
+        "manual_capture" => {
             if let Ok(entries) = std::fs::read_dir(&state.manual_capture_dir) {
                 for e in entries.filter_map(|e| e.ok()) {
                     let p = e.path();
-                    if p.is_dir() { let _ = std::fs::remove_dir_all(&p); }
-                    else          { let _ = std::fs::remove_file(&p); }
+                    if p.is_dir() {
+                        let _ = std::fs::remove_dir_all(&p);
+                    } else {
+                        let _ = std::fs::remove_file(&p);
+                    }
                 }
             }
         }
@@ -411,12 +524,16 @@ pub(crate) fn clear_debug_data(state: State<AppState>, which: String) -> Result<
 #[tauri::command]
 pub(crate) fn get_debug_data_size(state: State<AppState>, which: String) -> u64 {
     match which.as_str() {
-        "blobs"           => dir_size_bytes(&state.blob_log_dir),
-        "api_logs"        => dir_size_bytes(&state.api_log_dir),
-        "raw_scan"        => std::fs::metadata(&state.raw_scan_path).map(|m| m.len()).unwrap_or(0),
-        "probe"           => std::fs::metadata(&state.memory_probe_path).map(|m| m.len()).unwrap_or(0),
-        "diag"            => dir_size_bytes(&state.auto_capture_dir),
-        "manual_capture"  => dir_size_bytes(&state.manual_capture_dir),
+        "blobs" => dir_size_bytes(&state.blob_log_dir),
+        "api_logs" => dir_size_bytes(&state.api_log_dir),
+        "raw_scan" => std::fs::metadata(&state.raw_scan_path)
+            .map(|m| m.len())
+            .unwrap_or(0),
+        "probe" => std::fs::metadata(&state.memory_probe_path)
+            .map(|m| m.len())
+            .unwrap_or(0),
+        "diag" => dir_size_bytes(&state.auto_capture_dir),
+        "manual_capture" => dir_size_bytes(&state.manual_capture_dir),
         "unmatched_paths" => dir_size_bytes(&state.unmatched_paths_dir),
         _ => 0,
     }
@@ -427,11 +544,16 @@ pub(crate) fn get_debug_data_size(state: State<AppState>, which: String) -> u64 
 /// PNG compression at 2560×1440 blocks for 1–3 s and froze the overlay.
 /// 24-bit BGR (BI_RGB) uses a standard 54-byte header with no colour masks,
 /// opening correctly in every image viewer.
-pub(crate) fn write_bmp(path: &std::path::Path, bgra: &[u8], w: u32, h: u32) -> std::io::Result<()> {
+pub(crate) fn write_bmp(
+    path: &std::path::Path,
+    bgra: &[u8],
+    w: u32,
+    h: u32,
+) -> std::io::Result<()> {
     use std::io::Write;
     // 24-bit BGR rows must be padded to a 4-byte boundary.
-    let row_bytes  = (w as usize) * 3;
-    let padding    = (4 - (row_bytes % 4)) % 4;
+    let row_bytes = (w as usize) * 3;
+    let padding = (4 - (row_bytes % 4)) % 4;
     let padded_row = row_bytes + padding;
     let pixel_data_size = padded_row * h as usize;
     let file_size = 54usize + pixel_data_size;
@@ -439,87 +561,56 @@ pub(crate) fn write_bmp(path: &std::path::Path, bgra: &[u8], w: u32, h: u32) -> 
     // BMP file header (14 bytes)
     f.write_all(b"BM")?;
     f.write_all(&(file_size as u32).to_le_bytes())?;
-    f.write_all(&[0u8; 4])?;            // reserved
+    f.write_all(&[0u8; 4])?; // reserved
     f.write_all(&54u32.to_le_bytes())?; // pixel data starts immediately after 54-byte header
-    // BITMAPINFOHEADER (40 bytes)
+                                        // BITMAPINFOHEADER (40 bytes)
     f.write_all(&40u32.to_le_bytes())?;
     f.write_all(&w.to_le_bytes())?;
     f.write_all(&(h as i32).wrapping_neg().to_le_bytes())?; // negative height = top-down
-    f.write_all(&1u16.to_le_bytes())?;  // colour planes
+    f.write_all(&1u16.to_le_bytes())?; // colour planes
     f.write_all(&24u16.to_le_bytes())?; // bits per pixel
-    f.write_all(&0u32.to_le_bytes())?;  // BI_RGB — no compression, no extra masks
+    f.write_all(&0u32.to_le_bytes())?; // BI_RGB — no compression, no extra masks
     f.write_all(&(pixel_data_size as u32).to_le_bytes())?;
-    f.write_all(&[0u8; 16])?;           // XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant
-    // Pixel data: drop alpha channel (BGRA → BGR), pad each row to 4-byte boundary.
+    f.write_all(&[0u8; 16])?; // XPelsPerMeter, YPelsPerMeter, ClrUsed, ClrImportant
+                              // Pixel data: drop alpha channel (BGRA → BGR), pad each row to 4-byte boundary.
     let pad = [0u8; 4];
     for row in bgra.chunks_exact(w as usize * 4) {
         for px in row.chunks_exact(4) {
             f.write_all(&px[..3])?; // B, G, R
         }
-        if padding > 0 { f.write_all(&pad[..padding])?; }
+        if padding > 0 {
+            f.write_all(&pad[..padding])?;
+        }
     }
     Ok(())
 }
 
-/// Capture a diagnostic bundle: scan log + screenshot of the full Warframe window
-/// (including any overlay on top via GDI desktop BitBlt / DXGI fallback).
-/// Saves everything to %TEMP%\frameforge\diagnostics\<timestamp>\ and
-/// returns the folder path so the frontend can show it.
-#[tauri::command]
-pub(crate) async fn save_auto_diag_capture(state: State<'_, AppState>) -> Result<String, String> {
-    // Reuse the frame already captured by the OCR pipeline — no second GPU readback,
-    // so no GetDIBits stall that used to freeze the whole PC during fissure VFX.
-    let frame = state.last_ocr_frame.lock()
-        .ok()
-        .and_then(|g| g.clone());
-    let auto_capture_dir = state.auto_capture_dir.clone();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-        let folder = auto_capture_dir.join(&ts);
-        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
-
-        let session_log = std::env::temp_dir().join("frameforge_overlay_session.txt");
-        if session_log.exists() {
-            let _ = std::fs::copy(&session_log, folder.join("ocr_session_log.txt"));
-        }
-
-        match frame {
-            Some((pixels, w, h)) => {
-                let _ = write_bmp(&folder.join("screenshot.bmp"), &pixels, w, h);
-            }
-            None => {
-                let _ = std::fs::write(
-                    folder.join("screenshot_note.txt"),
-                    "No OCR frame captured yet — trigger a Void Fissure first.",
-                );
-            }
-        }
-
-        Ok(folder.to_string_lossy().into_owned())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[tauri::command]
 pub(crate) async fn capture_diagnostics(state: State<'_, AppState>) -> Result<String, String> {
-    let log_path          = state.log_path.clone();
-    let changes_path      = state.changes_log_path.clone();
+    let log_path = state.log_path.clone();
+    let changes_path = state.changes_log_path.clone();
     let manual_capture_dir = state.manual_capture_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let folder = manual_capture_dir.join(&ts);
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
 
-        if log_path.exists()     { let _ = std::fs::copy(&log_path,     folder.join("scan_log.txt")); }
-        if changes_path.exists() { let _ = std::fs::copy(&changes_path, folder.join("changes_log.txt")); }
+        if log_path.exists() {
+            let _ = std::fs::copy(&log_path, folder.join("scan_log.txt"));
+        }
+        if changes_path.exists() {
+            let _ = std::fs::copy(&changes_path, folder.join("changes_log.txt"));
+        }
 
         // Half-resolution capture: StretchBlt destination is 4× smaller, so GetDIBits
         // reads 4× less data — significantly reduces GPU stall time.
         match crate::ocr::capture_screen_for_diagnostics_half() {
-            Ok((pixels_bgra, w, h)) => { let _ = write_bmp(&folder.join("screenshot.bmp"), &pixels_bgra, w, h); }
-            Err(e) => { let _ = std::fs::write(folder.join("screenshot_error.txt"), &e); }
+            Ok((pixels_bgra, w, h)) => {
+                let _ = write_bmp(&folder.join("screenshot.bmp"), &pixels_bgra, w, h);
+            }
+            Err(e) => {
+                let _ = std::fs::write(folder.join("screenshot_error.txt"), &e);
+            }
         }
 
         Ok(folder.to_string_lossy().into_owned())
@@ -533,7 +624,7 @@ pub(crate) async fn capture_diagnostics(state: State<'_, AppState>) -> Result<St
 /// both exclude the window title bar and borders in windowed mode.
 #[tauri::command]
 pub(crate) fn get_warframe_window_rect() -> Result<[i32; 4], String> {
-    use crate::platform::{WindowManager, Platform};
+    use crate::platform::{Platform, WindowManager};
     Platform::get_warframe_window_rect()
 }
 
@@ -552,7 +643,7 @@ pub(crate) fn start_memory_relic_debug() -> Result<String, String> {
         return Err("Memory relic debug already running".to_string());
     }
     let log_path = std::env::temp_dir().join("frameforge_mem_relic_debug.log");
-    let log_str  = log_path.to_string_lossy().to_string();
+    let log_str = log_path.to_string_lossy().to_string();
     let header = format!(
         "══════════════════════════════════════════════════\n\
          MEMORY RELIC DEBUG — {}\n\
@@ -585,9 +676,9 @@ pub(crate) fn stop_memory_relic_debug() {
 
 #[cfg(target_os = "windows")]
 fn mem_relic_debug_loop(log_path: &std::path::Path) {
+    use crate::platform::{Platform, ProcessAccess};
     use std::collections::HashMap;
     use std::io::{Read, Seek, SeekFrom};
-    use crate::platform::{Platform, ProcessAccess};
 
     // Pattern tuple: (name, bytes, ctx_before, ctx_after, min_addr, max_region_size)
     // max_region_size=0 means no limit. Use a small cap (e.g. 4 MB) for heap-heap patterns
@@ -596,44 +687,132 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
     // Slow patterns: full memory walk every cycle (~55 s). min_addr=0 → all regions.
     // Keep this list SHORT — each pattern adds ~55 s to the cycle time.
     const PATTERNS_SLOW: &[MemoryPattern] = &[
-        ("HasFissureum",         b"\"HasFissureum\":true",               128, 1024, 0, 0),
-        ("VoidProjection.relic", b"\"VoidProjection\":{\"ItemType\":\"", 128, 1024, 0, 0),
-        ("VoidProjection.raw",   b"VoidProjection",                       16,  256, 0, 0),
+        ("HasFissureum", b"\"HasFissureum\":true", 128, 1024, 0, 0),
+        (
+            "VoidProjection.relic",
+            b"\"VoidProjection\":{\"ItemType\":\"",
+            128,
+            1024,
+            0,
+            0,
+        ),
+        ("VoidProjection.raw", b"VoidProjection", 16, 256, 0, 0),
         // Lua event name found in heap. 512 bytes after = see if item paths land nearby.
-        ("RewardVoidProjection", b"RewardVoidProjection",                 32,  512, 0, 0),
+        (
+            "RewardVoidProjection",
+            b"RewardVoidProjection",
+            32,
+            512,
+            0,
+            0,
+        ),
     ];
 
     // One-shot patterns: scanned immediately when EE.log emits the reward-screen trigger.
     // Goal: snapshot exactly what text is in heap memory at that precise moment.
     // min_addr=0, max_region_size=0 → all committed readable regions.
     const PATTERNS_ONESHOT: &[MemoryPattern] = &[
-        ("os.open_trigger",   b"VoidProjections: GetVoidProjectionReward", 96, 256, 0, 0),
-        ("os.gets_reward",    b"gets reward /Lotus/",                      96, 256, 0, 0),
-        ("os.all_rewards",    b"Host has reward info for all players now",  64, 256, 0, 0),
-        ("os.close_trigger",  b"Relic reward screen shut down",            96, 256, 0, 0),
-        ("os.close_rmi",      b"CloseVoidProjectionRewardScreen",          64, 256, 0, 0),
+        (
+            "os.open_trigger",
+            b"VoidProjections: GetVoidProjectionReward",
+            96,
+            256,
+            0,
+            0,
+        ),
+        ("os.gets_reward", b"gets reward /Lotus/", 96, 256, 0, 0),
+        (
+            "os.all_rewards",
+            b"Host has reward info for all players now",
+            64,
+            256,
+            0,
+            0,
+        ),
+        (
+            "os.close_trigger",
+            b"Relic reward screen shut down",
+            96,
+            256,
+            0,
+            0,
+        ),
+        (
+            "os.close_rmi",
+            b"CloseVoidProjectionRewardScreen",
+            64,
+            256,
+            0,
+            0,
+        ),
     ];
 
     // Fast patterns: two tiers.
     // Tier A (min_addr=LOG_BUF_MIN): game binary only — scans in milliseconds every tick.
     // Tier B (max_region_size=HEAP_SMALL): small heap regions only — still fast (<200 ms).
     // Live ring-buffer entries end with \r\n; static format strings end with \n\0.
-    const LOG_BUF_MIN:  u64 = 0x0000_7f00_0000_0000;  // binary/DLL range
-    const HEAP_SMALL:   u64 = 4 * 1024 * 1024;         // skip large heap allocs (JSON blobs etc.)
+    const LOG_BUF_MIN: u64 = 0x0000_7f00_0000_0000; // binary/DLL range
+    const HEAP_SMALL: u64 = 4 * 1024 * 1024; // skip large heap allocs (JSON blobs etc.)
     const PATTERNS_FAST: &[MemoryPattern] = &[
         // Tier A — binary range: format strings and any ring-buffer copy there
-        ("bin.gets_reward",      b"gets reward /Lotus/",                        96, 256, LOG_BUF_MIN,  0),
-        ("bin.all_rewards_in",   b"Host has reward info for all players now!\r",  0,  64, LOG_BUF_MIN,  0),
+        (
+            "bin.gets_reward",
+            b"gets reward /Lotus/",
+            96,
+            256,
+            LOG_BUF_MIN,
+            0,
+        ),
+        (
+            "bin.all_rewards_in",
+            b"Host has reward info for all players now!\r",
+            0,
+            64,
+            LOG_BUF_MIN,
+            0,
+        ),
         // Tier B — small heap regions: look for live EE.log ring-buffer text
-        ("heap.open_trigger",    b"VoidProjections: GetVoidProjectionReward",   96, 256, 0, HEAP_SMALL),
-        ("heap.close_trigger",   b"Relic reward screen shut down",              96, 256, 0, HEAP_SMALL),
-        ("heap.gets_reward",     b"gets reward /Lotus/",                        96, 256, 0, HEAP_SMALL),
-        ("heap.all_rewards",     b"Host has reward info for all players now",   64, 256, 0, HEAP_SMALL),
+        (
+            "heap.open_trigger",
+            b"VoidProjections: GetVoidProjectionReward",
+            96,
+            256,
+            0,
+            HEAP_SMALL,
+        ),
+        (
+            "heap.close_trigger",
+            b"Relic reward screen shut down",
+            96,
+            256,
+            0,
+            HEAP_SMALL,
+        ),
+        (
+            "heap.gets_reward",
+            b"gets reward /Lotus/",
+            96,
+            256,
+            0,
+            HEAP_SMALL,
+        ),
+        (
+            "heap.all_rewards",
+            b"Host has reward info for all players now",
+            64,
+            256,
+            0,
+            HEAP_SMALL,
+        ),
     ];
 
     fn append(path: &std::path::Path, s: &str) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             let _ = f.write_all(s.as_bytes());
         }
     }
@@ -659,25 +838,38 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
 
         let mut addr = HEAP_MIN;
         loop {
-            if addr >= HEAP_MAX { break; }
+            if addr >= HEAP_MAX {
+                break;
+            }
             let regions: Vec<_> = handle.regions_from(addr).collect();
-            if regions.is_empty() { break; }
+            if regions.is_empty() {
+                break;
+            }
 
             for region in &regions {
                 addr = region.base_address + region.region_size;
-                if !region.is_committed || !region.is_readable { continue; }
-                if region.region_size > REGION_MAX { continue; }
-                if !(HEAP_MIN..HEAP_MAX).contains(&region.base_address) { continue; }
+                if !region.is_committed || !region.is_readable {
+                    continue;
+                }
+                if region.region_size > REGION_MAX {
+                    continue;
+                }
+                if !(HEAP_MIN..HEAP_MAX).contains(&region.base_address) {
+                    continue;
+                }
 
                 let buf = match handle.read(region.base_address, region.region_size) {
                     Some(r) => r,
                     None => continue,
                 };
-                if buf.is_empty() { continue; }
+                if buf.is_empty() {
+                    continue;
+                }
 
                 let region_base = region.base_address as u64;
                 let mut search_from = 0usize;
-                while let Some(pos) = buf[search_from..].windows(pat.len())
+                while let Some(pos) = buf[search_from..]
+                    .windows(pat.len())
                     .position(|w| w == pat)
                     .map(|p| p + search_from)
                 {
@@ -696,8 +888,7 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
         Platform::find_warframe_pid()
     }
 
-    fn scan_process(pid: u32, patterns: &[MemoryPattern])
-        -> Vec<(String, u64, u64, u64, Vec<u8>)>  // (pat_name, region_base, region_size, match_addr, context)
+    fn scan_process(pid: u32, patterns: &[MemoryPattern]) -> Vec<(String, u64, u64, u64, Vec<u8>)> // (pat_name, region_base, region_size, match_addr, context)
     {
         let mut results = Vec::new();
 
@@ -709,12 +900,18 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
         let mut addr: usize = 0;
         loop {
             let regions: Vec<_> = handle.regions_from(addr).collect();
-            if regions.is_empty() { break; }
+            if regions.is_empty() {
+                break;
+            }
 
             for region in &regions {
                 addr = region.base_address + region.region_size;
-                if !region.is_committed || !region.is_readable { continue; }
-                if region.region_size > 128 * 1024 * 1024 { continue; }
+                if !region.is_committed || !region.is_readable {
+                    continue;
+                }
+                if region.region_size > 128 * 1024 * 1024 {
+                    continue;
+                }
 
                 let region_base = region.base_address as u64;
                 let region_size = region.region_size as u64;
@@ -723,26 +920,35 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
                 let any_match = patterns.iter().any(|&(_, _, _, _, min_addr, max_sz)| {
                     region_base >= min_addr && (max_sz == 0 || region_size <= max_sz)
                 });
-                if !any_match { continue; }
+                if !any_match {
+                    continue;
+                }
 
                 let buf = match handle.read(region.base_address, region.region_size) {
                     Some(r) => r,
                     None => continue,
                 };
-                if buf.is_empty() { continue; }
+                if buf.is_empty() {
+                    continue;
+                }
 
                 for &(name, pat, ctx_before, ctx_after, min_addr, max_region_size) in patterns {
-                    if region_base < min_addr { continue; }
-                    if max_region_size > 0 && region_size > max_region_size { continue; }
+                    if region_base < min_addr {
+                        continue;
+                    }
+                    if max_region_size > 0 && region_size > max_region_size {
+                        continue;
+                    }
                     let mut search_from = 0usize;
-                    while let Some(pos) = buf[search_from..].windows(pat.len())
+                    while let Some(pos) = buf[search_from..]
+                        .windows(pat.len())
                         .position(|w| w == pat)
                         .map(|p| p + search_from)
                     {
                         let match_addr = region_base + pos as u64;
                         let start = pos.saturating_sub(ctx_before);
-                        let end   = (pos + ctx_after).min(buf.len());
-                        let ctx   = buf[start..end].to_vec();
+                        let end = (pos + ctx_after).min(buf.len());
+                        let ctx = buf[start..end].to_vec();
                         results.push((name.to_string(), region_base, region_size, match_addr, ctx));
                         search_from = pos + pat.len();
                     }
@@ -756,8 +962,17 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
         // Hex + ASCII side-by-side, 32 bytes per row.
         let mut out = String::new();
         for chunk in ctx.chunks(32) {
-            let hex:   String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
-            let ascii: String = chunk.iter().map(|&b| if (0x20..0x7F).contains(&b) { b as char } else { '.' }).collect();
+            let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
+            let ascii: String = chunk
+                .iter()
+                .map(|&b| {
+                    if (0x20..0x7F).contains(&b) {
+                        b as char
+                    } else {
+                        '.'
+                    }
+                })
+                .collect();
             out.push_str(&format!("  {:<96} {}\n", hex, ascii));
         }
         out
@@ -779,7 +994,10 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
     }
     let mut ee_leftover = String::new();
 
-    append(log_path, "[READY] Waiting for Warframe and EE.log events…\n\n");
+    append(
+        log_path,
+        "[READY] Waiting for Warframe and EE.log events…\n\n",
+    );
 
     // ── Slow scan thread ─────────────────────────────────────────────────
     // Runs full memory walk (~60 s) continuously in background.
@@ -789,7 +1007,9 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
         while MEM_RELIC_DEBUG_RUNNING.load(Ordering::SeqCst) {
             if let Some(pid) = find_warframe_pid() {
                 let results = scan_process(pid, PATTERNS_SLOW);
-                if slow_tx.send(results).is_err() { break; }
+                if slow_tx.send(results).is_err() {
+                    break;
+                }
             } else {
                 std::thread::sleep(std::time::Duration::from_secs(2));
             }
@@ -804,20 +1024,36 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
     std::thread::spawn(move || {
         while let Ok((pid, label)) = oneshot_rx.recv() {
             let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-            append(&oneshot_log, &format!("\n[ONE-SHOT @ {} — {}]\n", ts, label));
+            append(
+                &oneshot_log,
+                &format!("\n[ONE-SHOT @ {} — {}]\n", ts, label),
+            );
             let results = scan_process(pid, PATTERNS_ONESHOT);
             let ts2 = chrono::Local::now().format("%H:%M:%S%.3f");
             if results.is_empty() {
-                append(&oneshot_log, &format!("  (no matches) scan finished @ {}\n", ts2));
+                append(
+                    &oneshot_log,
+                    &format!("  (no matches) scan finished @ {}\n", ts2),
+                );
             } else {
                 let mut block = format!("  {} match(es), scan finished @ {}\n", results.len(), ts2);
                 for (name, region_base, _rs, match_addr, ctx) in &results {
-                    block.push_str(&format!("  MATCH {} | match=0x{:016x}  region=0x{:016x}\n",
-                        name, match_addr, region_base));
+                    block.push_str(&format!(
+                        "  MATCH {} | match=0x{:016x}  region=0x{:016x}\n",
+                        name, match_addr, region_base
+                    ));
                     for chunk in ctx.chunks(32) {
-                        let hex:   String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
-                        let ascii: String = chunk.iter()
-                            .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
+                        let hex: String = chunk.iter().map(|b| format!("{:02x} ", b)).collect();
+                        let ascii: String = chunk
+                            .iter()
+                            .map(|&b| {
+                                if (0x20..0x7f).contains(&b) {
+                                    b as char
+                                } else {
+                                    '.'
+                                }
+                            })
+                            .collect();
                         block.push_str(&format!("    {:<96} {}\n", hex, ascii));
                     }
                     block.push('\n');
@@ -831,11 +1067,11 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
     // Fires every 2 s while the relic reward screen is open.
     // Scans only small heap regions for /Lotus/ paths — these would be
     // the 4 reward item paths stored in Lua string tables or C++ structures.
-    let rw_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>
-        = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let rw_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     {
-        let rw_pid_cl  = rw_pid.clone();
-        let rw_log     = log_path.to_path_buf();
+        let rw_pid_cl = rw_pid.clone();
+        let rw_log = log_path.to_path_buf();
         std::thread::spawn(move || {
             let mut scan_num = 0u32;
             let mut was_open = false;
@@ -846,26 +1082,49 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
                         was_open = true;
                         scan_num = 0;
                         let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-                        append(&rw_log,
-                            &format!("\n[RW OPEN @ {}] Starting /Lotus/ heap scan every 2 s\n", ts));
+                        append(
+                            &rw_log,
+                            &format!(
+                                "\n[RW OPEN @ {}] Starting /Lotus/ heap scan every 2 s\n",
+                                ts
+                            ),
+                        );
                     }
                     scan_num += 1;
                     let ts = chrono::Local::now().format("%H:%M:%S%.3f");
                     let hits = scan_lotus_in_heap(pid);
                     if hits.is_empty() {
-                        append(&rw_log,
-                            &format!("[RW #{} @ {}] (no /Lotus/ in small heap regions)\n", scan_num, ts));
+                        append(
+                            &rw_log,
+                            &format!(
+                                "[RW #{} @ {}] (no /Lotus/ in small heap regions)\n",
+                                scan_num, ts
+                            ),
+                        );
                     } else {
                         let mut block = format!(
-                            "[RW #{} @ {}] {} /Lotus/ hit(s) in small heap:\n", scan_num, ts, hits.len());
+                            "[RW #{} @ {}] {} /Lotus/ hit(s) in small heap:\n",
+                            scan_num,
+                            ts,
+                            hits.len()
+                        );
                         for (region_base, match_addr, ctx) in &hits {
                             block.push_str(&format!(
-                                "  match=0x{:016x}  region=0x{:016x}\n", match_addr, region_base));
+                                "  match=0x{:016x}  region=0x{:016x}\n",
+                                match_addr, region_base
+                            ));
                             for chunk in ctx.chunks(32) {
-                                let hex: String = chunk.iter()
-                                    .map(|b| format!("{:02x} ", b)).collect();
-                                let ascii: String = chunk.iter()
-                                    .map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' })
+                                let hex: String =
+                                    chunk.iter().map(|b| format!("{:02x} ", b)).collect();
+                                let ascii: String = chunk
+                                    .iter()
+                                    .map(|&b| {
+                                        if (0x20..0x7f).contains(&b) {
+                                            b as char
+                                        } else {
+                                            '.'
+                                        }
+                                    })
                                     .collect();
                                 block.push_str(&format!("    {:<96} {}\n", hex, ascii));
                             }
@@ -890,7 +1149,7 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
     // Value = (region_base, context_bytes) — region_base lets us log which alloc the match came from.
     let mut fast_prev: HashMap<(String, u64), (u64, Vec<u8>)> = HashMap::new();
     let mut slow_prev: HashMap<(String, u64), (u64, Vec<u8>)> = HashMap::new();
-    let mut scan_num  = 0u32;
+    let mut scan_num = 0u32;
     let mut warned_no_wf = false;
     let mut last_oneshot_pid: Option<u32> = None;
 
@@ -923,7 +1182,8 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
                                 // Start reward-window heap scan.
                                 *rw_pid.lock().unwrap() = Some(pid);
                             } else if ll.contains("relic reward screen shut down")
-                                    || ll.contains("closevoidprojectionrewardscreen") {
+                                || ll.contains("closevoidprojectionrewardscreen")
+                            {
                                 let _ = oneshot_tx.send((pid, "CLOSE trigger".to_string()));
                                 // Stop reward-window heap scan.
                                 *rw_pid.lock().unwrap() = None;
@@ -933,20 +1193,29 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
                         }
                     }
                 }
-                if !log_buf.is_empty() { append(log_path, &log_buf); }
+                if !log_buf.is_empty() {
+                    append(log_path, &log_buf);
+                }
             }
         }
 
-        let log_set = |label: &str, keys: &[(String, u64)], m: &HashMap<(String, u64), (u64, Vec<u8>)>| {
-            let mut s = String::new();
-            for key in keys {
-                if let Some((region_base, ctx)) = m.get(key) {
-                    s.push_str(&format!("  {} {} | match=0x{:016x}  region=0x{:016x}\n{}\n",
-                        label, key.0, key.1, region_base, fmt_context(ctx)));
+        let log_set =
+            |label: &str, keys: &[(String, u64)], m: &HashMap<(String, u64), (u64, Vec<u8>)>| {
+                let mut s = String::new();
+                for key in keys {
+                    if let Some((region_base, ctx)) = m.get(key) {
+                        s.push_str(&format!(
+                            "  {} {} | match=0x{:016x}  region=0x{:016x}\n{}\n",
+                            label,
+                            key.0,
+                            key.1,
+                            region_base,
+                            fmt_context(ctx)
+                        ));
+                    }
                 }
-            }
-            s
-        };
+                s
+            };
 
         // ── Fast pass: binary range + small heap regions, every tick ─────
         if let Some(pid) = find_warframe_pid() {
@@ -954,63 +1223,83 @@ fn mem_relic_debug_loop(log_path: &std::path::Path) {
             warned_no_wf = false;
             append(log_path, &format!("[LOG SCAN @ {}]\n", ts));
             let matches = scan_process(pid, PATTERNS_FAST);
-            let mut new_keys:  Vec<(String, u64)> = Vec::new();
-            let mut chg_keys:  Vec<(String, u64)> = Vec::new();
+            let mut new_keys: Vec<(String, u64)> = Vec::new();
+            let mut chg_keys: Vec<(String, u64)> = Vec::new();
             let mut gone_keys: Vec<(String, u64)> = Vec::new();
             let mut cur_map: HashMap<(String, u64), (u64, Vec<u8>)> = HashMap::new();
             for (name, region_base, _rs, addr, ctx) in &matches {
                 let key = (name.clone(), *addr);
                 if let Some((_, prev)) = fast_prev.get(&key) {
-                    if prev != ctx { chg_keys.push(key.clone()); }
+                    if prev != ctx {
+                        chg_keys.push(key.clone());
+                    }
                 } else {
                     new_keys.push(key.clone());
                 }
                 cur_map.insert(key, (*region_base, ctx.clone()));
             }
             for key in fast_prev.keys() {
-                if !cur_map.contains_key(key) { gone_keys.push(key.clone()); }
+                if !cur_map.contains_key(key) {
+                    gone_keys.push(key.clone());
+                }
             }
             fast_prev = cur_map;
 
             if !new_keys.is_empty() || !chg_keys.is_empty() || !gone_keys.is_empty() {
                 let mut block = format!("\n[LOG SCAN @ {} — PID {}]\n", ts, pid);
-                block.push_str(&log_set("NEW    ", &new_keys,  &fast_prev));
-                block.push_str(&log_set("CHANGED", &chg_keys,  &fast_prev));
-                for key in &gone_keys { block.push_str(&format!("  GONE   {} @ 0x{:016x}\n", key.0, key.1)); }
+                block.push_str(&log_set("NEW    ", &new_keys, &fast_prev));
+                block.push_str(&log_set("CHANGED", &chg_keys, &fast_prev));
+                for key in &gone_keys {
+                    block.push_str(&format!("  GONE   {} @ 0x{:016x}\n", key.0, key.1));
+                }
                 append(log_path, &block);
             }
         } else if !warned_no_wf {
             warned_no_wf = true;
-            append(log_path, &format!("[MEM @ {}] Warframe not running — will retry\n", ts));
+            append(
+                log_path,
+                &format!("[MEM @ {}] Warframe not running — will retry\n", ts),
+            );
         }
 
         // ── Drain slow-scan results (non-blocking) ────────────────────────
         while let Ok(matches) = slow_rx.try_recv() {
             scan_num += 1;
             let ts2 = chrono::Local::now().format("%H:%M:%S%.3f");
-            let mut new_keys:  Vec<(String, u64)> = Vec::new();
-            let mut chg_keys:  Vec<(String, u64)> = Vec::new();
+            let mut new_keys: Vec<(String, u64)> = Vec::new();
+            let mut chg_keys: Vec<(String, u64)> = Vec::new();
             let mut gone_keys: Vec<(String, u64)> = Vec::new();
             let mut cur_map: HashMap<(String, u64), (u64, Vec<u8>)> = HashMap::new();
             for (name, region_base, _rs, addr, ctx) in &matches {
                 let key = (name.clone(), *addr);
                 if let Some((_, prev)) = slow_prev.get(&key) {
-                    if prev != ctx { chg_keys.push(key.clone()); }
+                    if prev != ctx {
+                        chg_keys.push(key.clone());
+                    }
                 } else {
                     new_keys.push(key.clone());
                 }
                 cur_map.insert(key, (*region_base, ctx.clone()));
             }
             for key in slow_prev.keys() {
-                if !cur_map.contains_key(key) { gone_keys.push(key.clone()); }
+                if !cur_map.contains_key(key) {
+                    gone_keys.push(key.clone());
+                }
             }
             slow_prev = cur_map;
 
             if !new_keys.is_empty() || !chg_keys.is_empty() || !gone_keys.is_empty() {
-                let mut block = format!("\n[MEM SCAN #{} @ {} — PID {}]\n", scan_num, ts2, find_warframe_pid().unwrap_or(0));
-                block.push_str(&log_set("NEW    ", &new_keys,  &slow_prev));
-                block.push_str(&log_set("CHANGED", &chg_keys,  &slow_prev));
-                for key in &gone_keys { block.push_str(&format!("  GONE   {} @ 0x{:016x}\n", key.0, key.1)); }
+                let mut block = format!(
+                    "\n[MEM SCAN #{} @ {} — PID {}]\n",
+                    scan_num,
+                    ts2,
+                    find_warframe_pid().unwrap_or(0)
+                );
+                block.push_str(&log_set("NEW    ", &new_keys, &slow_prev));
+                block.push_str(&log_set("CHANGED", &chg_keys, &slow_prev));
+                for key in &gone_keys {
+                    block.push_str(&format!("  GONE   {} @ 0x{:016x}\n", key.0, key.1));
+                }
                 append(log_path, &block);
             }
         }

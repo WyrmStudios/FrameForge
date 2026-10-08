@@ -63,7 +63,7 @@ export interface SettingsModalProps {
   setQuantities: Setter<QuantityMap>; setApiQuantities: Setter<QuantityMap>; setApiModCopies: Setter<ModCopy[]>; setScannerMods: Setter<ScannerMods>; setMasteryData: Setter<Record<string, number>>; setArchonShards: Setter<ArchonShards>; setFormaData: Setter<QuantityMap>;
   setChangeLog: Setter<ChangeLogEntry[]>; setLastChanged: Setter<Record<string, number>>; setWfConnected: Setter<boolean>; wfConnectedRef: MutableRefObject<boolean>; setItemsRefreshKey: Setter<number>; setClearMsg: Setter<string>; clearMsg: string;
   blobLogEnabled: boolean; setBlobLogEnabled: Setter<boolean>; blobLogSize: number; setBlobLogSize: Setter<number>; companionApiEnabled: boolean; apiLogEnabled: boolean; setApiLogEnabled: Setter<boolean>; apiLogSize: number; setApiLogSize: Setter<number>;
-  setShowInventoryBatchPreview: Setter<boolean>; notifyTestResult: string; setNotifyTestResult: Setter<string>; overlayLogCopied: boolean; setOverlayLogCopied: Setter<boolean>; autoDiagEnabled: boolean; setAutoDiagEnabled: Setter<boolean>;
+  setShowInventoryBatchPreview: Setter<boolean>; notifyTestResult: string; setNotifyTestResult: Setter<string>; overlayLogCopied: boolean; setOverlayLogCopied: Setter<boolean>; ocrDiagnosticsEnabled: boolean; setOcrDiagnosticsEnabled: Setter<boolean>;
   diagFolderSize: number; setDiagFolderSize: Setter<number>; diagPath: string | null; diagCapturing: boolean; setDiagCapturing: Setter<boolean>; setDiagPath: Setter<string | null>; reloadDebugSizes: () => void;
   memoryProbing: boolean; setMemoryProbing: Setter<boolean>; probeSize: number; setProbeSize: Setter<number>; rawScanning: boolean; setRawScanning: Setter<boolean>; rawScanSize: number; setRawScanSize: Setter<number>;
   memRelicDebugRunning: boolean; setMemRelicDebugRunning: Setter<boolean>; relicPickOcrResult: string | null; relicPickOcrTesting: boolean; setRelicPickOcrTesting: Setter<boolean>; setRelicPickOcrResult: Setter<string | null>;
@@ -86,7 +86,7 @@ function BulkPriceRefreshButton() {
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
-  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, listPageSize, setListPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion } = props;
+  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, listPageSize, setListPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, ocrDiagnosticsEnabled, setOcrDiagnosticsEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion } = props;
 
   // Preview visibility is local to Settings; live game data always takes precedence.
   const [rewardShown, setRewardShown] = useState(false);
@@ -867,7 +867,7 @@ export default function SettingsModal(props: SettingsModalProps) {
                     {/* Overlay Log */}
                     <div className={ROW_INFO_CLASS}>
                       <span className={ROW_LABEL_CLASS}>Overlay Log</span>
-                      <span className={ROW_DESC_CLASS}>Step-by-step log of the last relic overlay attempt.</span>
+                      <span className={ROW_DESC_CLASS}>JSONL event log of the last relic overlay attempt (one event per run as it happens).</span>
                     </div>
                     <div />{/* Go To Folder placeholder */}
                     <SecondaryButton onClick={async () => {
@@ -885,21 +885,20 @@ export default function SettingsModal(props: SettingsModalProps) {
                       catch (e) { alert("Error: " + e); }
                     }}>{overlayLogCopied ? "✓ Copied" : "Copy"}</SecondaryButton>
 
-                    {/* Auto-capture */}
+                    {/* OCR pipeline diagnostics */}
                     <div className={ROW_INFO_CLASS}>
-                      <span className={ROW_LABEL_CLASS}>Auto-capture</span>
-                      <span className={ROW_DESC_CLASS}>Automatically saves a screenshot and OCR session log for every relic reward screen. One folder is created per relic in the diagnostics directory.</span>
+                      <span className={ROW_LABEL_CLASS}>OCR pipeline diagnostics</span>
+                      <span className={ROW_DESC_CLASS}>Record JSONL events and BMP captures for relic reward OCR sessions. Captures can include game imagery and player names. Disabled by default.</span>
                     </div>
                     <SecondaryButton onClick={() => invoke("open_debug_folder", { which: "diag" }).catch(() => {})}>Go To Folder</SecondaryButton>
                     <SecondaryButton
-                      className={toggleButtonClass(autoDiagEnabled)}
+                      className={toggleButtonClass(ocrDiagnosticsEnabled)}
                       onClick={() => {
-                        const next = !autoDiagEnabled;
-                        setAutoDiagEnabled(next);
-                        localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(next));
-                        settingsRef.current = { ...settingsRef.current, autoDiagEnabled: next };
+                        const next = !ocrDiagnosticsEnabled;
+                        setOcrDiagnosticsEnabled(next);
+                        settingsRef.current = { ...settingsRef.current, ocrDiagnosticsEnabled: next };
                         saveAllSettings();
-                      }}>{autoDiagEnabled ? "On" : "Off"}</SecondaryButton>
+                      }}>{ocrDiagnosticsEnabled ? "On" : "Off"}</SecondaryButton>
                     <SecondaryButton
                       className={clearButtonClass(diagFolderSize > 0)}
                       disabled={diagFolderSize === 0}

@@ -6,7 +6,6 @@ export const PREFERENCE_KEYS = {
   RIVEN_OVERLAY_ENABLED: "ff-riven-overlay-enabled",
   TEXT_SCALE: "ff-text-scale",
   COLORBLIND_MODE: "ff-colorblind",
-  AUTO_DIAGNOSTICS: "ff-auto-diag",
   INVENTORY_VIEW: "ff-view-inventory",
   INVENTORY_CARD_COLUMNS: "ff-inventory-card-columns",
   INVENTORY_LIST_TEXT_SCALE: "ff-inventory-list-text-scale",

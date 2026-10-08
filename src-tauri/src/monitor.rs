@@ -17,7 +17,7 @@ pub(crate) struct CraftingJob {
 
 #[derive(serde::Serialize, Clone)]
 pub(crate) struct BlobStatusPayload {
-    pub stage: String, // "scanning" | "done" | "error"
+    pub stage: String,  // "scanning" | "done" | "error"
     pub detail: String, // human-readable detail
 }
 
@@ -61,7 +61,9 @@ pub(crate) fn poke_scan(state: State<AppState>) {
 
 #[tauri::command]
 pub(crate) fn set_relic_pick_enabled(state: State<AppState>, enabled: bool) {
-    state.relic_pick_overlay_enabled.store(enabled, Ordering::SeqCst);
+    state
+        .relic_pick_overlay_enabled
+        .store(enabled, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -77,7 +79,6 @@ pub(crate) fn get_monitor_status(state: State<AppState>) -> bool {
 pub(crate) fn start_legacy_reward_worker(
     monitor_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
     debug_path: std::path::PathBuf,
-    last_found_path: std::path::PathBuf,
 ) {
     std::thread::spawn(move || {
         // Initialize COM (required for Windows OCR / WinRT APIs).
@@ -93,12 +94,7 @@ pub(crate) fn start_legacy_reward_worker(
 
             // OCR is now triggered by the EE.log watcher (AlecaFrame-style),
             // not by this polling loop. This loop only handles inventory scanning.
-            let rewards: Option<serde_json::Value> = None;
-
             let _ = std::fs::write(&debug_path, &debug);
-            if rewards.is_some() {
-                let _ = std::fs::write(&last_found_path, &debug);
-            }
 
             // Overlay is controlled entirely by the EE.log watcher — do NOT emit here.
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -136,9 +132,9 @@ pub(crate) fn build_monitor_catalog(
     let mut display_names: Vec<String> = wfcd_items.iter().map(|i| i.name.clone()).collect();
 
     for (path, name) in [
-        ("/_currency/Endo",         "Endo"),
-        ("/_currency/Credits",      "Credits"),
-        ("/_currency/Platinum",     "Platinum"),
+        ("/_currency/Endo", "Endo"),
+        ("/_currency/Credits", "Credits"),
+        ("/_currency/Platinum", "Platinum"),
         ("/_currency/PlatinumGift", "Platinum (Gift)"),
     ] {
         unique_names.push(path.to_string());
@@ -146,16 +142,24 @@ pub(crate) fn build_monitor_catalog(
     }
 
     let path_aliases: HashMap<String, String> = [
-        ("/Lotus/Powersuits/SiriusOrion/OrionSuit".to_string(),
-         "/Lotus/Powersuits/SiriusOrion/SiriusSuit".to_string()),
-        ("/Lotus/Powersuits/SiriusOrion/OrionSuitBlueprint".to_string(),
-         "/Lotus/Types/Recipes/WarframeRecipes/SiriusOrionBlueprint".to_string()),
-    ].into_iter().collect();
+        (
+            "/Lotus/Powersuits/SiriusOrion/OrionSuit".to_string(),
+            "/Lotus/Powersuits/SiriusOrion/SiriusSuit".to_string(),
+        ),
+        (
+            "/Lotus/Powersuits/SiriusOrion/OrionSuitBlueprint".to_string(),
+            "/Lotus/Types/Recipes/WarframeRecipes/SiriusOrionBlueprint".to_string(),
+        ),
+    ]
+    .into_iter()
+    .collect();
 
     let mut alias_excluded: std::collections::HashSet<String> =
         path_aliases.keys().cloned().collect();
 
-    let mut path_to_name: HashMap<String, String> = unique_names.iter().zip(display_names.iter())
+    let mut path_to_name: HashMap<String, String> = unique_names
+        .iter()
+        .zip(display_names.iter())
         .map(|(u, d)| (u.clone(), d.clone()))
         .collect();
     for (alt, primary) in &path_aliases {
@@ -164,44 +168,67 @@ pub(crate) fn build_monitor_catalog(
         }
     }
 
-    let path_to_ducat: HashMap<String, u32> = wfcd_items.iter()
+    let path_to_ducat: HashMap<String, u32> = wfcd_items
+        .iter()
         .filter_map(|i| i.ducats.map(|d| (i.unique_name.clone(), d)))
         .collect();
-    let path_to_vaulted: HashMap<String, bool> = wfcd_items.iter()
+    let path_to_vaulted: HashMap<String, bool> = wfcd_items
+        .iter()
         .filter_map(|i| i.vaulted.map(|v| (i.unique_name.clone(), v)))
         .collect();
-    let path_to_tradable: HashMap<String, bool> = wfcd_items.iter()
+    let path_to_tradable: HashMap<String, bool> = wfcd_items
+        .iter()
         .filter_map(|i| i.tradable.map(|t| (i.unique_name.clone(), t)))
         .collect();
-    let path_to_masterable: HashMap<String, bool> = wfcd_items.iter()
+    let path_to_masterable: HashMap<String, bool> = wfcd_items
+        .iter()
         .filter_map(|i| i.masterable.map(|m| (i.unique_name.clone(), m)))
         .collect();
-    let path_to_item_type: HashMap<String, String> = wfcd_items.iter()
-        .map(|i| (i.unique_name.clone(), i.item_type.clone())).collect();
-    let path_to_product_category: HashMap<String, String> = wfcd_items.iter()
-        .map(|i| (i.unique_name.clone(), i.product_category.clone())).collect();
-    let path_to_wfcd_cat: HashMap<String, String> = wfcd_items.iter()
-        .map(|i| (i.unique_name.clone(), i.category.clone())).collect();
-    let mut path_to_category: HashMap<String, String> = wfcd_items.iter()
-        .map(|i| (i.unique_name.clone(), crate::catalogue::fix_category(
-            &i.name, &i.item_type, &i.product_category, &i.category, &i.unique_name)))
+    let path_to_item_type: HashMap<String, String> = wfcd_items
+        .iter()
+        .map(|i| (i.unique_name.clone(), i.item_type.clone()))
+        .collect();
+    let path_to_product_category: HashMap<String, String> = wfcd_items
+        .iter()
+        .map(|i| (i.unique_name.clone(), i.product_category.clone()))
+        .collect();
+    let path_to_wfcd_cat: HashMap<String, String> = wfcd_items
+        .iter()
+        .map(|i| (i.unique_name.clone(), i.category.clone()))
+        .collect();
+    let mut path_to_category: HashMap<String, String> = wfcd_items
+        .iter()
+        .map(|i| {
+            (
+                i.unique_name.clone(),
+                crate::catalogue::fix_category(
+                    &i.name,
+                    &i.item_type,
+                    &i.product_category,
+                    &i.category,
+                    &i.unique_name,
+                ),
+            )
+        })
         .collect();
 
     for (path, name) in [
-        ("/_currency/Endo",         "Endo"),
-        ("/_currency/Credits",      "Credits"),
-        ("/_currency/Platinum",     "Platinum"),
+        ("/_currency/Endo", "Endo"),
+        ("/_currency/Credits", "Credits"),
+        ("/_currency/Platinum", "Platinum"),
         ("/_currency/PlatinumGift", "Platinum (Gift)"),
     ] {
         path_to_name.insert(path.to_string(), name.to_string());
         path_to_category.insert(path.to_string(), "Miscellaneous".to_string());
     }
 
-    let ignored_paths: std::collections::HashSet<String> = corrections.iter()
+    let ignored_paths: std::collections::HashSet<String> = corrections
+        .iter()
         .filter(|(_, c)| c.category.as_deref() == Some("Ignored"))
         .map(|(path, _)| path.clone())
         .collect();
-    let stackable_paths: std::collections::HashSet<String> = corrections.iter()
+    let stackable_paths: std::collections::HashSet<String> = corrections
+        .iter()
         .filter(|(_, c)| c.is_stackable == Some(true))
         .map(|(path, _)| path.clone())
         .collect();
@@ -211,9 +238,13 @@ pub(crate) fn build_monitor_catalog(
         path_to_category.remove(p);
     }
     for (path, c) in corrections {
-        if ignored_paths.contains(path) { continue; }
+        if ignored_paths.contains(path) {
+            continue;
+        }
         if let Some(ref name) = c.name {
-            if !name.is_empty() { path_to_name.insert(path.clone(), name.clone()); }
+            if !name.is_empty() {
+                path_to_name.insert(path.clone(), name.clone());
+            }
         }
         if let Some(ref cat) = c.category {
             path_to_category.insert(path.clone(), cat.clone());
@@ -222,11 +253,21 @@ pub(crate) fn build_monitor_catalog(
     alias_excluded.extend(ignored_paths.iter().cloned());
 
     MonitorCatalog {
-        path_to_name, path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable, path_to_category,
-        path_to_item_type, path_to_product_category, path_to_wfcd_cat,
-        alias_excluded, ignored_paths, stackable_paths, path_aliases,
-        unique_names, display_names,
+        path_to_name,
+        path_to_ducat,
+        path_to_vaulted,
+        path_to_tradable,
+        path_to_masterable,
+        path_to_category,
+        path_to_item_type,
+        path_to_product_category,
+        path_to_wfcd_cat,
+        alias_excluded,
+        ignored_paths,
+        stackable_paths,
+        path_aliases,
+        unique_names,
+        display_names,
         relic_drops_snapshot: relic_drops.clone(),
     }
 }
@@ -256,14 +297,23 @@ pub(crate) fn apply_blob_to_state(
     state.known.clear();
 
     // Currency
-    state.known.insert("/_currency/Credits".to_string(),      blob.credits);
-    state.known.insert("/_currency/Endo".to_string(),         blob.endo);
-    state.known.insert("/_currency/Platinum".to_string(),     blob.platinum - blob.free_platinum);
-    state.known.insert("/_currency/PlatinumGift".to_string(), blob.free_platinum);
+    state
+        .known
+        .insert("/_currency/Credits".to_string(), blob.credits);
+    state.known.insert("/_currency/Endo".to_string(), blob.endo);
+    state.known.insert(
+        "/_currency/Platinum".to_string(),
+        blob.platinum - blob.free_platinum,
+    );
+    state
+        .known
+        .insert("/_currency/PlatinumGift".to_string(), blob.free_platinum);
 
     // Stackable items
     for entry in &blob.stackable_items {
-        state.known.insert(entry.item_type.clone(), entry.item_count);
+        state
+            .known
+            .insert(entry.item_type.clone(), entry.item_count);
     }
 
     // Unique items — full replacement
@@ -280,7 +330,9 @@ pub(crate) fn apply_blob_to_state(
         let canonical = modular_component_path(entry)
             .or_else(|| path_aliases.get(entry.item_type.as_str()).cloned())
             .unwrap_or_else(|| entry.item_type.clone());
-        if blob.consumed_suits.contains(&canonical) { continue; }
+        if blob.consumed_suits.contains(&canonical) {
+            continue;
+        }
         if stackable_paths.contains(&canonical) {
             *state.known.entry(canonical).or_insert(0) += 1;
             continue;
@@ -288,10 +340,14 @@ pub(crate) fn apply_blob_to_state(
         state.unique_stable.insert(canonical.clone(), 4);
         state.confirmed_unique.insert(canonical.clone());
         if !entry.archon_shards.is_empty() {
-            state.current_socketed_shards.insert(canonical.clone(), entry.archon_shards.clone());
+            state
+                .current_socketed_shards
+                .insert(canonical.clone(), entry.archon_shards.clone());
         }
         if entry.polarized > 0 {
-            state.current_forma_counts.insert(canonical, entry.polarized);
+            state
+                .current_forma_counts
+                .insert(canonical, entry.polarized);
         }
     }
 
@@ -322,10 +378,14 @@ pub(crate) fn apply_blob_to_state(
         state.confirmed_unique.remove(suit);
         state.unique_stable.remove(suit);
     }
-    *state.current_recipes = blob.pending_recipes.iter().map(|r| memory_scanner::PendingRecipe {
-        unique_name:   r.item_type.clone(),
-        completion_ms: r.completion_ms,
-    }).collect();
+    *state.current_recipes = blob
+        .pending_recipes
+        .iter()
+        .map(|r| memory_scanner::PendingRecipe {
+            unique_name: r.item_type.clone(),
+            completion_ms: r.completion_ms,
+        })
+        .collect();
 }
 
 pub(crate) fn build_crafting_jobs(
@@ -333,13 +393,28 @@ pub(crate) fn build_crafting_jobs(
     display_names: &[String],
     unique_names: &[String],
 ) -> Vec<CraftingJob> {
-    recipes.iter().map(|(unique_name, completion_ms)| {
-        let item_name = display_names.iter().zip(unique_names.iter())
-            .find(|(_, u)| **u == *unique_name)
-            .map(|(d, _)| d.clone())
-            .unwrap_or_else(|| unique_name.split('/').next_back().unwrap_or("?").to_string());
-        CraftingJob { unique_name: unique_name.clone(), item_name, completion_ms: *completion_ms }
-    }).collect()
+    recipes
+        .iter()
+        .map(|(unique_name, completion_ms)| {
+            let item_name = display_names
+                .iter()
+                .zip(unique_names.iter())
+                .find(|(_, u)| **u == *unique_name)
+                .map(|(d, _)| d.clone())
+                .unwrap_or_else(|| {
+                    unique_name
+                        .split('/')
+                        .next_back()
+                        .unwrap_or("?")
+                        .to_string()
+                });
+            CraftingJob {
+                unique_name: unique_name.clone(),
+                item_name,
+                completion_ms: *completion_ms,
+            }
+        })
+        .collect()
 }
 
 pub(crate) struct MonitorStartupState {
@@ -360,18 +435,27 @@ pub(crate) fn init_monitor_startup_state(
     shared_mods: &std::sync::Arc<std::sync::Mutex<HashMap<String, memory_scanner::ModCount>>>,
     inventory_state_cache_path: &std::path::PathBuf,
 ) -> MonitorStartupState {
-    let mut known: HashMap<String, i64> =
-        shared_quantities.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut known: HashMap<String, i64> = shared_quantities
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
 
     let startup_cache = load_inventory_state_cache(inventory_state_cache_path);
 
-    let prev_mods: HashMap<String, memory_scanner::ModCount> = startup_cache.items.iter()
+    let prev_mods: HashMap<String, memory_scanner::ModCount> = startup_cache
+        .items
+        .iter()
         .filter(|(_, v)| v.mod_ranks.is_some())
         .map(|(path, v)| {
-            let by_rank: HashMap<u8, i64> = v.mod_ranks.as_ref()
-                .map(|ranks| ranks.iter()
-                    .filter_map(|(r, &c)| r.parse::<u8>().ok().map(|rank| (rank, c)))
-                    .collect())
+            let by_rank: HashMap<u8, i64> = v
+                .mod_ranks
+                .as_ref()
+                .map(|ranks| {
+                    ranks
+                        .iter()
+                        .filter_map(|(r, &c)| r.parse::<u8>().ok().map(|rank| (rank, c)))
+                        .collect()
+                })
                 .unwrap_or_default();
             let total = by_rank.values().sum();
             (path.clone(), memory_scanner::ModCount { total, by_rank })
@@ -379,7 +463,8 @@ pub(crate) fn init_monitor_startup_state(
         .collect();
 
     for (path, item) in &startup_cache.items {
-        if item.amount > 0 && item.mod_ranks.is_none()
+        if item.amount > 0
+            && item.mod_ranks.is_none()
             && (item.is_stackable || !is_unique_path(path))
         {
             known.entry(path.to_string()).or_insert(item.amount);
@@ -387,29 +472,48 @@ pub(crate) fn init_monitor_startup_state(
     }
     {
         let mut q = shared_quantities.lock().unwrap_or_else(|e| e.into_inner());
-        if q.is_empty() && !known.is_empty() { *q = known.clone(); }
+        if q.is_empty() && !known.is_empty() {
+            *q = known.clone();
+        }
     }
 
-    let mut unique_stable: HashMap<String, u8> = startup_cache.items.iter()
-        .filter(|(k, v)| v.mod_ranks.is_none() && v.amount > 0 && !v.subsumed
-                      && !v.is_stackable && is_unique_path(k))
+    let mut unique_stable: HashMap<String, u8> = startup_cache
+        .items
+        .iter()
+        .filter(|(k, v)| {
+            v.mod_ranks.is_none()
+                && v.amount > 0
+                && !v.subsumed
+                && !v.is_stackable
+                && is_unique_path(k)
+        })
         .map(|(k, _)| (k.clone(), 4u8))
         .collect();
     let mut confirmed_unique: std::collections::HashSet<String> =
         unique_stable.keys().cloned().collect();
 
     let known_mods: HashMap<String, memory_scanner::ModCount> = {
-        let from_shared = shared_mods.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let from_shared = shared_mods
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if !from_shared.is_empty() {
             from_shared
         } else {
-            startup_cache.items.iter()
+            startup_cache
+                .items
+                .iter()
                 .filter(|(_, v)| v.mod_ranks.is_some())
                 .map(|(path, v)| {
-                    let by_rank: HashMap<u8, i64> = v.mod_ranks.as_ref()
-                        .map(|ranks| ranks.iter()
-                            .filter_map(|(r, &c)| r.parse::<u8>().ok().map(|rank| (rank, c)))
-                            .collect())
+                    let by_rank: HashMap<u8, i64> = v
+                        .mod_ranks
+                        .as_ref()
+                        .map(|ranks| {
+                            ranks
+                                .iter()
+                                .filter_map(|(r, &c)| r.parse::<u8>().ok().map(|rank| (rank, c)))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let total = by_rank.values().sum();
                     (path.clone(), memory_scanner::ModCount { total, by_rank })
@@ -419,16 +523,22 @@ pub(crate) fn init_monitor_startup_state(
     };
 
     let current_mastery_rank = startup_cache.mastery_rank;
-    let current_mastery_data: HashMap<String, u32> = startup_cache.items.iter()
+    let current_mastery_data: HashMap<String, u32> = startup_cache
+        .items
+        .iter()
         .filter(|(_, v)| v.mastery_rank > 0)
         .map(|(k, v)| (k.clone(), v.mastery_rank))
         .collect();
     let current_consumed_suits: Vec<String> = startup_cache.consumed_suits();
-    let current_socketed_shards: HashMap<String, Vec<memory_scanner::ArchonShard>> = startup_cache.items.iter()
+    let current_socketed_shards: HashMap<String, Vec<memory_scanner::ArchonShard>> = startup_cache
+        .items
+        .iter()
         .filter(|(_, v)| !v.archon_shards.is_empty())
         .map(|(k, v)| (k.clone(), v.archon_shards.clone()))
         .collect();
-    let current_forma_counts: HashMap<String, u32> = startup_cache.items.iter()
+    let current_forma_counts: HashMap<String, u32> = startup_cache
+        .items
+        .iter()
         .filter_map(|(k, v)| v.forma_count.map(|n| (k.clone(), n)))
         .collect();
 
@@ -438,8 +548,15 @@ pub(crate) fn init_monitor_startup_state(
     }
 
     MonitorStartupState {
-        known, prev_mods, unique_stable, confirmed_unique, known_mods,
-        current_mastery_rank, current_mastery_data, current_consumed_suits,
-        current_socketed_shards, current_forma_counts,
+        known,
+        prev_mods,
+        unique_stable,
+        confirmed_unique,
+        known_mods,
+        current_mastery_rank,
+        current_mastery_data,
+        current_consumed_suits,
+        current_socketed_shards,
+        current_forma_counts,
     }
 }

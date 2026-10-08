@@ -1,6 +1,7 @@
 //! Rarity-bar detection, icon classification, and catalog matching — turns raw
 //! OCR output + captured pixels into a list of matched reward unique-names.
 
+use super::events::{AttemptDiag, BarsDiag, ColumnDiag, IconDiag, OcrDiag, OcrLineDiag};
 use super::matching::{
     bar_centers_are_valid, build_word_set, cluster_x_centers, extract_item_name_words,
     hardcoded_card_centers, lev_dist, normalise, score_item, word_found_in_set,
@@ -15,6 +16,11 @@ struct MatchParams<'a> {
     catalog: &'a [(String, String)],
     capture_info: &'a str,
     hint_squad_size: Option<usize>,
+    /// Where `hint_squad_size` came from: 0 = none, 1 = relic-count guess at
+    /// trigger time, 2 = EE.log VoidProjections handshake. Diagnostics only —
+    /// decides the label printed in the attempt's debug block so a guessed
+    /// squad size is never reported as an EE.log fact.
+    hint_source: u8,
     player_names: &'a [String],
 }
 
@@ -29,6 +35,15 @@ enum IconType {
     Forma,
     /// Could not classify
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum OcrLineSkip {
+    TopHud,
+    BelowBar,
+    PlayerName,
+    UiBadge,
+    EndlessBonus,
 }
 
 /// Scan the captured image for the coloured rarity bars below each reward card.
@@ -279,10 +294,14 @@ fn classify_card_icon(
 }
 
 /// Post-OCR reward matching: rarity bars → card columns → catalog match → fill.
+///
+/// Returns `(complete, low_confidence, items, positions, diag)`; `diag` carries
+/// the full structured outcome (bars, columns, per-column scores/flags, raw OCR)
+/// that gets serialized flat into the attempt's JSONL event.
 fn match_reward_items(
     params: MatchParams<'_>,
-) -> (bool, bool, Vec<String>, Vec<f32>, String) {
-    let MatchParams { pixels, pix_w, pix_h, raw_full, ocr_lines, catalog, capture_info, hint_squad_size, player_names } = params;
+) -> (bool, bool, Vec<String>, Vec<f32>, AttemptDiag) {
+    let MatchParams { pixels, pix_w, pix_h, raw_full, ocr_lines, catalog, capture_info, hint_squad_size, hint_source, player_names } = params;
 
     let (bar_result, bar_diag) = find_rarity_bars(pixels, pix_w, pix_h);
 
@@ -316,6 +335,21 @@ fn match_reward_items(
         !meaningful.is_empty()
             && meaningful.iter().all(|w| BADGE_WORDS.contains(&w.to_lowercase().as_str()))
     };
+    let line_skip = |text: &str, y: f32| -> Option<OcrLineSkip> {
+        if y < 0.10 {
+            Some(OcrLineSkip::TopHud)
+        } else if y >= ocr_y_max {
+            Some(OcrLineSkip::BelowBar)
+        } else if is_player_name(text) {
+            Some(OcrLineSkip::PlayerName)
+        } else if is_ui_badge(text) {
+            Some(OcrLineSkip::UiBadge)
+        } else {
+            let text = text.to_lowercase();
+            (text.contains("booster") || text.contains("relic opened") || text.contains("endless bonus"))
+                .then_some(OcrLineSkip::EndlessBonus)
+        }
+    };
 
     let raw_norm = normalise(raw_full);
     let is_prime_like = |w: &str| -> bool {
@@ -332,9 +366,9 @@ fn match_reward_items(
     let prime_count = raw_norm.split_whitespace().filter(|&w| is_prime_like(w)).count();
     let forma_count  = raw_norm.split_whitespace().filter(|&w| is_forma_like(w)).count();
 
-    // Title lines that survive the y/badge/player-name filters, by x-position.
+    // Title lines that are eligible for card matching, by x-position.
     let title_xs: Vec<f32> = ocr_lines.iter()
-        .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
+        .filter(|(t, _, y)| t.trim().len() >= 3 && line_skip(t, *y).is_none())
         .map(|(_, x, _)| *x)
         .collect();
     let title_cluster_centers = cluster_x_centers(title_xs, 0.10);
@@ -350,47 +384,42 @@ fn match_reward_items(
     // Fallback columns come from the title x-clusters, not a fixed 4-slot grid.
     // A wrapped title ("Dethcube Prime" / "Carapace") shares one cluster, so it
     // stays on one card. The fixed grid split it across two columns.
-    let active_centers: Vec<f32> = if bars_trusted {
-        card_centers.clone()
+    // `col_source` names the branch actually taken so the attempt event never
+    // claims "hardcoded" when cluster fallback did the work (and vice versa).
+    let (active_centers, col_source): (Vec<f32>, &'static str) = if bars_trusted {
+        (card_centers.clone(), "bar_columns")
     } else if !title_cluster_centers.is_empty() && title_cluster_centers.len() <= 4 {
-        title_cluster_centers.clone()
+        (title_cluster_centers.clone(), "title_x_clusters")
     } else {
-        hardcoded_card_centers(word_card_count)
+        (hardcoded_card_centers(word_card_count), "hardcoded_grid")
     };
 
-    let raw_ocr_log: String = {
-        let mut lines_log = Vec::new();
-        for (i, (text, x, y)) in ocr_lines.iter().enumerate() {
-            let tl = text.to_lowercase();
-            let skip = if *y < 0.10 {
-                Some(format!("y={:.2} < 0.10 top-HUD cutoff", y))
-            } else if *y >= ocr_y_max {
-                Some(format!("y={:.2} >= {:.2} below-bar cutoff", y, ocr_y_max))
-            } else if is_player_name(text) {
-                Some("player name".into())
-            } else if is_ui_badge(text) {
-                Some("UI badge".into())
-            } else if tl.contains("booster") || tl.contains("relic opened") || tl.contains("endless bonus") {
-                Some("endless bonus UI".into())
-            } else {
-                None
+    let raw_ocr_lines: Vec<OcrLineDiag> = ocr_lines.iter().enumerate()
+        .map(|(i, (text, x, y))| {
+            let skip = match line_skip(text, *y) {
+                Some(OcrLineSkip::TopHud) => Some(format!("y={y:.2} < 0.10 top-HUD cutoff")),
+                Some(OcrLineSkip::BelowBar) => Some(format!("y={y:.2} >= {ocr_y_max:.2} below-bar cutoff")),
+                Some(OcrLineSkip::PlayerName) => Some("player name".into()),
+                Some(OcrLineSkip::UiBadge) => Some("UI badge".into()),
+                Some(OcrLineSkip::EndlessBonus) => Some("endless bonus UI".into()),
+                None => None,
             };
-            let entry = match skip {
-                Some(r) => format!("  [{:>2}] {:>4} x={:.2} y={:.2}  ✗ {} — \"{}\"",
-                    i, "", x, y, r, text.trim()),
-                None    => format!("  [{:>2}] {:>4} x={:.2} y={:.2}  ✓ \"{}\"",
-                    i, "", x, y, text.trim()),
-            };
-            lines_log.push(entry);
-        }
-        lines_log.join("\n")
-    };
+            OcrLineDiag {
+                i,
+                x: *x,
+                y: *y,
+                text: text.trim().to_string(),
+                used: skip.is_none(),
+                skip,
+            }
+        })
+        .collect();
 
     let columns: Vec<(Vec<String>, f32)> = {
         let mut cols: Vec<(Vec<String>, f32)> =
             active_centers.iter().map(|&cx| (Vec::new(), cx)).collect();
         for (text, x, y) in ocr_lines {
-            if *y < 0.10 || *y >= ocr_y_max || is_player_name(text) || is_ui_badge(text) { continue; }
+            if line_skip(text, *y).is_some() { continue; }
             let idx = active_centers.iter().enumerate()
                 .min_by(|(_, a), (_, b)| {
                     (x - *a).abs().partial_cmp(&(x - *b).abs())
@@ -405,24 +434,35 @@ fn match_reward_items(
 
     let mut items: Vec<String> = Vec::new();
     let mut positions: Vec<f32> = Vec::new();
+    let mut filled: Vec<String> = Vec::new();
 
-    let (_bar_y_frac, have_bars) = match &bar_result {
-        Some((_, by)) => (*by, true),
-        None => (0.0f32, false),
+    let (bar_y, have_bars) = match &bar_result {
+        Some((_, by)) => (Some(*by), true),
+        None => (None, false),
     };
 
-    let mut col_match_log: Vec<String> = Vec::new();
+    let mut column_diags: Vec<ColumnDiag> = Vec::new();
     let mut any_low_confidence = false;
 
     for (col_idx, (col_texts, cx)) in columns.iter().enumerate() {
         if items.len() >= active_centers.len() { break; }
         let words = build_word_set(col_texts);
 
-        let col_preview: Vec<&str> = col_texts.iter().take(4).map(|s| s.trim()).collect();
+        let col_preview: Vec<String> = col_texts.iter().take(4).map(|s| s.trim().to_string()).collect();
         if words.is_empty() {
-            col_match_log.push(format!(
-                "  Col[{}] x={:.2}: (no words) — skipped\n    OCR: {:?}",
-                col_idx, cx, col_preview));
+            column_diags.push(ColumnDiag {
+                x: *cx,
+                score: 0.0,
+                item: None,
+                unknown: None,
+                ocr_words: 0,
+                ocr: col_preview,
+                top3: Vec::new(),
+                evidence: None,
+                missing: Vec::new(),
+                flags: vec!["no_words".into()],
+                icon: None,
+            });
             continue;
         }
 
@@ -445,14 +485,10 @@ fn match_reward_items(
                 top3.truncate(3);
             }
         }
-        let top3_str = top3.iter()
-            .map(|(s, n)| format!("{:.2} \"{}\"", s, n))
-            .collect::<Vec<_>>().join(" · ");
-
-        let mut icon_log = String::new();
+        let mut icon_diag: Option<IconDiag> = None;
         let mut icon_accepted = false;
         if best_score < 0.67 && have_bars {
-            let bar_y = _bar_y_frac;
+            let bar_y = bar_y.unwrap_or(0.0);
             let half_w = if columns.len() > 1 { 0.56 / columns.len() as f32 / 2.0 } else { 0.10 };
             let icon_type = classify_card_icon(
                 pixels, pix_w, pix_h,
@@ -465,9 +501,13 @@ fn match_reward_items(
                 IconType::FullModel    => Some("blueprint"),
                 IconType::Unknown      => None,
             };
-            icon_log = format!("\n    Icon: text={:.2} < 0.67 → classifier={:?}{}",
-                best_score, icon_type,
-                component_filter.map(|c| format!(" suffix=\"{}\"", c)).unwrap_or_default());
+            let mut diag = IconDiag {
+                classifier: format!("{icon_type:?}"),
+                filter: component_filter.map(str::to_string),
+                score: 0.0,
+                accepted: false,
+                top3: Vec::new(),
+            };
 
             if let Some(comp) = component_filter {
                 let comp_norm = normalise(comp);
@@ -493,37 +533,54 @@ fn match_reward_items(
                         icon_top3.truncate(3);
                     }
                 }
-                let icon_top3_str = icon_top3.iter()
-                    .map(|(s, n)| format!("{:.2} \"{}\"", s, n))
-                    .collect::<Vec<_>>().join(" · ");
-                icon_log += &format!("\n    Icon top3: {}", icon_top3_str);
+                diag.score = icon_best_score;
+                diag.top3 = icon_top3;
                 if icon_best_score >= 0.4 {
-                    icon_log += &format!("\n    Icon accepted: {:.2} → \"{}\"",
-                        icon_best_score,
-                        icon_best_unique.as_ref().and_then(|u| catalog.iter().find(|(k,_)| k==u)).map(|(_,n)| n.as_str()).unwrap_or("?"));
+                    diag.accepted = true;
                     best_score = icon_best_score;
                     best_unique = icon_best_unique;
                     icon_accepted = true;
-                } else {
-                    icon_log += "\n    Icon rejected (score < 0.40)";
                 }
             }
+            icon_diag = Some(diag);
         }
 
         let best_display = best_unique.as_ref()
             .and_then(|u| catalog.iter().find(|(k, _)| k == u))
             .map(|(_, n)| n.as_str())
             .unwrap_or("—");
-        let col_preview: Vec<&str> = col_texts.iter().map(|s| s.trim()).collect();
-        let words_str: String = {
-            let mut ws: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
-            ws.sort();
-            ws.join(", ")
+        // Word-level evidence: which catalog words of the chosen name were
+        // actually seen in OCR, plus the score margin over the runner-up. A
+        // sparse read off one generic word ("blueprint") with a near-zero
+        // margin is the exact failure mode the plain score hides (0.93 vs
+        // 0.92) — carried as flags so a reader can spot it without math.
+        let dn_norm = normalise(best_display);
+        let mut dn_seen = std::collections::HashSet::new();
+        let dn_words: Vec<&str> = dn_norm.split_whitespace().filter(|&w| dn_seen.insert(w)).collect();
+        let n_found = dn_words.iter().filter(|w| word_found_in_set(w, &words)).count();
+        let missing: Vec<String> = dn_words.iter()
+            .filter(|w| !word_found_in_set(w, &words))
+            .map(|w| (*w).to_string())
+            .collect();
+        let margin = if top3.len() >= 2 { Some(top3[0].0 - top3[1].0) } else { None };
+        let mut flags: Vec<String> = Vec::new();
+        if best_score < 0.67 { flags.push("below_threshold".into()); }
+        if words.len() <= 1 { flags.push("sparse".into()); }
+        if margin.is_some_and(|m| m < 0.05) { flags.push("ambiguous".into()); }
+        let mut diag = ColumnDiag {
+            x: *cx,
+            score: best_score,
+            item: None,
+            unknown: None,
+            ocr_words: words.len(),
+            ocr: col_texts.iter().map(|s| s.trim().to_string()).collect(),
+            top3,
+            evidence: (!dn_words.is_empty() && best_score > 0.0)
+                .then_some((n_found, dn_words.len())),
+            missing,
+            flags,
+            icon: icon_diag,
         };
-        col_match_log.push(format!(
-            "  Col[{}] x={:.2}: score={:.2} → \"{}\"\n    OCR: {:?}\n    Words: {{{}}}\n    Top3: {}{}",
-            col_idx, cx, best_score, best_display, col_preview, words_str, top3_str, icon_log
-        ));
 
         if best_score < 0.67 {
             let raw = col_texts.iter()
@@ -535,10 +592,12 @@ fn match_reward_items(
             if !raw.is_empty() {
                 items.push(format!("?:{}", raw));
                 positions.push(*cx);
+                diag.unknown = Some(raw);
             }
+            column_diags.push(diag);
             continue;
         }
-        let unique = match best_unique { Some(u) => u, None => continue };
+        let unique = match best_unique { Some(u) => u, None => { column_diags.push(diag); continue; } };
 
         // A "confident" score can still come from a sparse read: if matched/n_ocr
         // hit 1.0 off only 1-2 OCR words, base score alone can't tell two same-length
@@ -556,8 +615,13 @@ fn match_reward_items(
             .unwrap_or(false);
         if !icon_accepted && !full_word_match {
             any_low_confidence = true;
+            diag.flags.push("partial_words".into());
+        } else if icon_accepted {
+            diag.flags.push("icon_confirmed".into());
         }
 
+        diag.item = Some(best_display.to_string());
+        column_diags.push(diag);
         items.push(unique);
         positions.push(*cx);
         let _ = col_idx;
@@ -576,7 +640,7 @@ fn match_reward_items(
     if items.len() < fill_limit {
         let all_words = build_word_set(
             &ocr_lines.iter()
-                .filter(|(_, _, y)| *y >= 0.10 && *y < ocr_y_max)
+                .filter(|(text, _, y)| line_skip(text, *y).is_none())
                 .map(|(t, _, _)| t.clone())
                 .collect::<Vec<_>>()
         );
@@ -646,7 +710,8 @@ fn match_reward_items(
                     seen_bases.insert(base);
                 }
             }
-            items.push(unique);
+            items.push(unique.clone());
+            filled.push(unique);
         }
 
         if !items.is_empty() {
@@ -658,60 +723,68 @@ fn match_reward_items(
         }
     }
 
-    let col_mode = if bars_trusted { "bar columns (validated)" }
-                   else if have_bars { "hardcoded (bars rejected)" }
-                   else { "hardcoded (no bars)" };
-    let ff_items: Vec<&str> = items.iter().map(|s| {
-        catalog.iter().find(|(u,_)| u == s).map(|(_,n)| n.as_str()).unwrap_or(s.as_str())
-    }).collect();
     let n_confirmed = items.iter().filter(|s| !s.starts_with("?:")).count();
     let is_complete = n_confirmed > 0 && n_confirmed >= estimated_cards;
     let expected_src = match (hint_squad_size, !card_centers.is_empty()) {
-        (Some(h), _) if h >= word_card_count && h >= card_centers.len() => "EE.log",
+        (Some(h), _) if h >= word_card_count && h >= card_centers.len() => "squad_hint",
         (_, true) if card_centers.len() >= word_card_count => "bars",
-        _ if ocr_cluster_count > prime_count + forma_count => "x-clusters",
-        _ => "prime+forma",
+        _ if ocr_cluster_count > prime_count + forma_count => "x_clusters",
+        _ => "prime_forma",
     };
-    let ee_hint_str = match hint_squad_size {
-        Some(n) => format!("{} players (from EE.log)", n),
-        None    => "(not available — VoidProjections sequence not seen yet)".into(),
+    // Label the hint with its real source: a guess made at trigger time from the
+    // session's relic count is not an EE.log fact — reporting it as one was how
+    // a solo/duo run ended up showing squad size 4 as an EE.log handshake.
+    let hint_source = match hint_source {
+        1 => "relic_guess",
+        2 => "ee_handshake",
+        0 => "none",
+        _ => "unknown",
     };
-    let debug = format!(
-        "├─ Capture  : {}\n\
-         ├─ OCR      : {} chars, {} lines\n\
-         ├─ Bars     : {}\n\
-         ├─ Prime/Forma: {}p + {}f + {}x = {} cards\n\
-         ├─ EE hint  : {}\n\
-         ├─ Expected : {} cards (from {}){}{}\n\
-         ├─ Raw lines:\n{}\n\
-         ├─ Match    : {} — {} formed\n\
-         {}\n\
-         └─ Items    : {:?}",
-        capture_info,
-        raw_full.len(), ocr_lines.len(),
-        bar_diag,
-        prime_count, forma_count, ocr_cluster_count, word_card_count,
-        ee_hint_str,
-        estimated_cards, expected_src,
-        if is_complete { " ✅ complete" } else { " ⚡ partial" },
-        if any_low_confidence { " ⚠ low-confidence card(s) — retrying" } else { "" },
-        raw_ocr_log,
-        col_mode, columns.len(),
-        col_match_log.join("\n"),
-        ff_items,
-    );
+    let display_items: Vec<String> = items.iter().map(|s| {
+        catalog.iter().find(|(u, _)| u == s).map(|(_, n)| n.clone()).unwrap_or_else(|| s.clone())
+    }).collect();
+    let bars = BarsDiag {
+        ok: have_bars,
+        y: bar_y,
+        segments: card_centers.len(),
+        note: bar_diag,
+    };
+    let diag = AttemptDiag {
+        capture_kind: "ok",
+        capture: capture_info.to_string(),
+        note: None,
+        ocr: Some(OcrDiag {
+            chars: raw_full.len(),
+            lines: ocr_lines.len(),
+            raw: raw_full.to_string(),
+            text: raw_ocr_lines,
+        }),
+        bars,
+        cols_source: col_source.to_string(),
+        cols: columns.len(),
+        hint_size: hint_squad_size,
+        hint_source,
+        expected: estimated_cards,
+        expected_src,
+        prime_cards: prime_count,
+        forma_cards: forma_count,
+        text_clusters: ocr_cluster_count,
+        columns: column_diags,
+        filled,
+        display_items,
+    };
 
-    (is_complete, any_low_confidence, items, positions, debug)
+    (is_complete, any_low_confidence, items, positions, diag)
 }
 
 /// Relic reward detection — the main entry point for OCR-based reward extraction.
 #[cfg(target_os = "windows")]
 pub(crate) fn extract_reward_items_twophase(
     params: super::OcrParams<'_>,
-) -> (bool, bool, Vec<String>, Vec<f32>, String) {
+) -> (bool, bool, Vec<String>, Vec<f32>, AttemptDiag) {
     let super::OcrParams {
         pixels, pix_w, pix_h, game_h: _game_h, catalog, capture_info, hint_squad_size,
-        player_names, preprocess_text_pass,
+        hint_source, player_names, preprocess_text_pass,
     } = params;
 
     // Rarity-bar and icon classification below always read the raw `pixels` —
@@ -727,20 +800,18 @@ pub(crate) fn extract_reward_items_twophase(
     let (raw_full, ocr_lines) =
         match crate::ocr::run_windows_ocr(text_bmp, pix_w, pix_h) {
             Ok(r) => r,
-            Err(e) => return (false, false, vec![], vec![],
-                format!("├─ Capture  : {}\n└─ OCR error: {}", capture_info, e)),
-        };
+            Err(e) => {
+                let mut diag = AttemptDiag::capture_only("ocr_error", capture_info.to_string());
+                diag.note = Some(e.to_string());
+                return (false, false, vec![], vec![], diag);
+            }
+    };
     if raw_full.len() < 4 {
-        let _ = std::fs::write(
-            std::env::temp_dir().join("frameforge_capture_debug.bmp"),
-            crate::ocr::to_bmp(pixels, pix_w, pix_h),
-        );
         let avg = crate::ocr::avg_brightness(pixels);
-        let kind = if avg < 30 { "dark-frame" } else { "ocr-empty" };
-        return (false, false, vec![], vec![], format!(
-            "├─ Capture  : {}\n└─ OCR      : returned no text ({}, avg={})\n   Saved: %TEMP%\\frameforge_capture_debug.bmp",
-            capture_info, kind, avg
-        ));
+        let kind = if avg < 30 { "dark_frame" } else { "ocr_empty" };
+        let mut diag = AttemptDiag::capture_only(kind, capture_info.to_string());
+        diag.note = Some(format!("avg brightness {avg:.1}"));
+        return (false, false, vec![], vec![], diag);
     }
 
     {
@@ -764,24 +835,23 @@ pub(crate) fn extract_reward_items_twophase(
             lower.contains("relic") && QUALITY.iter().any(|q| lower.contains(q))
         };
         if ocr_lines.iter().any(|(text, _, _)| is_relic_select_line(text)) {
-            return (false, true, vec![], vec![], format!(
-                "├─ Capture  : {}\n└─ OCR      : relic selection screen detected (skipped)",
-                capture_info
-            ));
+            return (false, true, vec![], vec![],
+                AttemptDiag::capture_only("relic_select", capture_info.to_string()));
         }
     }
 
     match_reward_items(MatchParams {
         pixels, pix_w, pix_h, raw_full: &raw_full, ocr_lines: &ocr_lines,
-        catalog, capture_info, hint_squad_size, player_names,
+        catalog, capture_info, hint_squad_size, hint_source, player_names,
     })
 }
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn extract_reward_items_twophase(
     _params: super::OcrParams<'_>,
-) -> (bool, bool, Vec<String>, Vec<f32>, String) {
-    (false, false, vec![], vec![], "OCR not supported on this platform".into())
+) -> (bool, bool, Vec<String>, Vec<f32>, AttemptDiag) {
+    (false, false, vec![], vec![],
+        AttemptDiag::capture_only("unsupported", "OCR not supported on this platform".into()))
 }
 
 #[cfg(test)]
@@ -847,7 +917,8 @@ mod tests {
 
         let (_complete, _skip, items, _positions, diag) = match_reward_items(MatchParams {
             pixels: &pixels, pix_w: 8, pix_h: 8, raw_full: &raw_full, ocr_lines: &ocr_lines,
-            catalog: &catalog, capture_info: "replay", hint_squad_size: None, player_names: &player_names,
+            catalog: &catalog, capture_info: "replay", hint_squad_size: None, hint_source: 0,
+            player_names: &player_names,
         });
 
         let fold = |n: &str| n.trim_start_matches("2X ").to_string();
@@ -860,7 +931,8 @@ mod tests {
                 "Lavos Prime Chassis Blueprint".to_string(),
                 "Lex Prime Barrel".to_string(),
             ],
-            "expected exactly the three real rewards, no fabricated fourth\n{diag}"
+            "expected exactly the three real rewards, no fabricated fourth\n{}",
+            serde_json::to_string_pretty(&diag).unwrap_or_default()
         );
     }
 }
