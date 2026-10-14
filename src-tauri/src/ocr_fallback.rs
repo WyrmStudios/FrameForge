@@ -175,27 +175,57 @@ pub fn run_ocrs(
     let mut full = String::new();
     let mut lines_out: Vec<(String, f32, f32)> = Vec::new();
 
-    for (opt_line, line_words) in recognized.iter().zip(line_groups.iter()) {
+    // ocrs groups words into lines by vertical alignment only, the same way
+    // WinRT does — it can merge two adjacent reward cards' names onto one
+    // line when they share a baseline Y. Re-split using the identical
+    // horizontal-gap heuristic `run_windows_ocr` applies to WinRT's per-word
+    // boxes (see ocr/windows.rs, WORD_GAP), via ocrs's own per-word
+    // bounding rects (`TextLine::words()`), so both engines get the same
+    // treatment instead of only WinRT being corrected for this failure mode.
+    use ocrs::TextItem;
+    const WORD_GAP: f32 = 0.07;
+    for opt_line in recognized.iter() {
         let Some(line) = opt_line else {
             continue;
         };
-        let text = line.to_string();
-        if text.trim().is_empty() {
-            continue;
+
+        let mut seg_texts: Vec<String> = Vec::new();
+        let mut seg_sx = 0.0f32;
+        let mut seg_sy = 0.0f32;
+        let mut seg_n = 0u32;
+        let mut prev_right = -1.0f32;
+
+        for word in line.words() {
+            let r = word.bounding_rect();
+            let xl = if img_w > 0 { r.left() as f32 / img_w as f32 } else { 0.0 };
+            let xr = if img_w > 0 { r.right() as f32 / img_w as f32 } else { 1.0 };
+            let cx = if img_w > 0 { r.center().x as f32 / img_w as f32 } else { 0.5 };
+            let cy = if img_h > 0 { r.center().y as f32 / img_h as f32 } else { 0.5 };
+
+            if prev_right >= 0.0 && (xl - prev_right) > WORD_GAP && !seg_texts.is_empty() {
+                let sub = seg_texts.join(" ");
+                full.push_str(&sub);
+                full.push('\n');
+                lines_out.push((sub, seg_sx / seg_n as f32, seg_sy / seg_n as f32));
+                seg_texts.clear();
+                seg_sx = 0.0;
+                seg_sy = 0.0;
+                seg_n = 0;
+            }
+            seg_texts.push(word.to_string());
+            seg_sx += cx;
+            seg_sy += cy;
+            seg_n += 1;
+            prev_right = xr;
         }
-        let cx = if img_w > 0 && !line_words.is_empty() {
-            let sum: f32 = line_words.iter().map(|r| r.center().x).sum();
-            sum / line_words.len() as f32 / img_w as f32
-        } else {
-            0.5
-        };
-        let cy = line_words
-            .first()
-            .map(|r| r.center().y / img_h as f32)
-            .unwrap_or(0.3);
-        full.push_str(&text);
-        full.push('\n');
-        lines_out.push((text, cx, cy));
+        if !seg_texts.is_empty() {
+            let sub = seg_texts.join(" ");
+            if !sub.trim().is_empty() {
+                full.push_str(&sub);
+                full.push('\n');
+                lines_out.push((sub, seg_sx / seg_n as f32, seg_sy / seg_n as f32));
+            }
+        }
     }
 
     Ok((full, lines_out))

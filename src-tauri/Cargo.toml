@@ -1,6 +1,6 @@
 [package]
 name = "warframe-companion"
-version = "4.5.0"
+version = "4.5.11"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -22,7 +22,6 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
-aho-corasick = "1"
 memchr = "2"
 ureq = { version = "2", features = ["json"] }
 tungstenite = { version = "0.26", features = ["native-tls"] }
@@ -43,6 +42,11 @@ tauri-plugin-updater = "2"
 ocrs = "0.7"
 rten = "0.9"
 # ── END ocrs fallback ───────────────────────────────────────────────────────
+
+[package.metadata.cargo-machete]
+# native-tls isn't imported directly — it's the backend enabled by
+# tungstenite's "native-tls" feature (src/wfm.rs's client_tls call).
+ignored = ["native-tls"]
 
 [profile.dev]
 opt-level = 1

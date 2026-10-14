@@ -192,9 +192,19 @@ export default function RelicPickOverlay() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<"idle" | "preview" | "live">("idle");
 
+  // Click-through everywhere except the ✕ button: it has no per-pixel mask,
+  // so toggle whole-window click-through on/off as the cursor crosses the
+  // button rather than leaving the window solid (which would block the game).
+  const letClicksThrough = () => getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {});
+  const stopClicksThrough = () => getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
+
   const setOverlaySource = (next: "idle" | "preview" | "live") => {
     sourceRef.current = next;
     setSource(next);
+    // A click on ✕ can hide the window while the cursor is still over the
+    // button (stopClicksThrough already ran, mouseleave never fires) —
+    // reset to click-through every time the overlay becomes visible again.
+    if (next !== "idle") letClicksThrough();
   };
 
   // The scale is a CSS transform, so it does not change the measured layout size.
@@ -226,6 +236,10 @@ export default function RelicPickOverlay() {
     setPayload(null);
     getCurrentWindow().hide().catch(() => {});
   };
+
+  useEffect(() => {
+    letClicksThrough();
+  }, []);
 
   useEffect(() => {
     const unOpen = listen<RelicPickPayload>(TAURI_EVENTS.RELIC_PICK_OPEN, async e => {
@@ -274,7 +288,13 @@ export default function RelicPickOverlay() {
     <div className={RPO_ROOT} ref={rootCallback}>
       <div className={RPO_HEADER}>
         <span className={RPO_TITLE}>{eraLabel} Fissure</span>
-        <button className={RPO_CLOSE} onClick={hide} title="Close">✕</button>
+        <button
+          className={RPO_CLOSE}
+          onClick={hide}
+          onMouseEnter={stopClicksThrough}
+          onMouseLeave={letClicksThrough}
+          title="Close"
+        >✕</button>
       </div>
 
       {sorted.length === 0 ? (

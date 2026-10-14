@@ -57,6 +57,14 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
     let rewards_emitted_ms_ocr  = rewards_emitted_ms.clone();
     let rewards_emitted_ms_ee   = rewards_emitted_ms.clone();
 
+    // Mirror of the OCR loop's best-confirmed-so-far payload. If the reward screen
+    // closes before OCR reaches "complete", dismiss_relic_rewards uses this to show
+    // whatever was already confirmed instead of discarding it. Reset at the start
+    // of each new trigger; consumed (and cleared) by dismiss_relic_rewards.
+    let best_reward_payload: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
+    let best_reward_payload_ocr = best_reward_payload.clone();
+    let best_reward_payload_ee  = best_reward_payload.clone();
+
     // Shared squad size: updated by EE.log watcher when VoidProjections sequence
     // completes, read by OCR loop for each attempt. This lets late-arriving squad
     // data (VoidProjections often arrives 1-2 s after the screen opens) inform
@@ -83,12 +91,27 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
             let mut file_pos: u64 = std::fs::metadata(&log_path)
                 .map(|m| m.len()).unwrap_or(0);
             let mut active_since: Option<std::time::Instant> = None;
+            // Last time a poll actually read new (non-empty) EE.log content.
+            // Drives the fast/slow poll cadence below — recent game activity
+            // means more triggers (riven, trade, relic-pick, reward) could be
+            // seconds away, so every event type benefits from fast polling,
+            // not just an already-open reward screen.
+            let mut last_log_activity: Option<std::time::Instant> = None;
+            const LOG_ACTIVITY_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
             // Cooldown: don't fire riven-screen-open again within 4 seconds of the last fire.
             let mut last_riven_fire: Option<std::time::Instant> = None;
             // Cooldown: prevent spawning multiple relic-pick OCR threads if the trigger fires rapidly.
             let mut last_relic_pick_trigger: Option<std::time::Instant> = None;
             // Rolling raw log text used to reconstruct multi-read trade dialogs.
             let mut trade_buffer = String::new();
+            // Trailing partial-line buffer: a marker split across two reads by a
+            // mid-write wake-up (e.g. a relic resource-load or dismiss line
+            // half-flushed) must never be tested half-formed by the
+            // `.contains()`/`.lines()` detectors below — a split "Resource load
+            // completed" line silently drops that relic from session_relics.
+            // Capped so a stalled or pathologically long line can't grow forever.
+            let mut line_carry = String::new();
+            const MAX_LINE_CARRY_BYTES: usize = 64 * 1024;
             use std::io::{Read, Seek, SeekFrom};
 
             log_watcher::seed_ee_log_names(&log_path, &shared_squad_names2, &ee_ocr_app);
@@ -105,6 +128,11 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
             // while squad loadouts download. Used at trigger time to narrow the OCR
             // candidate list from ~700 items to the ~6-24 rewards of the active relics.
             let mut session_relics: Vec<String> = Vec::new();
+            // Catch up relics already loaded this mission before this thread
+            // started (e.g. FrameForge launched mid-mission) — otherwise the
+            // live tailer below, which only reads forward from file_pos, would
+            // never see those earlier "Resource load completed" lines.
+            log_watcher::seed_session_relics(&log_path, &mut session_relics);
             // One diagnostics folder per trigger→dismiss cycle.
             // Created at trigger, BMP written after overlay confirmed, session log at dismiss.
             let diag_arc: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
@@ -123,10 +151,16 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
             let use_notify = change_handle != -1isize; // -1 = INVALID_HANDLE_VALUE
 
             loop {
-                // While a reward screen is up, poll much more often so the closing
-                // line is picked up quickly. The 20 s auto-dismiss still applies.
+                // Poll fast (50 ms) whenever a reward screen is up OR the log has
+                // written something within the last few seconds — active gameplay
+                // means a riven unveil, trade, relic-pick, or reward trigger could
+                // land any moment, and all of those benefit from fast detection,
+                // not just an already-open reward screen. Falls back to a slow
+                // 500 ms idle poll once the log (and thus the game) has been quiet.
                 let reward_active = reward_screen_active2.load(Ordering::SeqCst);
-                let idle_wait_ms: u32 = if reward_active { 50 } else { 500 };
+                let log_recently_active = last_log_activity
+                    .is_some_and(|t| t.elapsed() < LOG_ACTIVITY_WINDOW);
+                let idle_wait_ms: u32 = if reward_active || log_recently_active { 50 } else { 500 };
                 if use_notify {
                     use windows_sys::Win32::System::Threading::WaitForSingleObject;
                     use windows_sys::Win32::Storage::FileSystem::FindNextChangeNotification;
@@ -139,12 +173,29 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                 }
                 let Ok(mut f) = std::fs::File::open(&log_path) else { continue };
                 let len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-                if len < file_pos { file_pos = 0; }
+                if len < file_pos {
+                    file_pos = 0;
+                    // Log rotated/truncated — any carried fragment is from a
+                    // different file and must not be glued onto the new one.
+                    line_carry.clear();
+                }
                 if f.seek(SeekFrom::Start(file_pos)).is_err() { continue; }
-                let mut buf = String::new();
-                if f.read_to_string(&mut buf).is_err() { continue; }
+                let mut raw = String::new();
+                if f.read_to_string(&mut raw).is_err() { continue; }
                 file_pos = len;
-                if buf.is_empty() { continue; }
+                if raw.is_empty() { continue; }
+                last_log_activity = Some(std::time::Instant::now());
+
+                line_carry.push_str(&raw);
+                if line_carry.len() > MAX_LINE_CARRY_BYTES {
+                    let mut cut = line_carry.len() - MAX_LINE_CARRY_BYTES;
+                    while cut < line_carry.len() && !line_carry.is_char_boundary(cut) { cut += 1; }
+                    line_carry.drain(..cut);
+                }
+                // Hand the detectors below only complete lines; a line still being
+                // written by the game sits in line_carry until the next wake-up.
+                let Some(split_at) = line_carry.rfind('\n') else { continue };
+                let buf: String = line_carry.drain(..=split_at).collect();
 
                 let lower = buf.to_lowercase();
 
@@ -175,12 +226,18 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     let _ = ee_ocr_app.emit(events::RIVEN_UNVEILED, ());
                 }
 
-                // Trigger: "VoidProjections: GetVoidProjectionReward[s]" fires when the
-                // server actually delivers the reward choices to the client — later than
-                // the old "initialized" / "openvoidprojectionrewardscreen" lines, which
-                // fired before the cards were visible in endless missions.
+                // Trigger: "VoidProjections: OpenVoidProjectionRewardScreenRMI" fires when
+                // the reward screen actually opens on screen. A prior version of this code
+                // waited for "GetVoidProjectionReward[s]" instead (the server delivering the
+                // reward choices), believing the open event fired before cards were visible —
+                // but field EE.log captures show the open event consistently precedes "Get"
+                // by ~5s, and OCR attempts right after "Get" immediately see populated card
+                // text, meaning those 5 seconds of real display time were being missed. Kept
+                // "Get"/sequence-completed too since they're free (same line family) and
+                // harmless as a fallback if "Open" is ever missing from a read batch.
                 // Matching the singular prefix catches both "Reward" and "Rewards" variants.
-                let has_trigger = lower.contains("voidprojections: getvoidprojectionreward")
+                let has_trigger = lower.contains("voidprojections: openvoidprojectionrewardscreenrmi")
+                    || lower.contains("voidprojections: getvoidprojectionreward")
                     || vp_state.consume_sequence_completed();
 
                 let has_dismiss = log_watcher::dismiss_relic_rewards(
@@ -190,6 +247,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     &diag_arc,
                     &reward_screen_active2,
                     &rewards_emitted_ms_ee,
+                    &best_reward_payload_ee,
                     log_watcher::DismissState {
                         active_since: &mut active_since,
                         last_dismiss_at: &mut last_dismiss_at,
@@ -215,13 +273,23 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     );
                 }
 
+                // Requiem relics (Kuva Lich / Sister reward flow, path prefix
+                // "T5VoidProjection") are never void-fissure rewards — the reward
+                // catalog has no entries for them, so OCR would only ever mismatch.
+                // Never show the overlay for a session that saw one.
+                let has_requiem_relic = session_relics
+                    .iter()
+                    .any(|path| path.contains("T5VoidProjection"));
+
                 // ── Trigger: skip if dismiss in same batch, screen already active,
-                //    within 60 s of last dismiss, or the memory scanner is off (this
-                //    OCR feature has always been tied to `monitor_active`) ───────────
+                //    within 60 s of last dismiss, the memory scanner is off (this
+                //    OCR feature has always been tied to `monitor_active`), or a
+                //    Requiem relic was seen this session ─────────────────────────
                 let trigger_allowed = !has_dismiss
                     && active_since.is_none()
                     && last_dismiss_at.is_none_or(|t| t.elapsed().as_secs() >= 5)
-                    && flag.load(Ordering::SeqCst);
+                    && flag.load(Ordering::SeqCst)
+                    && !has_requiem_relic;
                 if has_trigger && trigger_allowed {
                     reward_screen_active2.store(true, Ordering::SeqCst);
                     active_since = Some(std::time::Instant::now());
@@ -237,7 +305,8 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     let trigger_line = buf.lines()
                         .find(|l| {
                             let ll = l.to_lowercase();
-                            ll.contains("voidprojections: getvoidprojectionreward")
+                            ll.contains("voidprojections: openvoidprojectionrewardscreenrmi")
+                                || ll.contains("voidprojections: getvoidprojectionreward")
                         })
                         .unwrap_or("<unknown trigger line>")
                         .trim()
@@ -263,6 +332,9 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                         &diag_arc,
                         &ee_last_path,
                     );
+                    // Fired immediately, before OCR starts — the ground-truth
+                    // anchor for whether the trigger itself was seen on time.
+                    log_watcher::schedule_trigger_moment_capture(Arc::clone(&diag_arc));
 
                     if ee_ocr_app.state::<AppState>().overlays_enabled.load(Ordering::SeqCst) {
                         let _ = ee_ocr_app.emit(events::FF_STATUS, "🔍 Relic reward screen detected");
@@ -279,6 +351,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     let slog         = session_log_path.clone();
                     let active       = reward_screen_active2.clone();
                     let emitted_ms   = rewards_emitted_ms_ocr.clone();
+                    let shared_best  = best_reward_payload_ocr.clone();
                     let squad_arc    = Arc::clone(&shared_squad_size);
                     let names_arc    = Arc::clone(&shared_squad_names);
                     let diag_arc2    = Arc::clone(&diag_arc);
@@ -288,6 +361,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                         }
                         let deadline = std::time::Instant::now()
                             + std::time::Duration::from_secs(45);
+                        if let Ok(mut g) = shared_best.lock() { *g = None; }
                         log_watcher::wait_for_squad_hint(&squad_arc).await;
 
                         // Allow the catalog to be rebuilt inside the loop — it may be empty
@@ -304,6 +378,24 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                         let mut soft_complete_at: Option<usize> = None;
                         // Item count at the time soft_complete_at was set.
                         let mut soft_complete_count: usize = 0;
+                        // If the same confirmed item set comes back on consecutive attempts,
+                        // trust it instead of waiting out the full low-confidence/hint-wants-more
+                        // retry window — a repeated read is itself evidence the answer is right,
+                        // and this is what lets a stale EE.log squad hint (e.g. a player left
+                        // mid-session) stop blocking on a card that will never be found.
+                        let mut prev_confirmed: Option<Vec<String>> = None;
+                        let mut stable_streak: u32 = 0;
+                        const STABLE_ACCEPT: u32 = 2;
+                        // Tracks the attempt where the confirmed set first became stable while
+                        // still short of estimated_cards (e.g. one card's best catalog match
+                        // never clears the confirm threshold). *complete only goes true once
+                        // n_confirmed reaches the expected count, so the is_stable escape above
+                        // — which lives inside the `if *complete` branch — can never fire for a
+                        // card that's permanently unresolvable. This is the matching escape for
+                        // the incomplete case: a handful of extra retries, then accept the stable
+                        // partial read instead of spinning until dismiss or the 45s hard timeout.
+                        let mut incomplete_stable_at: Option<usize> = None;
+                        const INCOMPLETE_STABLE_GRACE: usize = 4;
                         loop {
                             attempt += 1;
                             // Rebuild catalog if WFCD hadn't loaded when this OCR session started.
@@ -332,23 +424,40 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                                         "items": items, "positions": positions
                                     }));
 
+                                    // "?:"-prefixed entries are unmatched OCR fragments, not real
+                                    // catalog hits — count only the confirmed matches.
+                                    let n_confirmed = items.iter().filter(|s| !s.starts_with("?:")).count();
+                                    let confirmed_items: Vec<String> = items.iter()
+                                        .filter(|s| !s.starts_with("?:")).cloned().collect();
+                                    if !confirmed_items.is_empty() && prev_confirmed.as_ref() == Some(&confirmed_items) {
+                                        stable_streak += 1;
+                                    } else {
+                                        stable_streak = if confirmed_items.is_empty() { 0 } else { 1 };
+                                        prev_confirmed = Some(confirmed_items);
+                                    }
+                                    let is_stable = stable_streak >= STABLE_ACCEPT;
+
                                     let soft_retries_done = soft_complete_at
                                         .is_some_and(|sa| (attempt as usize).saturating_sub(sa) >= 3);
                                     let hint_wants_more = hint_squad
-                                        .is_some_and(|h| h > items.len());
+                                        .is_some_and(|h| h > n_confirmed);
                                     // A "complete" set of cards can still contain a low-confidence
                                     // pick (sparse OCR read let a coincidental score through) — give
                                     // it the same few extra retries as the no-squad-hint case before
-                                    // accepting whatever the best read so far was.
-                                    let confirm_ready = !hint_wants_more
+                                    // accepting whatever the best read so far was. A repeated
+                                    // identical read (is_stable) short-circuits both of those waits —
+                                    // including a hint that's gone stale because a squad member left
+                                    // after the expected-card count was computed.
+                                    let confirm_ready = (!hint_wants_more || is_stable)
                                         && (hint_squad.is_some() || soft_retries_done)
-                                        && (!*low_confidence || soft_retries_done);
+                                        && (!*low_confidence || soft_retries_done || is_stable);
 
                                     // Save best result; only emit to overlay when confirmed (LOCK).
-                                    let is_new_best = items.len() > best_item_count;
+                                    let is_new_best = n_confirmed > best_item_count;
                                     if is_new_best {
-                                        best_item_count = items.len();
+                                        best_item_count = n_confirmed;
                                         best_payload = payload.clone();
+                                        if let Ok(mut g) = shared_best.lock() { *g = payload.clone(); }
                                         log_watcher::log_reward_best_result(
                                             log_watcher::RewardAttempt {
                                                 attempt, ts: &ts, items, dbg,
@@ -359,6 +468,26 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                                                 last_path: &lpath,
                                             },
                                         );
+                                    } else if !*complete {
+                                        // Non-empty OCR result that didn't beat the running best and
+                                        // isn't a complete card set — e.g. attempt #1 landing on the
+                                        // "Retrieving rewards..." transition and matching nothing.
+                                        // Previously unlogged, leaving silent gaps in the session log.
+                                        log_watcher::log_reward_partial_no_improvement(
+                                            attempt, &ts, items, dbg, &slog,
+                                        );
+                                    }
+
+                                    // Track how long the confirmed set has been stable while still
+                                    // short of estimated_cards (see incomplete_stable_at comment above).
+                                    if !*complete {
+                                        if is_stable {
+                                            if incomplete_stable_at.is_none() {
+                                                incomplete_stable_at = Some(attempt as usize);
+                                            }
+                                        } else {
+                                            incomplete_stable_at = None;
+                                        }
                                     }
 
                                     // Stop retrying and emit ONLY when all expected cards found AND confirmed.
@@ -381,6 +510,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                                                     .unwrap_or(0),
                                                 Ordering::SeqCst,
                                             );
+                                            if let Ok(mut g) = shared_best.lock() { *g = None; }
                                             log_watcher::schedule_reward_diagnostic_capture(Arc::clone(&diag_arc2));
                                             log_watcher::schedule_reward_safety_cleanup(
                                                 app.clone(),
@@ -395,12 +525,53 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                                                 soft_complete_count = best_item_count;
                                             }
                                         }
-                                    } else if soft_complete_at.is_some() && items.len() <= soft_complete_count {
+                                    } else if soft_complete_at.is_some() && n_confirmed <= soft_complete_count {
                                         if !active.load(Ordering::SeqCst) { break; }
                                         let emit_val = best_payload.clone().unwrap_or(serde_json::Value::Null);
                                         log_watcher::publish_relic_rewards(&app, Some(&emit_val));
+                                        emitted_ms.store(
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                            Ordering::SeqCst,
+                                        );
+                                        if let Ok(mut g) = shared_best.lock() { *g = None; }
                                         let _ = append_to_file(&slog,
                                             "[STEP 3] OVERLAY OPENED (soft-complete confirmed — no improvement)\n\n");
+                                        log_watcher::schedule_reward_diagnostic_capture(Arc::clone(&diag_arc2));
+                                        log_watcher::schedule_reward_safety_cleanup(
+                                            app.clone(),
+                                            slog.clone(),
+                                            Arc::clone(&diag_arc2),
+                                            false,
+                                        );
+                                        break;
+                                    } else if incomplete_stable_at
+                                        .is_some_and(|sa| (attempt as usize).saturating_sub(sa) >= INCOMPLETE_STABLE_GRACE)
+                                    {
+                                        // Same confirmed subset for several seconds straight, still short
+                                        // of the expected card count — the missing card(s) are either not
+                                        // matchable against the catalog or not being read at all, and more
+                                        // retries will not change that (confirmed here: Paris Prime Lower
+                                        // Limb's best catalog match topped out at 0.61 across 29 identical
+                                        // reads). Publish what we have instead of spinning until dismiss or
+                                        // the 45s hard timeout with nothing ever shown to the player.
+                                        if !active.load(Ordering::SeqCst) { break; }
+                                        let emit_val = best_payload.clone()
+                                            .or_else(|| payload.clone())
+                                            .unwrap_or(serde_json::Value::Null);
+                                        log_watcher::publish_relic_rewards(&app, Some(&emit_val));
+                                        emitted_ms.store(
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as u64)
+                                                .unwrap_or(0),
+                                            Ordering::SeqCst,
+                                        );
+                                        if let Ok(mut g) = shared_best.lock() { *g = None; }
+                                        let _ = append_to_file(&slog,
+                                            "[STEP 3] OVERLAY OPENED (stable partial — gave up waiting for remaining card)\n\n");
                                         log_watcher::schedule_reward_diagnostic_capture(Arc::clone(&diag_arc2));
                                         log_watcher::schedule_reward_safety_cleanup(
                                             app.clone(),

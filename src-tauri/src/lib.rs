@@ -38,6 +38,8 @@ mod memory_scanner;
 mod monitor;
 mod ocr;
 mod ocr_fallback;
+#[cfg(test)]
+mod ocr_bench;
 mod paths;
 mod platform;
 mod pricing;

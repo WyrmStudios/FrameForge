@@ -1,11 +1,12 @@
 {
   "name": "warframe-companion",
   "private": true,
-  "version": "4.5.0",
+  "version": "4.5.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "lint": "eslint .",
     "lint:tailwind": "node scripts/check-tailwind.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
@@ -18,15 +19,21 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/language-server": "0.16.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
     "tailwindcss": "^4.3.3",
     "terser": "^5.48.0",
     "typescript": "~5.8.3",
+    "typescript-eslint": "^8.71.1",
     "vite": "^7.0.4"
   }
 }

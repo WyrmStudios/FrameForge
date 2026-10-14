@@ -605,7 +605,6 @@ pub fn match_reward_items(
             && meaningful.iter().all(|w| BADGE_WORDS.contains(&w.to_lowercase().as_str()))
     };
 
-    let raw_norm = normalise(raw_full);
     let is_prime_like = |w: &str| -> bool {
         if w.starts_with("prim") && w.len() >= 4 { return true; }
         if w == "pri" { return true; }
@@ -617,14 +616,25 @@ pub fn match_reward_items(
         if w.len() >= 3 && w.len() <= 7 { return lev_dist(w, "forma") <= 1; }
         false
     };
-    let prime_count = raw_norm.split_whitespace().filter(|&w| is_prime_like(w)).count();
-    let forma_count  = raw_norm.split_whitespace().filter(|&w| is_forma_like(w)).count();
 
     // Title lines that survive the y/badge/player-name filters, by x-position.
+    let title_lines: Vec<&str> = ocr_lines.iter()
+        .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
+        .map(|(t, _, _)| t.as_str())
+        .collect();
     let title_xs: Vec<f32> = ocr_lines.iter()
         .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
         .map(|(_, x, _)| *x)
         .collect();
+    // Count prime/forma keywords only in title-row text, not the full OCR blob.
+    // Hover-tooltip descriptions and duplicate badge-style lines below the bar
+    // (y >= ocr_y_max) also say "Prime"/"Forma" and previously inflated this
+    // count above the true number of cards, making the estimated card count
+    // (and therefore is_complete) unreachable — the retry loop would then spin
+    // for the full timeout without ever handing off to the overlay.
+    let raw_norm = normalise(&title_lines.join(" "));
+    let prime_count = raw_norm.split_whitespace().filter(|&w| is_prime_like(w)).count();
+    let forma_count  = raw_norm.split_whitespace().filter(|&w| is_forma_like(w)).count();
     let title_cluster_centers = cluster_x_centers(title_xs, 0.10);
     let ocr_cluster_count: usize = title_cluster_centers.len().min(4);
     let word_card_count = (prime_count + forma_count)
@@ -1021,7 +1031,17 @@ pub fn extract_reward_items_twophase(
     {
         let lower = raw_full.to_lowercase();
         const QUALITY: &[&str] = &["intact", "exceptional", "flawless", "radiant"];
-        if lower.contains(" relic") && QUALITY.iter().any(|q| lower.contains(q)) {
+        // The reward card screen's own header names the cracked relic (e.g. "Axi D6
+        // Intact"), which previously tripped this same check and caused the real
+        // reward screen to be skipped for its entire lifetime. The pre-mission/
+        // inter-rotation relic PICKER screen is the thing this check is meant to
+        // catch, and it lists several of the player's relics at once — so require
+        // at least two quality-word hits (one single mention is just the reward
+        // screen's own header) before treating it as the picker and skipping.
+        let quality_hits: usize = QUALITY.iter()
+            .map(|q| lower.matches(q).count())
+            .sum();
+        if lower.contains(" relic") && quality_hits >= 2 {
             return (false, true, vec![], vec![], format!(
                 "├─ Capture  : {}\n└─ OCR      : relic selection screen detected (skipped)",
                 capture_info
