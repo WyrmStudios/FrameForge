@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { HelpTip } from "../shared/HelpTip";
 import type { InventoryFilters } from "../types/filters";
 import SearchBar from "../shared/SearchBar";
+import { useDebouncedSearch } from "../hooks/useDebouncedSearch";
 import { ViewToggle } from "../shared/ViewToggle";
 import type { ViewMode } from "../types/ui";
 import type { FilterPresetModule, FilterPresetSettings } from "../types/filterPresets";
@@ -48,6 +49,7 @@ export default function InventoryToolbar({
   filters, onFiltersChange, onToggleRecent, platinumPriceStatus, availableRanks, showRankFilters, itemCount, view, onViewChange, cardColumns, onCardColumnsChange, listTextScale, onListTextScaleChange, filterPresets, onFilterPresetsChange, onOpenSettings,
 }: InventoryToolbarProps) {
   const { search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterRank, sortMode } = filters;
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, value => onFiltersChange(previous => ({ ...previous, search: value })));
   const isCardView = view === "cards" || view === "text-cards";
   const isListView = view === "list" || view === "list-compact";
   const imagesVisible = view === "cards" || view === "list";
@@ -63,8 +65,8 @@ export default function InventoryToolbar({
       <div className={TOOLBAR}>
         <SearchBar
           placeholder="Search items (comma-separated)…"
-          value={search}
-          onChange={search => onFiltersChange(previous => ({ ...previous, search }))}
+          value={inputSearch}
+          onChange={setInputSearch}
         />
       </div>
       <FilterBar>

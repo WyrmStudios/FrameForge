@@ -206,26 +206,76 @@ pub fn normalise(s: &str) -> String {
 
 /// Scan the captured image for the coloured rarity bars below each reward card.
 /// Returns (card_x_centers, bar_y_frac) where centers are fractions of image width.
+/// Rarity-bar colour/brightness heuristic, shared by the full-width band
+/// scan in `find_rarity_bars` and the narrow fixed-window probe in
+/// `probe_card_count`.
+#[inline]
+fn is_bar_pixel(b: u32, g: u32, r: u32) -> bool {
+    let lum = (r + g + b) / 3;
+    if lum < 25 { return false; }
+    let is_orange = r > 80  && r > b + 20;
+    let is_teal   = b > 65  && g > 50  && b > r + 8;
+    let is_gold   = r > 100 && g > 80  && b < r.saturating_sub(10);
+    let max_ch = r.max(g).max(b);
+    let min_ch = r.min(g).min(b);
+    let is_bright = lum > 160 && max_ch - min_ch < 50;
+    is_orange || is_teal || is_gold || is_bright
+}
+
+// The bar band used by both the full-width scan and the fixed-window probe.
+const BAR_BAND_Y_LO_FRAC: f32 = 0.55;
+const BAR_BAND_Y_HI_FRAC: f32 = 0.97;
+
+/// Direct card-count check, tried before any dynamic column detection.
+///
+/// Instead of scanning the whole width for an unknown number of bars and
+/// clustering them (ambiguous when two cards' bars sit close together), this
+/// asks a yes/no question per candidate count: does the *outermost* card's
+/// known x-position for an N-card layout show a real rarity bar? Checked
+/// descending from 4 to 1 — a layout's outer slot only lights up when that
+/// many cards are actually present, so the first hit is the true count.
+/// Windows are centred on the leftmost `hardcoded_card_centers` position for
+/// each N (already-tuned values, not new unvalidated constants).
+fn probe_card_count(pixels: &[u8], pix_w: u32, pix_h: u32) -> Option<usize> {
+    const HALF_WIDTH: f32 = 0.03;
+    let y_lo = (pix_h as f32 * BAR_BAND_Y_LO_FRAC) as u32;
+    let y_hi = (pix_h as f32 * BAR_BAND_Y_HI_FRAC) as u32;
+    if y_hi <= y_lo { return None; }
+    let band_height = (y_hi - y_lo) as f32;
+
+    for n in (1..=4usize).rev() {
+        let center = hardcoded_card_centers(n)[0];
+        let x_lo = ((center - HALF_WIDTH) * pix_w as f32).max(0.0) as u32;
+        let x_hi = ((center + HALF_WIDTH) * pix_w as f32).min(pix_w as f32 - 1.0) as u32;
+        if x_hi <= x_lo { continue; }
+
+        let mut col_score = vec![0u32; (x_hi - x_lo) as usize];
+        for y in y_lo..y_hi {
+            for (xi, x) in (x_lo..x_hi).enumerate() {
+                let i = ((y * pix_w + x) * 4) as usize;
+                if i + 2 < pixels.len()
+                    && is_bar_pixel(pixels[i] as u32, pixels[i+1] as u32, pixels[i+2] as u32)
+                {
+                    col_score[xi] += 1;
+                }
+            }
+        }
+        let max_col = col_score.iter().max().copied().unwrap_or(0);
+        // A real bar lights most of the probe column's height, not a stray pixel.
+        if max_col as f32 >= band_height * 0.4 {
+            return Some(n);
+        }
+    }
+    None
+}
+
 pub fn find_rarity_bars(pixels: &[u8], pix_w: u32, pix_h: u32) -> (Option<(Vec<f32>, f32)>, String) {
     let x_lo = (pix_w as f32 * 0.05) as u32;
     let x_hi = (pix_w as f32 * 0.95) as u32;
-    let y_lo = (pix_h as f32 * 0.55) as u32;
-    let y_hi = (pix_h as f32 * 0.97) as u32;
+    let y_lo = (pix_h as f32 * BAR_BAND_Y_LO_FRAC) as u32;
+    let y_hi = (pix_h as f32 * BAR_BAND_Y_HI_FRAC) as u32;
 
     let scan_w = (x_hi - x_lo) as usize;
-
-    #[inline]
-    fn is_bar_pixel(b: u32, g: u32, r: u32) -> bool {
-        let lum = (r + g + b) / 3;
-        if lum < 25 { return false; }
-        let is_orange = r > 80  && r > b + 20;
-        let is_teal   = b > 65  && g > 50  && b > r + 8;
-        let is_gold   = r > 100 && g > 80  && b < r.saturating_sub(10);
-        let max_ch = r.max(g).max(b);
-        let min_ch = r.min(g).min(b);
-        let is_bright = lum > 160 && max_ch - min_ch < 50;
-        is_orange || is_teal || is_gold || is_bright
-    }
 
     let mut col_score = vec![0u32; scan_w];
     for y in y_lo..y_hi {
@@ -284,6 +334,15 @@ pub fn find_rarity_bars(pixels: &[u8], pix_w: u32, pix_h: u32) -> (Option<(Vec<f
         }
     }
     if in_band && scan_w - band_start >= min_band { bands.push((band_start, scan_w)); }
+
+    // Discard bands much narrower than the widest one. The `is_bright`
+    // brightness heuristic in `is_bar_pixel` also fires on bright HUD text
+    // (e.g. a stray UI label near the reward row), which can show up as a
+    // thin extra band alongside the real rarity bars and push the count
+    // past the real card count or break `bar_centers_are_valid`'s gap check.
+    if let Some(max_width) = bands.iter().map(|(s, e)| e - s).max() {
+        bands.retain(|(s, e)| (e - s) as f32 >= max_width as f32 * 0.35);
+    }
 
     let lit_count = lit.iter().filter(|&&b| b).count();
     if bands.is_empty() {
@@ -573,6 +632,11 @@ pub fn match_reward_items(
     let MatchParams { pixels, pix_w, pix_h, raw_full, ocr_lines, catalog, capture_info, hint_squad_size, player_names } = params;
 
     let (bar_result, bar_diag) = find_rarity_bars(pixels, pix_w, pix_h);
+    // Direct probe of the outermost card's fixed position for each candidate
+    // count (4→1) — more reliable than clustering an unknown number of bars
+    // across the full width, since it only has to answer one yes/no question
+    // per count rather than segment ambiguous adjacent bars.
+    let probed_card_count = probe_card_count(pixels, pix_w, pix_h);
 
     let (card_centers, _bar_y_frac): (Vec<f32>, f32) = match &bar_result {
         Some((centers, by)) => (centers.clone(), *by),
@@ -635,10 +699,18 @@ pub fn match_reward_items(
     let raw_norm = normalise(&title_lines.join(" "));
     let prime_count = raw_norm.split_whitespace().filter(|&w| is_prime_like(w)).count();
     let forma_count  = raw_norm.split_whitespace().filter(|&w| is_forma_like(w)).count();
-    let title_cluster_centers = cluster_x_centers(title_xs, 0.10);
+    // gap=0.10 let the running cluster mean drift far enough that two
+    // adjacent cards' titles chained into one cluster, silently merging
+    // (and losing) a card; 0.06 is tight enough to keep them separate while
+    // still tolerating normal OCR jitter within one card's title.
+    let title_cluster_centers = cluster_x_centers(title_xs, 0.06);
     let ocr_cluster_count: usize = title_cluster_centers.len().min(4);
-    let word_card_count = (prime_count + forma_count)
-        .max(ocr_cluster_count)
+    // The bar probe is a direct physical measurement, so when it fires it
+    // replaces the noisier prime/forma-word and title-cluster counts outright.
+    // hint_squad_size still acts as a floor either way — EE.log's own squad
+    // count should never be undercut by a vision signal.
+    let word_card_count = probed_card_count
+        .unwrap_or_else(|| (prime_count + forma_count).max(ocr_cluster_count))
         .max(hint_squad_size.unwrap_or(0))
         .clamp(1, 4);
 
@@ -648,9 +720,13 @@ pub fn match_reward_items(
     // Fallback columns come from the title x-clusters, not a fixed 4-slot grid.
     // A wrapped title ("Dethcube Prime" / "Carapace") shares one cluster, so it
     // stays on one card. The fixed grid split it across two columns.
+    // But the cluster count must match word_card_count exactly: fewer clusters
+    // than the known card count means two cards' titles chained together
+    // (clustering under-counted), and trusting them anyway silently drops a
+    // card instead of falling back to a grid sized for the real count.
     let active_centers: Vec<f32> = if bars_trusted {
         card_centers.clone()
-    } else if !title_cluster_centers.is_empty() && title_cluster_centers.len() <= 4 {
+    } else if title_cluster_centers.len() == word_card_count {
         title_cluster_centers.clone()
     } else {
         hardcoded_card_centers(word_card_count)
@@ -966,9 +1042,14 @@ pub fn match_reward_items(
     let is_complete = n_confirmed > 0 && n_confirmed >= estimated_cards;
     let expected_src = match (hint_squad_size, !card_centers.is_empty()) {
         (Some(h), _) if h >= word_card_count && h >= card_centers.len() => "EE.log",
+        _ if probed_card_count == Some(word_card_count) => "bar probe",
         (_, true) if card_centers.len() >= word_card_count => "bars",
         _ if ocr_cluster_count > prime_count + forma_count => "x-clusters",
         _ => "prime+forma",
+    };
+    let probe_str = match probed_card_count {
+        Some(n) => format!("{} cards (outer-slot bar present)", n),
+        None    => "no confident slot — fell back".into(),
     };
     let ee_hint_str = match hint_squad_size {
         Some(n) => format!("{} players (from EE.log)", n),
@@ -978,6 +1059,7 @@ pub fn match_reward_items(
         "├─ Capture  : {}\n\
          ├─ OCR      : {} chars, {} lines\n\
          ├─ Bars     : {}\n\
+         ├─ Bar probe: {}\n\
          ├─ Prime/Forma: {}p + {}f + {}x = {} cards\n\
          ├─ EE hint  : {}\n\
          ├─ Expected : {} cards (from {}){}{}\n\
@@ -988,6 +1070,7 @@ pub fn match_reward_items(
         capture_info,
         raw_full.len(), ocr_lines.len(),
         bar_diag,
+        probe_str,
         prime_count, forma_count, ocr_cluster_count, word_card_count,
         ee_hint_str,
         estimated_cards, expected_src,

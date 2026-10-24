@@ -449,6 +449,58 @@ fn find_blob_end(raw: &[u8]) -> Option<usize> {
     best
 }
 
+/// Cross-checks `find_blob_end`'s literal-marker result by independently
+/// walking forward from `buf`'s start (always the JSON `{`, by construction —
+/// every caller passes a buffer already sliced to the true object start) and
+/// counting brace/bracket depth, string- and escape-aware, until it returns
+/// to zero.
+///
+/// This never changes what gets parsed — the literal marker stays the sole
+/// source of truth for where a blob is cut. It only logs a warning on
+/// disagreement, so a future DE blob restructuring that moves the literal end
+/// markers (`HWIDProtectEnabled`/`DeathSquadable`) shows up in logs
+/// immediately instead of silently truncating or corrupting a scan.
+fn verify_blob_end_by_brace_count(buf: &[u8], literal_end: usize, scan_id: usize) {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in buf.iter().enumerate() {
+        if escaped { escaped = false; continue; }
+        if in_string {
+            match b {
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    let brace_end = i + 1;
+                    if brace_end != literal_end {
+                        warn!(
+                            target: "frameforge::blob_parse",
+                            scan_id, literal_end, brace_count_end = brace_end,
+                            "blob end mismatch: literal marker vs brace-count validator"
+                        );
+                    }
+                    return;
+                }
+            }
+            _ => {}
+        }
+    }
+    warn!(
+        target: "frameforge::blob_parse",
+        scan_id, literal_end,
+        "brace-count validator never closed — buffer may be malformed"
+    );
+}
+
 const START_MARKER: &[u8] = b"\"SubscribedToEmails\"";
 const ALT_STARTS: &[&[u8]] = &[
     b"\"RegularCredits\":",
@@ -1230,7 +1282,9 @@ fn stitch_blobs(
             // Only search the newly-added window, not the full buffer.
             let window = &scan.data[search_from..];
             let has_end = END_MARKERS.iter().any(|m| memchr::memmem::find(window, m).is_some());
-            if has_end && find_blob_end(&scan.data).is_some() {
+            let end_pos = if has_end { find_blob_end(&scan.data) } else { None };
+            if let Some(end_pos) = end_pos {
+                verify_blob_end_by_brace_count(&scan.data, end_pos, scan.id);
                 match parse_full_account_blob(&scan.data) {
                     Some(inv) => {
                         info!(
@@ -1356,8 +1410,9 @@ fn stitch_blobs(
             );
             let seed = combined[json_open..].to_vec();
 
-            let seed_ends = find_blob_end(&seed).is_some();
-            if seed_ends {
+            let seed_end = find_blob_end(&seed);
+            if let Some(end_pos) = seed_end {
+                verify_blob_end_by_brace_count(&seed, end_pos, id);
                 match parse_full_account_blob(&seed) {
                     Some(inv) => {
                         info!(

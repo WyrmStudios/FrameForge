@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, memo, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ItemImg from "../ItemImg";
 import { listen } from "@tauri-apps/api/event";
@@ -11,6 +11,7 @@ import { matchesSearchTerms, splitSearchTerms } from "../lib/search";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import { useCatalog } from "../hooks/useCatalog";
 import { useMarketData } from "../hooks/useMarketData";
+import { useDebouncedSearch } from "../hooks/useDebouncedSearch";
 import type { CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeMap } from "../types/items";
 import type { MarketFilters } from "../types/filters";
 import type { FilterPresetModule, FilterPresetSettings } from "../types/filterPresets";
@@ -179,7 +180,7 @@ const RIV_SUBMIT    = "bg-accent/15 border border-accent text-accent text-12 fon
 
 interface SetPart { item: CatalogItem; qty: number; required_count: number; sellMedian?: number; loading: boolean; urlName: string; }
 
-function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
+const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
   setKey: string; parts: SetPart[]; parentItem?: CatalogItem;
   setPrice?: WfmPrice; setPriceLoading: boolean; pricesFetched: boolean;
   crafting: CraftingJob[]; onCardClick?: () => void;
@@ -257,7 +258,7 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
       </div>
     </div>
   );
-}
+});
 
 // ─── Market Helper ────────────────────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   const [rivens, setRivens]               = useState<BlobRivenEntry[]>([]);
   const { search, ownership, conditions, vault, sortMode, activeMarketTab } = filters;
   const set = <K extends keyof MarketFilters>(k: K, v: MarketFilters[K]) => onFiltersChange({ ...filters, [k]: v });
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, value => set("search", value));
 
   // Seed live prices map from shared cached prices on first load
   const seededRef = useRef(false);
@@ -566,6 +568,40 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       });
   }, [sets, inventory, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup, recipeCountMap]);
 
+  const onPartClick = useCallback((urlName: string, displayName: string, imageName?: string) => {
+    invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
+    setPopup({ urlName, displayName, imageName });
+  }, []);
+
+  // Memoized so typing in the search box (which only changes `inputSearch`, not
+  // `search`/`visibleSets`, until the 150 ms debounce commits) doesn't re-run this
+  // per-set sort/map over every visible set on every keystroke.
+  const renderedSets = useMemo(() => visibleSets.map(([setKey, parts]) => {
+    const setNormalKey = normalizeForWfm(setKey + " Set");
+    const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
+    const parent        = parentItems.get(setKey) ?? parts[0];
+    const setPriceData = prices.get(setUrl);
+    const setParts: SetPart[] = [...parts]
+      .sort((a, b) => {
+        const qa = inventory[a.unique_name]?.quantity ?? 0;
+        const qb = inventory[b.unique_name]?.quantity ?? 0;
+        return qb - qa || a.name.localeCompare(b.name);
+      })
+      .map(p => {
+        const normalKey = normalizeForWfm(p.name);
+        const url = wfmLookup.get(normalKey) ?? normalKey;
+        const priceData = prices.get(url);
+        return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
+          required_count: recipeCountMap.get(p.unique_name) ?? 1,
+          sellMedian: priceData?.sell_median ?? undefined, loading: false, urlName: url };
+      });
+    const onCardClick = () => {
+      invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
+      setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
+    };
+    return { setKey, parent, setPriceData, setParts, onCardClick };
+  }), [visibleSets, wfmLookup, parentItems, prices, inventory, recipeCountMap]);
+
   return (
     <div className={MK_HELPER}>
       {/* ── Market tab strip ── */}
@@ -628,7 +664,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       {activeMarketTab === "sets" && <>
       <div className={MK_HEADER}>
         <FoundrySearch className="w-50" placeholder="Search sets (comma-separated)…"
-          value={search} onChange={e => set("search", e.target.value)} />
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)} />
         <FilterBar className="flex-1 flex-wrap border-0 p-0">
           <FilterChip active={ownership.includes("owned")} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</FilterChip>
           <FilterChip active={ownership.includes("notowned")} onClick={() => set("ownership", toggle(ownership, "notowned"))}>Not Owned</FilterChip>
@@ -669,43 +705,17 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       </div>
 
       <div className={MK_GRID}>
-        {visibleSets.length === 0 ? (
+        {renderedSets.length === 0 ? (
           <EmptyMessage className="col-span-full">No sets match. Adjust filters or own some prime parts first.</EmptyMessage>
-        ) : visibleSets.map(([setKey, parts]) => {
-          const setNormalKey = normalizeForWfm(setKey + " Set");
-          const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
-          const parent       = parentItems.get(setKey) ?? parts[0];
-          const setPriceData = prices.get(setUrl);
-          const setParts: SetPart[] = [...parts]
-            .sort((a, b) => {
-              const qa = inventory[a.unique_name]?.quantity ?? 0;
-              const qb = inventory[b.unique_name]?.quantity ?? 0;
-              return qb - qa || a.name.localeCompare(b.name);
-            })
-            .map(p => {
-              const normalKey = normalizeForWfm(p.name);
-              const url = wfmLookup.get(normalKey) ?? normalKey;
-              const priceData = prices.get(url);
-              return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
-                required_count: recipeCountMap.get(p.unique_name) ?? 1,
-                sellMedian: priceData?.sell_median ?? undefined, loading: false, urlName: url };
-            });
-          return (
-            <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
-              setPrice={setPriceData}
-              setPriceLoading={false}
-              pricesFetched={prices.size > 0}
-              crafting={crafting}
-              onCardClick={() => {
-                invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
-                setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
-              }}
-              onPartClick={(urlName, displayName, imageName) => {
-                invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
-                setPopup({ urlName, displayName, imageName });
-              }} />
-          );
-        })}
+        ) : renderedSets.map(({ setKey, parent, setPriceData, setParts, onCardClick }) => (
+          <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
+            setPrice={setPriceData}
+            setPriceLoading={false}
+            pricesFetched={prices.size > 0}
+            crafting={crafting}
+            onCardClick={onCardClick}
+            onPartClick={onPartClick} />
+        ))}
       </div>
       </>}
 
@@ -737,6 +747,7 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
   onOpenPopup: (urlName: string, displayName: string, imageName?: string, prefillModRank?: number) => void;
 }) {
   const [search, setSearch]       = useState("");
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, setSearch);
   const [catFilter, setCatFilter] = useState<"all" | "mods" | "arcanes">("all");
   const [ownFilter, setOwnFilter] = useState<"all" | "owned" | "notowned">("all");
   const [sortMode, setSortMode]   = useState<"qty" | "plat" | "az" | "za">("qty");
@@ -800,7 +811,7 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={MK_HEADER}>
         <FoundrySearch className="w-50" placeholder="Search mods &amp; arcanes…"
-          value={search} onChange={e => setSearch(e.target.value)} />
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)} />
         <FilterBar className="flex-1 flex-wrap border-0 p-0">
           <FilterChip active={catFilter === "all"} onClick={() => setCatFilter("all")}>All</FilterChip>
           <FilterChip active={catFilter === "mods"} onClick={() => setCatFilter("mods")}>Mods</FilterChip>

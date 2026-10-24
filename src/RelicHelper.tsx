@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
@@ -10,6 +10,7 @@ import { RELIC_DROP_RATES, RELIC_REFINEMENT_LABELS, RELIC_REFINEMENT_ORDER } fro
 import { warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
 import { useCatalog } from "./hooks/useCatalog";
+import { useDebouncedSearch } from "./hooks/useDebouncedSearch";
 import type { CatalogItem, InventoryItem } from "./types/items";
 import type { RelicFilters } from "./types/filters";
 import type { FilterPresetModule, FilterPresetSettings } from "./types/filterPresets";
@@ -321,7 +322,7 @@ function isFormaOrKuva(itemName: string): boolean {
   return itemName.includes("Forma") || itemName === "Kuva";
 }
 
-function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchTerms, nameMap, colorblindMode, view, ignoreFormaKuva }: {
+const RelicCard = memo(function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchTerms, nameMap, colorblindMode, view, ignoreFormaKuva }: {
   drop: RelicDrop;
   catalogRelicByName: Map<string, CatalogItem>;
   inventory: Record<string, InventoryItem>;
@@ -532,7 +533,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
       </div>
     </div>
   );
-}
+});
 
 // ─── Planner ─────────────────────────────────────────────────────────────────
 
@@ -825,6 +826,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
 
   const { search, tiers, ownership, vault, completion, sortMode, ignoreFormaKuva } = filters;
   const set = <K extends keyof RelicFilters>(k: K, v: RelicFilters[K]) => onFiltersChange({ ...filters, [k]: v });
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, value => set("search", value));
 
   const loadDrops = useCallback((force = false) => {
     const request = ++dropRequestRef.current;
@@ -962,7 +964,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
         <FoundrySearch
           className="w-55"
           placeholder="Relic or item names (comma-separated)…"
-          value={search} onChange={e => set("search", e.target.value)}
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)}
         />
         <FilterBar className="flex-1 flex-wrap border-0 p-0">
           {(["Lith","Meso","Neo","Axi","Requiem"] as const).map(t => (

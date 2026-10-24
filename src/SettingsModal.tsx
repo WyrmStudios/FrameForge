@@ -62,7 +62,7 @@ export interface SettingsModalProps {
   fissureNotifications: boolean; onFissureNotificationsChange: (enabled: boolean) => void;
   setQuantities: Setter<QuantityMap>; setApiQuantities: Setter<QuantityMap>; setApiModCopies: Setter<ModCopy[]>; setScannerMods: Setter<ScannerMods>; setMasteryData: Setter<Record<string, number>>; setArchonShards: Setter<ArchonShards>; setFormaData: Setter<QuantityMap>;
   setChangeLog: Setter<ChangeLogEntry[]>; setLastChanged: Setter<Record<string, number>>; setWfConnected: Setter<boolean>; wfConnectedRef: MutableRefObject<boolean>; setItemsRefreshKey: Setter<number>; setClearMsg: Setter<string>; clearMsg: string;
-  blobLogEnabled: boolean; setBlobLogEnabled: Setter<boolean>; blobLogSize: number; setBlobLogSize: Setter<number>; companionApiEnabled: boolean; apiLogEnabled: boolean; setApiLogEnabled: Setter<boolean>; apiLogSize: number; setApiLogSize: Setter<number>;
+  blobLogEnabled: boolean; setBlobLogEnabled: Setter<boolean>; blobLogSize: number; setBlobLogSize: Setter<number>; companionApiEnabled: boolean; setCompanionApiEnabled: Setter<boolean>; apiLogEnabled: boolean; setApiLogEnabled: Setter<boolean>; apiLogSize: number; setApiLogSize: Setter<number>;
   setShowInventoryBatchPreview: Setter<boolean>; notifyTestResult: string; setNotifyTestResult: Setter<string>; overlayLogCopied: boolean; setOverlayLogCopied: Setter<boolean>; autoDiagEnabled: boolean; setAutoDiagEnabled: Setter<boolean>;
   diagFolderSize: number; setDiagFolderSize: Setter<number>; diagPath: string | null; diagCapturing: boolean; setDiagCapturing: Setter<boolean>; setDiagPath: Setter<string | null>; reloadDebugSizes: () => void;
   memoryProbing: boolean; setMemoryProbing: Setter<boolean>; probeSize: number; setProbeSize: Setter<number>; rawScanning: boolean; setRawScanning: Setter<boolean>; rawScanSize: number; setRawScanSize: Setter<number>;
@@ -86,7 +86,7 @@ function BulkPriceRefreshButton() {
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
-  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion } = props;
+  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, setCompanionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion } = props;
 
   // Preview visibility is local to Settings; live game data always takes precedence.
   const [rewardShown, setRewardShown] = useState(false);
@@ -240,18 +240,22 @@ export default function SettingsModal(props: SettingsModalProps) {
                 </div>
 
                 {/* Warframe API */}
-                <div className={SECTION_CLASS}>
-                  <div className={`${SECTION_TITLE_CLASS} flex items-center gap-2`}>
-                    Warframe API
-                    <span className="rounded-3 border border-ducat/35 bg-ducat/15 px-1.5 py-px text-10 font-bold text-ducat">
-                      SUSPENDED
-                    </span>
+                <div className={`${SECTION_CLASS}${companionApiEnabled ? " border-ducat/30" : ""}`}>
+                  <div className={SECTION_TITLE_CLASS}>Warframe API</div>
+                  <div className="mb-2 text-11 leading-normal text-muted">
+                    Fills gaps in your inventory from DE's <code className="text-10">api.warframe.com/api/inventory.php</code> endpoint when memory-scanner data isn't available. This connects to an undocumented endpoint — DE confirmed third-party tools run at your own risk but could not clarify whether this specific endpoint is permitted.
                   </div>
-                  <div className="rounded-6 border border-ducat/25 bg-ducat/6 px-2.5 py-2 text-11 leading-1.6 text-muted">
-                    <strong className="text-ducat">Temporarily unavailable.</strong>
-                    {" "}This feature connects to an undocumented DE endpoint (<code className="text-10">api.warframe.com/api/inventory.php</code>).
-                    {" "}DE confirmed third-party tools run at your own risk but could not clarify whether this specific endpoint is permitted.
-                    {" "}The feature is disabled until we receive clearer guidance.
+                  <div className={ROW_CLASS}>
+                    <div>
+                      <span className={ROW_LABEL_CLASS}>Enable</span>
+                      <span className={ROW_DESC_CLASS}>Gap-fills inventory via credentials scanned from Warframe's memory</span>
+                    </div>
+                    <SecondaryButton
+                      className={`${TOGGLE_BUTTON_CLASS}${companionApiEnabled ? " border-ducat! bg-ducat/15! text-ducat!" : ""}`}
+                        onClick={() => setCompanionApiEnabled(v => !v)}
+                    >
+                      {companionApiEnabled ? "On" : "Off"}
+                    </SecondaryButton>
                   </div>
                 </div>
 

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, memo } from "react";
+import { useDebouncedSearch } from "../hooks/useDebouncedSearch";
 import { invoke } from "@tauri-apps/api/core";
 import ItemImg from "../ItemImg";
 import type { InventoryItem, WeaponItem } from "../types/items";
@@ -70,7 +71,7 @@ const WPN_EMPTY_CLASS = "py-10 text-center text-14 text-muted";
 
 // ── Item row ──────────────────────────────────────────────────────────────────
 
-function WeaponRow({ item, rank }: { item: WeaponItem; rank: number }) {
+const WeaponRow = memo(function WeaponRow({ item, rank }: { item: WeaponItem; rank: number }) {
   const cap = effectiveCap(item);
   const mastered = cap > 0 && rank >= cap;
   const rankLabel = cap > 0 ? `R${rank}/${cap}` : `R${rank}`;
@@ -87,7 +88,7 @@ function WeaponRow({ item, rank }: { item: WeaponItem; rank: number }) {
       </span>
     </div>
   );
-}
+});
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -101,6 +102,7 @@ export default function Weapons({ inventory, activeTab, onTabChange }: Props) {
   const [allWeapons, setAllWeapons] = useState<WeaponItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, setSearch);
   const [unmasteredOnly, setUnmasteredOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -175,8 +177,8 @@ export default function Weapons({ inventory, activeTab, onTabChange }: Props) {
           ref={inputRef}
           className={WPN_SEARCH_CLASS}
           placeholder="Search…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          value={inputSearch}
+          onChange={e => setInputSearch(e.target.value)}
         />
         <div className={WPN_PROGRESS_WRAP_CLASS}>
           <div className={WPN_PROGRESS_BAR_CLASS}>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PREFERENCE_KEYS } from "../constants/preferences";
-import { TAURI_COMMANDS } from "../constants/tauri";
+import { COMPANION_API_SUSPENDED, TAURI_COMMANDS } from "../constants/tauri";
 import {
   CLOCK_FORMAT_OPTIONS,
   DEFAULT_CLOCK_FORMAT,
@@ -50,6 +50,7 @@ interface UseSettingsReturn {
   filterPresets: FilterPresetSettings;
 
   // Setters
+  setCompanionApiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -128,7 +129,7 @@ export function useSettings(
   const [wfmAutoInvisibleMins, setWfmAutoInvisibleMins] = useState(30);
   const [wfmRecordSales, setWfmRecordSales] = useState(false);
   const [filterPresets, setFilterPresets] = useState<FilterPresetSettings>(() => parseFilterPresetSettings(undefined));
-  const companionApiEnabled = false; // Feature suspended pending DE clarification
+  const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const settingsLoadedRef = useRef(false);
@@ -195,6 +196,7 @@ export function useSettings(
       try {
         const s = JSON.parse(json) as SettingsFile;
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
+        if (!COMPANION_API_SUSPENDED && typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled === "boolean") setApiLogEnabled(s.apiLogEnabled);
         if (typeof s.autoDiagEnabled === "boolean") {
@@ -316,6 +318,7 @@ export function useSettings(
     wfmAutoInvisibleMins,
     wfmRecordSales,
     companionApiEnabled,
+    setCompanionApiEnabled,
     filterPresets,
 
     // Setters

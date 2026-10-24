@@ -41,8 +41,7 @@ export const TAURI_EVENTS = {
 // Feature 3 — api.warframe.com/api/inventory.php
 // DE confirmed third-party tools are used "at your own risk" but could not clarify
 // whether accessing this undocumented endpoint specifically is permitted.
-// Set to false to re-enable once clearer guidance is received.
-export const COMPANION_API_SUSPENDED = true;
+export const COMPANION_API_SUSPENDED = false;
 
 export const TAURI_COMMANDS = {
   SAVE_SETTINGS: "save_settings",

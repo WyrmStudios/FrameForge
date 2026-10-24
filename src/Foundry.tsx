@@ -698,17 +698,26 @@ export default function Foundry({ inventory, refreshKey, crafting, subsummedWarf
   filtersRef.current = filters;
   const onFiltersChangeRef = useRef(onFiltersChange);
   onFiltersChangeRef.current = onFiltersChange;
+  const lastCommittedSearchRef = useRef(filters.search);
 
   const trackedSet = useMemo(() => new Set(tracked), [tracked]);
 
-  // Sync local input when parent resets search through Clear filters.
-  useEffect(() => { setInputSearch(filters.search); }, [filters.search]); // eslint-disable-line
+  // Sync local input when parent resets search through Clear filters. Skip when
+  // filters.search is just catching up to a commit we ourselves just sent — otherwise
+  // a keystroke typed in the gap between that commit firing and this effect running
+  // would get clobbered back to the stale pre-keystroke value.
+  useEffect(() => {
+    if (filters.search === lastCommittedSearchRef.current) return;
+    setInputSearch(filters.search);
+    lastCommittedSearchRef.current = filters.search;
+  }, [filters.search]); // eslint-disable-line
 
   // Wait 150 ms after last keystroke before propagating to parent filters
   useEffect(() => {
     if (inputSearch === filtersRef.current.search) return;
     const id = setTimeout(() => {
       const f = filtersRef.current;
+      lastCommittedSearchRef.current = inputSearch;
       onFiltersChangeRef.current({ ...f, search: inputSearch, ...(inputSearch ? { activeCat: "All" as any } : {}) });
     }, 150);
     return () => clearTimeout(id);

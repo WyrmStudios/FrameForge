@@ -484,8 +484,7 @@ export function useInventoryData(): UseInventoryDataReturn {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // ── Auto-refresh API: 8 s while connecting, 30 s once connected ────────────
-  // Note: companionApiEnabled is always false (feature suspended pending DE clarification)
+  // ── Auto-refresh API: 60 s while connecting, 300 s once connected ──────────
   useEffect(() => {
     if (COMPANION_API_SUSPENDED) {
       setWfConnected(false);
