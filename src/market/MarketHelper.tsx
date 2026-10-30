@@ -116,6 +116,7 @@ const MK_PLATV      = "text-10 text-price-platinum font-semibold min-w-6 shrink-
 const MK_NAME       = "flex-1 text-10 text-foreground truncate min-w-0";
 const MK_QTY        = "text-11 font-bold min-w-4.5 text-center shrink-0 rounded-3 px-0.75";
 const MK_QTY_ZERO   = "text-danger bg-danger/12";
+const MK_QTY_PARTIAL = "text-caution bg-caution/15";
 const MK_QTY_ONE    = "text-foreground bg-white/6";
 const MK_QTY_DUPE   = "text-ducat bg-ducat/15";
 const MK_TOTALS     = "mt-auto px-2 text-9 text-muted bg-white/2 flex items-center gap-0.75 border-t border-border/30 min-h-5 shrink-0";
@@ -187,8 +188,8 @@ const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, set
   onPartClick?: (urlName: string, displayName: string, imageName?: string) => void;
 }) {
   const totalDucats  = parts.reduce((s, p) => s + (p.item.ducats ?? 0) * p.qty, 0);
-  const ownedCount   = parts.filter(p => p.qty > 0).length;
-  const isComplete   = ownedCount === parts.length;
+  const satisfiedCount = parts.filter(p => p.qty >= p.required_count).length;
+  const isComplete   = satisfiedCount === parts.length;
   const hasDupes     = parts.some(p => p.qty > p.required_count);
   const isCrafting   = crafting.some(c =>
     c.unique_name === parentItem?.unique_name ||
@@ -207,7 +208,7 @@ const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, set
         <div className={MK_SET_NAME}>{setKey}</div>
         <div className={MK_SET_BADGES}>
           {isComplete && <span className={MK_MSET_OK}>✓ Complete</span>}
-          {!isComplete && <span className={MK_MSET_PARTS}>{ownedCount}/{parts.length}</span>}
+          {!isComplete && <span className={MK_MSET_PARTS}>{satisfiedCount}/{parts.length}</span>}
           {hasDupes && <span className={MK_MSET_DUPES}>+ Dupes</span>}
         </div>
         <div className={MK_PRICE_BOX}>
@@ -230,7 +231,11 @@ const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, set
       <div className={MK_CARD_RIGHT}>
         {parts.map(part => {
           const qty      = part.qty;
-          const qtyClass = qty === 0 ? MK_QTY_ZERO : qty === 1 ? MK_QTY_ONE : MK_QTY_DUPE;
+          const required = part.required_count;
+          const qtyClass = qty === 0 ? MK_QTY_ZERO
+            : qty < required ? MK_QTY_PARTIAL
+            : qty === required ? MK_QTY_ONE
+            : MK_QTY_DUPE;
           const canClick = !!onPartClick;
           return (
             <div
@@ -248,7 +253,7 @@ const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, set
               </span>
               <span className={MK_SEP}>/</span>
               <span className={MK_NAME}>{partLabel(part.item.name, setKey)}</span>
-              <span className={`${MK_QTY} ${qtyClass}`}>{qty}</span>
+              <span className={`${MK_QTY} ${qtyClass}`}>{required > 1 ? `${qty}/${required}` : qty}</span>
             </div>
           );
         })}
@@ -529,7 +534,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
         // Group 2: specific conditions (OR — set matches if it satisfies ANY selected)
         if (conditions.length > 0) {
           const hasDupes   = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > (recipeCountMap.get(p.unique_name) ?? 1));
-          const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
+          const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) >= (recipeCountMap.get(p.unique_name) ?? 1));
           const ok = conditions.some(c =>
             (c === "hasparts"  && ownedAny)    ||
             (c === "dupes"     && hasDupes)    ||

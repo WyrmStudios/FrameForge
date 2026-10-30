@@ -113,10 +113,27 @@ export function useOverlays(
   useEffect(() => {
     let overlayVisible = false;
     let overlayRun = 0;
+    let topmostInterval: ReturnType<typeof setInterval> | null = null;
+
+    // Warframe continuously reasserts its own HWND_TOPMOST z-order, especially in
+    // Borderless Fullscreen. A single set_always_on_top(true) call when the overlay
+    // first appears loses that fight within moments, so we keep re-winning it on the
+    // same 150ms cadence the game uses — otherwise the overlay silently drops behind
+    // the game window even though OCR/matching/event emission all succeeded.
+    const startTopmostLoop = () => {
+      if (topmostInterval) return;
+      topmostInterval = setInterval(() => {
+        invoke(TAURI_COMMANDS.SET_OVERLAY_TOPMOST).catch(() => {});
+      }, 150);
+    };
+    const stopTopmostLoop = () => {
+      if (topmostInterval) { clearInterval(topmostInterval); topmostInterval = null; }
+    };
 
     const closeOverlay = async () => {
       overlayRun += 1;
       overlayVisible = false;
+      stopTopmostLoop();
       await invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
     };
 
@@ -141,6 +158,7 @@ export function useOverlays(
           return false;
         }
         overlayVisible = true;
+        startTopmostLoop();
         return true;
       } catch { return false; }
     };
@@ -201,6 +219,7 @@ export function useOverlays(
       unsubTrigger.then(fn => fn());
       unsubStatus.then(fn => fn());
       unsubReward.then(fn => fn());
+      stopTopmostLoop();
       invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
     };
   }, [setQuantities]);

@@ -545,9 +545,21 @@ impl Wfm {
         tcp.set_read_timeout(Some(RW_TIMEOUT)).ok();
         tcp.set_write_timeout(Some(RW_TIMEOUT)).ok();
 
-        let req = "wss://ws.warframe.market/socket"
+        let mut req = "wss://ws.warframe.market/socket"
             .into_client_request()
             .map_err(|e| format!("WS request: {}", e))?;
+        // WFM's WS gateway requires the "wfm" subprotocol and rejects the handshake
+        // (HTTP 403) without it — see docs/websockets/overview.mdx in 42bytes-team/wfm-docs.
+        req.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            "wfm".parse().map_err(|e| format!("WS header: {}", e))?,
+        );
+        // WFM's third-party client rules require a descriptive User-Agent identifying
+        // the app, or the connection may be blocked — see docs/rules/overview.md.
+        req.headers_mut().insert(
+            "User-Agent",
+            USER_AGENT.parse().map_err(|e| format!("WS header: {}", e))?,
+        );
         let (mut ws, _) = tungstenite::client_tls(req, tcp).map_err(|e| format!("WS connect: {}", e))?;
 
         match ws.get_ref() {

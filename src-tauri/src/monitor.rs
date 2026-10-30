@@ -114,6 +114,7 @@ pub(crate) struct MonitorCatalog {
     pub path_to_vaulted: HashMap<String, bool>,
     pub path_to_tradable: HashMap<String, bool>,
     pub path_to_masterable: HashMap<String, bool>,
+    pub path_to_max_level_cap: HashMap<String, u32>,
     pub path_to_category: HashMap<String, String>,
     pub path_to_item_type: HashMap<String, String>,
     pub path_to_product_category: HashMap<String, String>,
@@ -176,6 +177,9 @@ pub(crate) fn build_monitor_catalog(
     let path_to_masterable: HashMap<String, bool> = wfcd_items.iter()
         .filter_map(|i| i.masterable.map(|m| (i.unique_name.clone(), m)))
         .collect();
+    let path_to_max_level_cap: HashMap<String, u32> = wfcd_items.iter()
+        .filter_map(|i| i.max_level_cap.map(|c| (i.unique_name.clone(), c)))
+        .collect();
     let path_to_item_type: HashMap<String, String> = wfcd_items.iter()
         .map(|i| (i.unique_name.clone(), i.item_type.clone())).collect();
     let path_to_product_category: HashMap<String, String> = wfcd_items.iter()
@@ -223,7 +227,7 @@ pub(crate) fn build_monitor_catalog(
 
     MonitorCatalog {
         path_to_name, path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable, path_to_category,
+        path_to_tradable, path_to_masterable, path_to_max_level_cap, path_to_category,
         path_to_item_type, path_to_product_category, path_to_wfcd_cat,
         alias_excluded, ignored_paths, stackable_paths, path_aliases,
         unique_names, display_names,

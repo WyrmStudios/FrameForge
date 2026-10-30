@@ -232,6 +232,30 @@ pub(crate) fn save_api_inventory(
     })
 }
 
+/// Persist riven fingerprint detail (buffs/curses/compat/challenge/polarity/rerolls)
+/// built from the Companion API response. Same gap-fill philosophy as
+/// `save_api_inventory`: the scanner's blob parse is authoritative and rewrites
+/// `rivens` wholesale every ~10s, so this only matters while the scanner hasn't
+/// captured a blob this session (e.g. API-only users, or before the player has
+/// opened the orbiter). Checked against `current_mods`, not cache content, for
+/// the same reason documented on `save_api_inventory`. The retain-then-push
+/// pattern re-derives the whole non-scanner-confirmed set from this call's
+/// payload each time, so repeated polls don't accumulate duplicates.
+#[tauri::command]
+pub(crate) fn save_api_rivens(
+    state: tauri::State<'_, AppState>,
+    rivens: Vec<memory_scanner::BlobRivenEntry>,
+) -> Result<(), String> {
+    persist_inventory_state_cache(&state.inventory_state_cache_path, |cache| {
+        let scanned_mods = state.current_mods.lock().unwrap_or_else(|e| e.into_inner());
+        cache.rivens.retain(|r| scanned_mods.contains_key(&r.item_type));
+        for riven in rivens {
+            if scanned_mods.contains_key(&riven.item_type) { continue; }
+            cache.rivens.push(riven);
+        }
+    })
+}
+
 /// Login to Warframe API with email + password (same flow as mobile companion app).
 /// Password is hashed with Whirlpool before sending — never sent in plaintext.
 /// Returns (accountId, nonce) for subsequent API calls.

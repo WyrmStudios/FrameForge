@@ -71,6 +71,7 @@ pub struct OcrParams<'a> {
     capture_info: &'a str,
     hint_squad_size: Option<usize>,
     player_names: &'a [String],
+    own_item: Option<&'a str>,
 }
 
 pub struct BlobBuildParams<'a> {
@@ -81,6 +82,7 @@ pub struct BlobBuildParams<'a> {
     path_to_vaulted: &'a HashMap<String, bool>,
     path_to_tradable: &'a HashMap<String, bool>,
     path_to_masterable: &'a HashMap<String, bool>,
+    path_to_max_level_cap: &'a HashMap<String, u32>,
     relic_drops: &'a HashMap<String, Vec<String>>,
     existing_wfm_prices: &'a HashMap<String, u32>,
     excluded_paths: &'a std::collections::HashSet<String>,
@@ -662,6 +664,7 @@ pub fn run() {
             companion_api::get_rivens,
             rivens::get_weapon_dispositions,
             companion_api::save_api_inventory,
+            companion_api::save_api_rivens,
             syndicates::get_syndicate_stores,
             syndicates::get_research_lab_stores,
             worldstate::fetch_worldstate,

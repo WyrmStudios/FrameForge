@@ -1249,11 +1249,34 @@ fn parse_relics_rewards(
 /// the 3-slot Common tier (it mislabels those "Uncommon" too), so rarity is
 /// derived structurally from `chance` grouping, exactly as `parse_relics_rewards`
 /// does for WFCD's Relics.json.
+/// Map relic display name ("Axi A1 Intact") → uniqueName (EE.log path),
+/// built from WFCD's Relics.json top-level fields. Unlike `parse_relics_rewards`,
+/// this does not require `rewards[]` to be non-empty — Relics.json currently
+/// ships every relic with an empty `rewards[]` (see `parse_relics_rewards_from_drop_data`),
+/// but the name/uniqueName pair on the relic entry itself is still intact, so
+/// it can still be used to path-key the warframe-drop-data fallback rewards,
+/// which otherwise have no uniqueName of their own.
+fn build_relic_name_to_path(json: Option<&serde_json::Value>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(relics) = json.and_then(|v| v.as_array()) else { return out };
+    for relic in relics {
+        let (Some(name), Some(unique)) = (
+            relic.get("name").and_then(|v| v.as_str()),
+            relic.get("uniqueName").and_then(|v| v.as_str()),
+        ) else { continue };
+        if !name.is_empty() && !unique.is_empty() {
+            out.insert(name.to_string(), unique.to_string());
+        }
+    }
+    out
+}
+
 #[tracing::instrument(level = "debug", skip_all)]
 fn parse_relics_rewards_from_drop_data(
     json: Option<&serde_json::Value>,
     image_by_name: &HashMap<String, String>,
     name_to_unique: &HashMap<String, String>,
+    relic_name_to_path: &HashMap<String, String>,
 ) -> HashMap<String, Vec<RelicReward>> {
     let json = match json {
         Some(v) => v,
@@ -1320,6 +1343,13 @@ fn parse_relics_rewards_from_drop_data(
 
         reward_list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
         if !reward_list.is_empty() {
+            // Also key by uniqueName (EE.log path) when Relics.json still carries
+            // the name/uniqueName pair for this relic, so the OCR prefilter
+            // (which looks up by path, not display name) can find it — see
+            // build_relic_name_to_path.
+            if let Some(path) = relic_name_to_path.get(&display_name) {
+                result.insert(path.clone(), reward_list.clone());
+            }
             result.insert(display_name, reward_list);
         }
     }
@@ -1868,16 +1898,30 @@ fn fetch_from_wfcd(
         }
     }
 
-    // Build relic_rewards from pre-fetched Relics.json, falling back to
-    // warframe-drop-data when WFCD's own rewards[] come back empty (observed
-    // upstream regression — see parse_relics_rewards_from_drop_data).
+    // Build relic_rewards from both pre-fetched sources and merge them, rather
+    // than treating one as a fallback for total failure of the other — DE's own
+    // export (via Relics.json) lags behind on newly-released relics/Primes (e.g.
+    // Corufell Prime shipped with zero entries there), while warframe-drop-data
+    // picks those up faster but Relics.json carries richer per-item uniqueNames
+    // for the EE.log-path lookup. Relics.json wins per-relic when both have an
+    // entry; drop-data fills in any relic missing from Relics.json entirely.
     let mut relic_rewards = parse_relics_rewards(relics_json, &image_by_name);
+    let name_to_unique: HashMap<String, String> = items.iter()
+        .map(|i| (i.name.to_lowercase(), i.unique_name.clone()))
+        .collect();
+    let relic_name_to_path = build_relic_name_to_path(relics_json);
+    let drop_data_rewards = parse_relics_rewards_from_drop_data(drop_data_json, &image_by_name, &name_to_unique, &relic_name_to_path);
     if relic_rewards.is_empty() {
-        warn!("Relics.json rewards empty upstream — falling back to warframe-drop-data for relic rewards");
-        let name_to_unique: HashMap<String, String> = items.iter()
-            .map(|i| (i.name.to_lowercase(), i.unique_name.clone()))
-            .collect();
-        relic_rewards = parse_relics_rewards_from_drop_data(drop_data_json, &image_by_name, &name_to_unique);
+        warn!("Relics.json rewards empty upstream — using warframe-drop-data for relic rewards");
+        relic_rewards = drop_data_rewards;
+    } else {
+        let mut filled = 0u32;
+        for (name, rewards) in drop_data_rewards {
+            relic_rewards.entry(name).or_insert_with(|| { filled += 1; rewards });
+        }
+        if filled > 0 {
+            info!(filled, "filled in relics missing from Relics.json using warframe-drop-data");
+        }
     }
 
     // Backfill ducat values that WFCD's components[] no longer carries (the same
@@ -2381,5 +2425,17 @@ mod tests {
         let rewards = result.get("Requiem Eterna Relic").expect("relic should be keyed by name");
         // Falls back to the (mislabeled) string, matching old behavior for this shape.
         assert!(rewards.iter().all(|r| r.rarity == "Silver"));
+    }
+
+    #[test]
+    fn relic_vaulted_field_is_extracted_by_fetch_from_wfcd() {
+        // Real WFCD Relics.json shape (trimmed) for "Axi A1 Intact".
+        let item: serde_json::Value = serde_json::from_str(r#"{"uniqueName":"/Lotus/Types/Game/Projections/T4VoidProjectionEBronze","name":"Axi A1 Intact","type":"Relic","imageName":"RelicAxiD.png","category":"Relics","tradable":true,"rewards":[{"chance":11,"item":{"name":"Akstiletto Prime Barrel","uniqueName":"/Lotus/Types/Recipes/Weapons/WeaponParts/AkstilettoPrimeBarrel"},"rarity":"Uncommon"}],"vaulted":true,"masterable":false}"#).unwrap();
+        let all_items: Vec<&serde_json::Value> = vec![&item];
+        let result = fetch_from_wfcd(&all_items, None, None, None, None, None, None, None).expect("fetch_from_wfcd should succeed");
+        let found = result.items.iter()
+            .find(|i| i.unique_name == "/Lotus/Types/Game/Projections/T4VoidProjectionEBronze")
+            .expect("relic item should be in result.items");
+        assert_eq!(found.vaulted, Some(true));
     }
 }

@@ -79,6 +79,13 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
         Arc::new(Mutex::new(Vec::new()));
     let shared_squad_names2 = Arc::clone(&shared_squad_names);
 
+    // The local player's own reward path from EE.log's "gets reward /Lotus/..."
+    // line — a 100%-certain, non-OCR source for whichever reward card is the
+    // local player's. Updated by the EE.log watcher as soon as the handshake
+    // names it, read by the OCR loop each attempt (same pattern as squad_size).
+    let shared_own_item: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let shared_own_item2 = Arc::clone(&shared_own_item);
+
     let ee_ocr_app   = app.clone();
     let ee_catalog   = Arc::clone(&catalog_pairs);
     let ee_last_path = last_found_path.clone();
@@ -204,6 +211,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     &mut vp_state,
                     &shared_squad_size2,
                     &session_log_path,
+                    &shared_own_item2,
                 );
 
                 // Relics are announced before the reward screen opens, narrowing OCR candidates.
@@ -354,6 +362,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     let shared_best  = best_reward_payload_ocr.clone();
                     let squad_arc    = Arc::clone(&shared_squad_size);
                     let names_arc    = Arc::clone(&shared_squad_names);
+                    let own_item_arc = Arc::clone(&shared_own_item);
                     let diag_arc2    = Arc::clone(&diag_arc);
                     tauri::async_runtime::spawn(async move {
                         if !app.state::<AppState>().overlays_enabled.load(Ordering::SeqCst) {
@@ -411,6 +420,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                                 Arc::clone(&cat),
                                 Arc::clone(&squad_arc),
                                 Arc::clone(&names_arc),
+                                Arc::clone(&own_item_arc),
                             ).await;
                             // Re-read hint for confirm_ready logic below (same mutex, post-capture value).
                             let hint_squad = squad_arc.lock().ok().and_then(|g| *g);

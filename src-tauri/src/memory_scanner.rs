@@ -186,8 +186,22 @@ fn digits_end(data: &[u8], start: usize) -> usize {
 /// Warframes/Sentinels/companions, 500×N² for all weapon types.
 /// Invert: rank = floor(sqrt(xp / base)).
 /// No upper cap — some weapons (e.g. Paracesis) can exceed rank 30.
+///
+/// MOA (`MoaPetComponents/...Weapon`) and Zanuka Hound
+/// (`ZanukaPets/ZanukaPetMeleeWeapon<EL>`) weapons live under
+/// `/Types/Friendly/Pets/...` — the companion-body prefix — even though
+/// they're standalone weapons on the weapon curve. MOA weapon paths end in
+/// "Weapon" (e.g. CryoxionWeapon); Zanuka weapon paths instead end in a
+/// 2-letter element suffix (PS/IP/IS) after "ZanukaPetMeleeWeapon", so they
+/// need a separate substring check. Catch both before the broader
+/// Friendly-path match or they'd be misclassified as companions and
+/// under-ranked.
 pub fn xp_to_rank(xp: i64, path: &str) -> u32 {
-    let base = if path.contains("/Powersuits/")
+    let is_companion_weapon = (path.contains("/MoaPetComponents/") && path.ends_with("Weapon"))
+        || path.contains("ZanukaPetMeleeWeapon");
+    let base = if is_companion_weapon {
+        500.0f64
+    } else if path.contains("/Powersuits/")
         || path.contains("/SentinelPowersuits/")
         || path.contains("/Types/Friendly/")
         || path.contains("/Types/Game/KubrowPet/")
@@ -661,7 +675,24 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     // outer `{` of the blob can sit in a memory region the stitcher never
     // recovered — the resulting seed still parses as valid JSON, just starting
     // mid-object (e.g. right at SubscribedToEmails) and silently missing every
-    // top-level section that came before it.
+    // top-level section that came before it. The same failure mode also hits
+    // the *tail* of the blob: a mis-seeded or prematurely-closed candidate can
+    // still find a structurally valid end and parse cleanly while missing
+    // everything after some cutoff.
+    //
+    // Checked against the real DE account schema (same field order as the
+    // Companion API's own inventory response — verified directly, not
+    // assumed): these six keys used to cluster in the first ~77% of the
+    // object, so nothing guarded the back ~23% — which holds 8 of the 12
+    // unique-item sections (SpaceSuits/SpaceMelee/SpaceGuns, Sentinels,
+    // SentinelWeapons, KubrowPets, OperatorAmps, MechSuits), the riven list
+    // (Upgrades), and platinum (PremiumCredits). A capture cut short anywhere
+    // past PlayerLevel used to sail through this gate and get displayed with
+    // those sections silently empty. Upgrades/MechSuits/PremiumCredits below
+    // sit at ~80%/~98%/~99.9% of the real object respectively, so requiring
+    // them closes that blind spot without any added false-rejection risk —
+    // every key here is schema-guaranteed present regardless of account
+    // progression, same as the original six.
     //
     // Which optional sections exist differs per account, so this is only a
     // small universal core that every real account has. The per-account check
@@ -674,6 +705,9 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         b"\"Suits\":",
         b"\"MiscItems\":",
         b"\"RawUpgrades\":",
+        b"\"Upgrades\":",
+        b"\"MechSuits\":",
+        b"\"PremiumCredits\":",
     ];
     let search_range = &raw[..end_pos.min(raw.len())];
     for required in CORE_SECTIONS {
@@ -1880,12 +1914,14 @@ mod stitch_engine_tests {
 mod section_baseline_tests {
     use super::{parse_full_account_blob, SectionBaseline, MAX_MISSING_STREAK};
 
-    /// Account with only the core sections — no Sentinels, KubrowPets, MechSuits etc.
+    /// Account with only the core sections — no Sentinels, KubrowPets, etc.
+    /// (MechSuits/Upgrades/PremiumCredits are themselves part of `CORE_SECTIONS`
+    /// now, so they're present-but-empty here, same as the other core keys.)
     fn minimal_account_blob() -> Vec<u8> {
         let padding = "x".repeat(60_000);
         format!(
-            r#"{{"SubscribedToEmails":0,"RegularCredits":5,"PlayerLevel":3,"XPInfo":[],
-"Suits":[{{"ItemType":"/Lotus/Powersuits/Test/Test"}}],"MiscItems":[],"RawUpgrades":[],
+            r#"{{"SubscribedToEmails":0,"RegularCredits":5,"PremiumCredits":0,"PlayerLevel":3,"XPInfo":[],
+"Suits":[{{"ItemType":"/Lotus/Powersuits/Test/Test"}}],"MiscItems":[],"RawUpgrades":[],"Upgrades":[],"MechSuits":[],
 "_pad":"{padding}","DeathSquadable":false}}"#
         )
         .into_bytes()
@@ -1965,5 +2001,57 @@ mod section_baseline_tests {
         }
         assert_eq!(b.evaluate(&keys(&["B"])), Ok(true));
         assert_eq!(b.keys(), vec!["B"]);
+    }
+}
+
+#[cfg(test)]
+mod xp_to_rank_tests {
+    use super::xp_to_rank;
+
+    #[test]
+    fn moa_weapons_use_weapon_curve_not_companion_curve() {
+        // Real paths for Cryotra, Helstrum, Tazicor, Vulcax, Multron.
+        for path in [
+            "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetComponents/CryoxionWeapon",
+            "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetComponents/SwarmerWeapon",
+            "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetComponents/TazronWeapon",
+            "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetComponents/ThermocorMoaWeapon",
+            "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetComponents/HextraWeapon",
+        ] {
+            // 500*30^2 = 450000 XP should land exactly on rank 30 under the
+            // weapon curve; the companion curve (1000*N^2) would only reach
+            // rank 21 at this XP, so this also catches a regression back to
+            // the old behaviour.
+            assert_eq!(xp_to_rank(450_000, path), 30, "path: {path}");
+        }
+    }
+
+    #[test]
+    fn zanuka_weapons_use_weapon_curve_not_companion_curve() {
+        // Real paths for Akaten, Batoten, Lacerten (element-suffixed, don't
+        // end in "Weapon").
+        for path in [
+            "/Lotus/Types/Friendly/Pets/ZanukaPets/ZanukaPetMeleeWeaponPS",
+            "/Lotus/Types/Friendly/Pets/ZanukaPets/ZanukaPetMeleeWeaponIP",
+            "/Lotus/Types/Friendly/Pets/ZanukaPets/ZanukaPetMeleeWeaponIS",
+        ] {
+            assert_eq!(xp_to_rank(450_000, path), 30, "path: {path}");
+        }
+    }
+
+    #[test]
+    fn moa_companion_body_still_uses_companion_curve() {
+        // The MOA companion body itself (not its weapon) should still get
+        // the companion curve — only the *Weapon sub-paths are weapons.
+        let path = "/Lotus/Types/Friendly/Pets/MoaPets/MoaPetPowerSuit";
+        assert_eq!(xp_to_rank(450_000, path), 21);
+    }
+
+    #[test]
+    fn sentinel_weapon_unaffected_by_companion_weapon_carveout() {
+        // Sentinel weapons already lived outside /Types/Friendly/ and should
+        // be untouched by this fix.
+        let path = "/Lotus/Types/Sentinels/SentinelWeapons/DethMachineRifle";
+        assert_eq!(xp_to_rank(450_000, path), 30);
     }
 }

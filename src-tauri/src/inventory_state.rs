@@ -5,6 +5,19 @@ use crate::memory_scanner;
 use crate::wfcd::RecipeComponent;
 use crate::BlobBuildParams;
 
+/// Resolve the true mastery-rank ceiling for an item, accounting for the
+/// Kuva/Tenet/Paracesis Forma-scaled cap. `max_level_cap` is the WFCD
+/// `maxLevelCap` value (only present when it exceeds the default 30);
+/// `polarized` is the item's current Forma count. Items with no elevated
+/// cap (`max_level_cap` absent or <= 30) always cap at 30. Items with an
+/// elevated cap open up 2 extra ranks per Forma installed, up to that cap.
+fn effective_mastery_cap(max_level_cap: Option<u32>, polarized: u32) -> u32 {
+    match max_level_cap {
+        Some(cap) if cap > 30 => (30 + 2 * polarized).min(cap),
+        _ => 30,
+    }
+}
+
 /// One resolved modular component (Amp Prism/Scaffold/Brace, Kitgun barrel, etc.)
 /// stored inside the parent item's cache entry.
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
@@ -169,10 +182,22 @@ pub(crate) fn build_inventory_from_blob(
 ) -> InventoryStateCache {
     let BlobBuildParams {
         blob, path_to_name, path_to_category, path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable, relic_drops, existing_wfm_prices, excluded_paths,
-        stackable_paths,
+        path_to_tradable, path_to_masterable, path_to_max_level_cap, relic_drops,
+        existing_wfm_prices, excluded_paths, stackable_paths,
     } = params;
     let mut items: HashMap<String, CachedItem> = HashMap::new();
+
+    // Forma count per currently-owned item path, needed to compute the real rank
+    // cap for Kuva/Tenet/Paracesis-class weapons below (see mastery_data loop).
+    // Only covers items the player currently owns — a sold/traded weapon still
+    // present in XPInfo falls back to the standard 30 cap, since its Forma count
+    // is no longer observable.
+    let mut path_to_polarized: HashMap<String, u32> = HashMap::new();
+    for entry in &blob.unique_items {
+        if entry.polarized > 0 {
+            path_to_polarized.insert(entry.item_type.clone(), entry.polarized);
+        }
+    }
 
     macro_rules! upsert {
         ($path:expr) => {{
@@ -290,11 +315,22 @@ pub(crate) fn build_inventory_from_blob(
         item.is_stackable = true; // cosmetics can have count > 1; never treat as binary-owned
     }
 
-    // Mastery rank per item from XPInfo. Cap at 30 — raw XP can yield uncapped
-    // values (excess affinity beyond rank 30), matching the .min(30) applied to
-    // Amps and Zaws above.
+    // Mastery rank per item from XPInfo. Raw XP keeps accumulating past an
+    // item's current rank cap (banked/excess affinity), so it must always be
+    // clamped — otherwise a weapon sitting on a huge XP total looks over-ranked.
+    //
+    // Most items cap at 30. Kuva/Tenet weapons (and Paracesis) are different:
+    // WFCD's `maxLevelCap` marks these with a higher ceiling (40), but that
+    // ceiling isn't available all at once — it opens up 2 ranks per Forma
+    // installed, so a weapon with N Forma can only have reached 30 + 2*N ranks
+    // regardless of how much XP it's banked beyond that.
     for (path, &rank) in &blob.mastery_data {
-        if rank > 0 { upsert!(path).mastery_rank = rank.min(30); }
+        if rank == 0 { continue; }
+        let effective_cap = effective_mastery_cap(
+            path_to_max_level_cap.get(path).copied(),
+            path_to_polarized.get(path).copied().unwrap_or(0),
+        );
+        upsert!(path).mastery_rank = rank.min(effective_cap);
     }
 
     // Catalog-derived fields + carry forward fetched WFM prices.
@@ -303,6 +339,7 @@ pub(crate) fn build_inventory_from_blob(
         item.vaulted      = path_to_vaulted.get(path).copied();
         item.tradable     = path_to_tradable.get(path).copied();
         item.masterable   = path_to_masterable.get(path).copied();
+        item.max_level_cap = path_to_max_level_cap.get(path).copied();
         item.category     = path_to_category.get(path).cloned().unwrap_or_default();
         item.relic_reward = relic_drops.contains_key(path.as_str());
         let tradeable = item.ducat_price.is_some()
@@ -349,4 +386,33 @@ pub(crate) fn load_recipes_cache(path: &PathBuf) -> HashMap<String, Vec<RecipeCo
     std::fs::read_to_string(path).ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod mastery_cap_tests {
+    use super::effective_mastery_cap;
+
+    #[test]
+    fn standard_items_cap_at_30_regardless_of_forma() {
+        assert_eq!(effective_mastery_cap(None, 0), 30);
+        assert_eq!(effective_mastery_cap(None, 5), 30);
+        assert_eq!(effective_mastery_cap(Some(30), 5), 30);
+    }
+
+    #[test]
+    fn kuva_weapon_scales_two_ranks_per_forma_up_to_cap() {
+        assert_eq!(effective_mastery_cap(Some(40), 0), 30);
+        assert_eq!(effective_mastery_cap(Some(40), 1), 32);
+        assert_eq!(effective_mastery_cap(Some(40), 2), 34);
+        assert_eq!(effective_mastery_cap(Some(40), 3), 36);
+        assert_eq!(effective_mastery_cap(Some(40), 4), 38);
+        assert_eq!(effective_mastery_cap(Some(40), 5), 40);
+    }
+
+    #[test]
+    fn forma_count_beyond_what_cap_needs_is_clamped() {
+        // 5 Forma already reaches the max_level_cap; more Forma can't exceed it.
+        assert_eq!(effective_mastery_cap(Some(40), 6), 40);
+        assert_eq!(effective_mastery_cap(Some(40), 10), 40);
+    }
 }

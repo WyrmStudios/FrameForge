@@ -304,6 +304,18 @@ pub(crate) fn handle_relic_pick_events(
                         return;
                     }
                     let _ = app_clone.emit(events::RELIC_PICK_OPEN, payload);
+                    // Safety net: the only dismiss triggers are mapredux regaining
+                    // focus or OnEntitlementServiceComplete — if neither EE.log
+                    // line fires for a given mission-launch path, the overlay would
+                    // otherwise stay stuck open until the next relic screen. Force
+                    // it closed after 20s regardless; closing an already-closed
+                    // overlay is a no-op.
+                    let app_safety = app_clone.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                        relic_pick_hide(&app_safety);
+                        let _ = app_safety.emit(events::RELIC_PICK_CLOSE, ());
+                    });
                 }
             });
         } else {
@@ -523,11 +535,6 @@ pub(crate) struct VoidProjectionState {
     sequence_completed: bool,
     other_ids: std::collections::HashSet<String>,
     own_item: String,
-    // Squad members who cracked nothing this round ("<id> gets reward NULL").
-    // No reward card is shown for them, so the EE hint (expected card count)
-    // must subtract them from squad size or OCR retries past the point where
-    // every real card has already been found.
-    null_reward_ids: std::collections::HashSet<String>,
 }
 
 impl VoidProjectionState {
@@ -545,26 +552,44 @@ impl VoidProjectionState {
 }
 
 /// Update the VoidProjections reward-handshake state from newly appended EE.log lines.
+///
+/// `squad_size` is purely the squad's player count — DE's own client-side
+/// EE.log never reveals whether another squad member's reward was null
+/// ("Client got reward info from <id>" fires identically for a real item or
+/// nothing), so there is no way to detect that case from this log and this
+/// value must only be used as an upper bound on expected reward cards, never
+/// a floor (see `hint_squad_size` usage in ocr/mod.rs).
 pub(crate) fn collect_void_projection_state(
     text: &str,
     state: &mut VoidProjectionState,
     squad_size: &std::sync::Arc<std::sync::Mutex<Option<usize>>>,
     session_log_path: &std::path::Path,
+    own_item_shared: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) {
     for line in text.lines() {
         let lower = line.to_lowercase();
         if lower.contains("voidprojections: getvoidprojectionreward") {
             state.in_sequence = true;
             state.other_ids.clear();
-            state.null_reward_ids.clear();
             state.own_item.clear();
             if let Ok(mut size) = squad_size.lock() {
                 *size = None;
+            }
+            if let Ok(mut shared) = own_item_shared.lock() {
+                *shared = None;
             }
         }
         if lower.contains("gets reward /lotus/") {
             if let Some(index) = line.find("/Lotus/") {
                 state.own_item = line[index..].trim().to_string();
+                // Published as soon as it's known, not only at sequence
+                // completion — the handshake usually finishes before the
+                // reward screen trigger fires, but not always, and the OCR
+                // loop (which reads this live, see capture_reward_items)
+                // should get it the instant it's available either way.
+                if let Ok(mut shared) = own_item_shared.lock() {
+                    *shared = Some(state.own_item.clone());
+                }
             }
         }
         if state.in_sequence {
@@ -572,15 +597,10 @@ pub(crate) fn collect_void_projection_state(
                 if let Some(id) = lower.split_whitespace().last() {
                     state.other_ids.insert(id.to_string());
                 }
-            } else if lower.contains("gets reward null") {
-                if let Some(id) = lower.split_whitespace().next() {
-                    state.null_reward_ids.insert(id.to_string());
-                }
             } else if lower.contains("has reward info for all players now") {
                 let squad_total = (1 + state.other_ids.len()).clamp(1, 4);
-                let squad = squad_total.saturating_sub(state.null_reward_ids.len()).max(1);
                 if let Ok(mut size) = squad_size.lock() {
-                    *size = Some(squad);
+                    *size = Some(squad_total);
                 }
                 state.in_sequence = false;
                 state.sequence_completed = true;
@@ -590,13 +610,10 @@ pub(crate) fn collect_void_projection_state(
                         "[EE.log] VoidProjections squad\n\\
                          ├─ Local item : {}\n\\
                          ├─ Other players (unique IDs) : {}\n\\
-                         ├─ Null rewards (no card) : {}\n\\
-                         └─ Squad size : {} total ({} expected card(s))\n\n",
+                         └─ Squad size : {} total (upper bound on reward cards — some may be empty-handed)\n\n",
                         if state.own_item.is_empty() { "(not found)" } else { &state.own_item },
                         state.other_ids.len(),
-                        state.null_reward_ids.len(),
                         squad_total,
-                        squad,
                     ),
                 );
             }
@@ -1012,6 +1029,7 @@ pub(crate) async fn capture_reward_items(
     catalog: std::sync::Arc<Vec<(String, String)>>,
     squad_size: std::sync::Arc<std::sync::Mutex<Option<usize>>>,
     squad_names: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    own_item: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) -> Option<RewardOcrResult> {
     let frame = std::sync::Arc::clone(&app.state::<AppState>().last_ocr_frame);
     tauri::async_runtime::spawn_blocking(move || {
@@ -1023,6 +1041,7 @@ pub(crate) async fn capture_reward_items(
         }
         let hint_squad_size = squad_size.lock().ok().and_then(|hint| *hint);
         let player_names = squad_names.lock().map(|names| names.clone()).unwrap_or_default();
+        let own_item = own_item.lock().ok().and_then(|g| g.clone());
         Some(ocr::extract_reward_items_twophase(OcrParams {
             pixels: &pixels,
             pix_w: width,
@@ -1032,6 +1051,7 @@ pub(crate) async fn capture_reward_items(
             capture_info: &capture_info,
             hint_squad_size,
             player_names: &player_names,
+            own_item: own_item.as_deref(),
         }))
     })
     .await

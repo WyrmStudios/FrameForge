@@ -429,9 +429,17 @@ export default function App() {
     for (const path of allPaths) {
       const cat = pathToCatalog.get(path);
       const name = cat?.name ?? path;
-      let qty = quantities[path] ?? 0;
-      if (scannerMods[path]) qty = Math.max(qty, scannerMods[path].total);
-      if (companionApiEnabled) qty = Math.max(qty, apiQuantities[path] ?? 0);
+      // When the Companion API is on, its number is authoritative for any item it
+      // reports — the memory scanner only fills items the API doesn't cover (resources,
+      // mods, relics, blueprints), since the scanner occasionally misreads a quantity
+      // and Math.max'ing it against the API would let a bad scanner read win.
+      let qty: number;
+      if (companionApiEnabled && path in apiQuantities) {
+        qty = apiQuantities[path];
+      } else {
+        qty = quantities[path] ?? 0;
+        if (scannerMods[path]) qty = Math.max(qty, scannerMods[path].total);
+      }
       if (subsummedWarframes.has(path)) qty = 0;
 
       const entry: InventoryItem = {

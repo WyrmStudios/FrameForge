@@ -644,7 +644,8 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
         "image_name": i.image_name, "vaulted": i.vaulted, "ducats": i.ducats,
         "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation,
         "fusion_limit": i.fusion_limit, "max_level_cap": i.max_level_cap,
-        "masterable": i.masterable, "ducat_schema": DUCAT_SCHEMA_VERSION
+        "masterable": i.masterable, "ducat_schema": DUCAT_SCHEMA_VERSION,
+        "vaulted_schema": VAULTED_SCHEMA_VERSION
     })).collect::<Vec<_>>()) {
         let _ = std::fs::write(&state.items_cache_path, json);
     }
@@ -965,6 +966,14 @@ fn patch_item_category(name: &str, category: &str, unique_name: &str) -> String 
 /// instead of WFCD's `rarity` string, which never labels the Common tier.
 const DUCAT_SCHEMA_VERSION: u32 = 2;
 
+/// Bump this whenever a parsing-logic change makes previously-cached `vaulted`
+/// values wrong, for the same reason as `DUCAT_SCHEMA_VERSION` above — a local
+/// logic fix never trips the ETag ladder's refetch, so a stale cache carries
+/// the wrong value forever without this. v1: caches built before relic `vaulted`
+/// extraction was wired up in `fetch_from_wfcd` persisted `null` for every
+/// Relics-category item, silently breaking the vaulted/unvaulted filter and badge.
+const VAULTED_SCHEMA_VERSION: u32 = 1;
+
 pub(crate) fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
     let s = std::fs::read_to_string(path).ok()?;
     let arr: Vec<serde_json::Value> = serde_json::from_str(&s).ok()?;
@@ -986,6 +995,15 @@ pub(crate) fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     if cache_ducat_schema < DUCAT_SCHEMA_VERSION as u64 {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    // If the cache predates relic vaulted-field extraction, discard it too.
+    let cache_vaulted_schema = arr.first()
+        .and_then(|v| v.get("vaulted_schema"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if cache_vaulted_schema < VAULTED_SCHEMA_VERSION as u64 {
         let _ = std::fs::remove_file(path);
         return None;
     }
@@ -1156,5 +1174,54 @@ pub(crate) fn write_debug_unmatched_paths(
         if let Ok(json) = serde_json::to_string_pretty(&new_entries) {
             let _ = std::fs::write(&out, json);
         }
+    }
+}
+
+#[cfg(test)]
+mod load_items_cache_tests {
+    use super::*;
+
+    fn scratch_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("frameforge-catalogue-tests");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join(format!("{name}.json"))
+    }
+
+    fn relic_row(vaulted_schema: Option<u32>) -> serde_json::Value {
+        let mut row = serde_json::json!({
+            "unique_name": "/Lotus/Types/Game/Projections/T4VoidProjectionEBronze",
+            "name": "Axi A1 Intact",
+            "category": "Relics",
+            "item_type": "Relic",
+            "product_category": "",
+            "vaulted": true,
+            "masterable": false,
+            "ducat_schema": DUCAT_SCHEMA_VERSION,
+        });
+        if let Some(v) = vaulted_schema {
+            row["vaulted_schema"] = serde_json::json!(v);
+        }
+        row
+    }
+
+    #[test]
+    fn a_cache_predating_vaulted_extraction_is_discarded() {
+        let path = scratch_path("stale_vaulted_schema");
+        let body = serde_json::to_string(&vec![relic_row(None)]).unwrap();
+        std::fs::write(&path, body).unwrap();
+
+        assert!(load_items_cache(&path).is_none());
+        assert!(!path.exists(), "stale cache should be removed so a fresh fetch replaces it");
+    }
+
+    #[test]
+    fn a_cache_with_the_current_vaulted_schema_loads_its_vaulted_value() {
+        let path = scratch_path("current_vaulted_schema");
+        let body = serde_json::to_string(&vec![relic_row(Some(VAULTED_SCHEMA_VERSION))]).unwrap();
+        std::fs::write(&path, body).unwrap();
+
+        let items = load_items_cache(&path).expect("current-schema cache should load");
+        let relic = items.iter().find(|i| i.name == "Axi A1 Intact").expect("relic should be present");
+        assert_eq!(relic.vaulted, Some(true));
     }
 }

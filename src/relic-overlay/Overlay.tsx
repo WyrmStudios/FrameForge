@@ -391,11 +391,15 @@ export default function Overlay() {
       invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] building ${paths.length} base items` }).catch(() => {});
       const base: RewardItem[] = paths.map((path, i) => {
         if (path.startsWith("?:")) {
+          // Low-confidence OCR read that never cleared the match threshold —
+          // show a neutral placeholder rather than the raw garbled OCR text
+          // (e.g. "Saryn Prime B uepqint"), which just confused players into
+          // thinking that garbage string was the actual reward name.
           return {
             unique_name: path + "-" + i,
             raw_unique:  "",
             slot_x:      positions[i] ?? 0.5,
-            name:        path.slice(2),
+            name:        "Unknown Reward",
             category:    "Unrecognized",
           };
         }
