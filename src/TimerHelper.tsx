@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { InventoryItem } from "./types/items";
-import type { WorldState, WsFissure, WsStorm } from "./types/worldstate";
+import type { WorldState, WsFissure, WsStorm, WsBounty } from "./types/worldstate";
 import { useWorldState } from "./worldstate";
 import { ensurePermission } from "./lib/notify";
 import { matchesWatch } from "./fissureAlerts";
@@ -254,17 +254,23 @@ const TIER_COLOR: Record<string, string> = {
   Axi: "#e5c04a", Requiem: "#9b6dff", Omnia: "#e0e0e0",
 };
 
+// DE doesn't publish a Jobs list for Zariman/Hex bounties at all, so
+// jobCount is null there — show "Active" instead of a misleading "0 jobs".
+function bountyState(b: WsBounty): string {
+  return b.jobCount === null ? "Active" : `${b.jobCount} jobs`;
+}
+
 export function getTimerInfo(id: string, ws: WorldState): { state: string; expiry: string } | null {
   switch (id) {
     case "cetus-cycle":    return ws.cetus    ? { state: ws.cetus.isDay ? "Day" : "Night",        expiry: ws.cetus.expiry }    : null;
     case "vallis-cycle":   return ws.vallis   ? { state: ws.vallis.isWarm ? "Warm" : "Cold",      expiry: ws.vallis.expiry }   : null;
     case "cambion-cycle":  return ws.cambion  ? { state: "Cycle",                                 expiry: ws.cambion.expiry }  : null;
     case "zariman-cycle":  return ws.zariman  ? { state: "Active",                                expiry: ws.zariman.expiry }  : null;
-    case "bounty-cetus":   return ws.bounties?.cetus    ? { state: `${ws.bounties.cetus.jobCount} jobs`,    expiry: ws.bounties.cetus.expiry }    : null;
-    case "bounty-vallis":  return ws.bounties?.vallis   ? { state: `${ws.bounties.vallis.jobCount} jobs`,   expiry: ws.bounties.vallis.expiry }   : null;
-    case "bounty-cambion": return ws.bounties?.cambion  ? { state: `${ws.bounties.cambion.jobCount} jobs`,  expiry: ws.bounties.cambion.expiry }  : null;
-    case "bounty-zariman": return ws.bounties?.zariman  ? { state: `${ws.bounties.zariman.jobCount} jobs`,  expiry: ws.bounties.zariman.expiry }  : null;
-    case "bounty-hex":     return ws.bounties?.hex      ? { state: `${ws.bounties.hex.jobCount} jobs`,      expiry: ws.bounties.hex.expiry }      : null;
+    case "bounty-cetus":   return ws.bounties?.cetus    ? { state: bountyState(ws.bounties.cetus),    expiry: ws.bounties.cetus.expiry }    : null;
+    case "bounty-vallis":  return ws.bounties?.vallis   ? { state: bountyState(ws.bounties.vallis),   expiry: ws.bounties.vallis.expiry }   : null;
+    case "bounty-cambion": return ws.bounties?.cambion  ? { state: bountyState(ws.bounties.cambion),  expiry: ws.bounties.cambion.expiry }  : null;
+    case "bounty-zariman": return ws.bounties?.zariman  ? { state: bountyState(ws.bounties.zariman),  expiry: ws.bounties.zariman.expiry }  : null;
+    case "bounty-hex":     return ws.bounties?.hex      ? { state: bountyState(ws.bounties.hex),      expiry: ws.bounties.hex.expiry }      : null;
     case "sortie":         return ws.sortie      ? { state: ws.sortie.faction,     expiry: ws.sortie.expiry }     : null;
     case "archon-hunt":    return ws.archonHunt  ? { state: ws.archonHunt.boss,    expiry: ws.archonHunt.expiry } : null;
     case "daily-reset":    return { state: "UTC 00:00", expiry: nextUtcMidnight() };
@@ -443,7 +449,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
             ] as [string, string, string][]).map(([key, label, favId]) => {
               const b = ws.bounties![key];
               if (!b) return null;
-              return <TimerTile key={key} id={favId} label={label} state={`${b.jobCount} jobs`} stateClass="st-neutral" expiry={b.expiry} until="reset" />;
+              return <TimerTile key={key} id={favId} label={label} state={bountyState(b)} stateClass="st-neutral" expiry={b.expiry} until="reset" />;
             })}
           </div>
         </>

@@ -202,6 +202,17 @@ fn ws_sortie_modifier(m: &str) -> &'static str {
     }
 }
 
+fn ws_archon_boss(boss: &str) -> &'static str {
+    // Unlike regular Sorties, LiteSorties' Boss is one of only 3 Archon
+    // constants (same SORTIE_BOSS_* naming scheme, not a /Lotus/ path).
+    match boss {
+        "SORTIE_BOSS_NIRA"   => "Archon Nira",
+        "SORTIE_BOSS_AMAR"   => "Archon Amar",
+        "SORTIE_BOSS_BOREAL" => "Archon Boreal",
+        _                    => "Unknown Archon",
+    }
+}
+
 fn ws_faction(f: &str) -> String {
     match f {
         "FC_GRINEER"    => "Grineer",
@@ -348,10 +359,10 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
         .map(|s| {
             let expiry_ms = ws_ms(&s["Expiry"]);
             let boss_raw  = s["Boss"].as_str().unwrap_or("");
-            // Boss might be a /Lotus/ path; extract the last component
-            let boss = boss_raw.split('/').next_back().unwrap_or(boss_raw)
-                .trim_start_matches("Archon");
-            let missions: Vec<Value> = s["Variants"].as_array()
+            let boss = ws_archon_boss(boss_raw);
+            // DE's field for this list is "Missions" (plain {missionType, node} objects),
+            // unlike Sorties' "Variants" (which also carries modifierType/tileset).
+            let missions: Vec<Value> = s["Missions"].as_array()
                 .map(|arr| arr.iter().map(|v| json!({
                     "type": ws_mission_type(v["missionType"].as_str().unwrap_or("")),
                     "node": v["node"].as_str().unwrap_or(""),
@@ -473,7 +484,10 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
         let tag           = m["Tag"].as_str().unwrap_or("");
         let expiry_ms     = ws_ms(&m["Expiry"]);
         let activation_ms = ws_ms(&m["Activation"]);
-        let job_count     = m["Jobs"].as_array().map(|j| j.len()).unwrap_or(0);
+        // DE does not publish a "Jobs" list for Zariman/Hex bounties at all
+        // (unlike Cetus/Vallis/Deimos, which always carry one) — None here
+        // means "DE didn't tell us", not "zero bounties available".
+        let job_count = m["Jobs"].as_array().map(|j| j.len());
         let label = match tag {
             "CetusSyndicate"     => "cetus",
             "SolarisSyndicate"   => "vallis",
@@ -507,12 +521,20 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
             if expiry_ms <= now_ms { return None; }
             let mi = &a["MissionInfo"];
             let reward = mi["missionReward"].as_object();
+            // Alert rewards carry plain path strings under "items" (unlike Invasion
+            // rewards below, which use "countedItems" of {ItemType, ItemCount} objects)
+            // — fall back to that shape too in case a future alert type reintroduces it.
             let reward_item = reward
-                .and_then(|r| r.get("countedItems"))
-                .and_then(|ci| ci.as_array())
+                .and_then(|r| r.get("items"))
+                .and_then(|items| items.as_array())
                 .and_then(|arr| arr.first())
-                .and_then(|item| item["ItemType"].as_str())
-                .map(path_display_name);
+                .and_then(|v| v.as_str())
+                .or_else(|| reward
+                    .and_then(|r| r.get("countedItems"))
+                    .and_then(|ci| ci.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|item| item["ItemType"].as_str()))
+                .map(|path| item_display_name(path, catalog));
             let reward_credits = reward
                 .and_then(|r| r.get("credits"))
                 .and_then(|c| c.as_i64())
@@ -543,10 +565,10 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
             let pct   = (count.abs() as f64 / goal.abs().max(1) as f64 * 100.0) as i64;
             let att_reward = inv["AttackerReward"]["countedItems"].as_array()
                 .and_then(|a| a.first()).and_then(|i| i["ItemType"].as_str())
-                .map(path_display_name).unwrap_or_default();
+                .map(|path| item_display_name(path, catalog)).unwrap_or_default();
             let def_reward = inv["DefenderReward"]["countedItems"].as_array()
                 .and_then(|a| a.first()).and_then(|i| i["ItemType"].as_str())
-                .map(path_display_name).unwrap_or_default();
+                .map(|path| item_display_name(path, catalog)).unwrap_or_default();
             Some(json!({
                 "id": id, "node": node,
                 "attacker": attacker, "defender": defender,
@@ -622,7 +644,7 @@ fn parse_worldstate_value(raw: &serde_json::Value, now_ms: i64, catalog: &std::c
             let item_path = d["StoreItem"].as_str().unwrap_or("");
             json!({
                 "expiry": ms_to_iso(expiry_ms),
-                "item": path_display_name(item_path),
+                "item": item_display_name(item_path, catalog),
                 "discount": d["Discount"].as_i64().unwrap_or(0),
                 "originalPrice": d["OriginalPrice"].as_i64().unwrap_or(0),
                 "salePrice": d["SalePrice"].as_i64().unwrap_or(0),
@@ -807,4 +829,197 @@ pub fn refresh_worldstate(app: &tauri::AppHandle, _force: bool) -> Result<(), St
     // Invalidate the in-memory worldstate cache so the next fetch goes upstream.
     *state.worldstate_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod parse_worldstate_value_tests {
+    use super::parse_worldstate_value;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn ws_date(ms: i64) -> serde_json::Value {
+        json!({ "$date": { "$numberLong": ms.to_string() } })
+    }
+
+    #[test]
+    fn archon_hunt_reads_missions_not_variants() {
+        // Real shape from DE's live worldState.php: LiteSorties carries "Missions"
+        // ({missionType, node} objects), not "Variants" (that's the Sorties field).
+        let raw = json!({
+            "LiteSorties": [{
+                "_id": { "$oid": "abc" },
+                "Boss": "SORTIE_BOSS_AMAR",
+                "Activation": ws_date(0),
+                "Expiry": ws_date(1_000_000),
+                "Missions": [
+                    { "missionType": "MT_RESCUE", "node": "SolNode74" },
+                    { "missionType": "MT_TERRITORY", "node": "SolNode126" },
+                ],
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 500_000, &HashMap::new());
+        let missions = result["archonHunt"]["missions"].as_array().expect("missions should be an array");
+        assert_eq!(missions.len(), 2, "Missions field should populate archonHunt.missions");
+        assert_eq!(missions[0]["node"], "SolNode74");
+    }
+
+    #[test]
+    fn archon_hunt_boss_reads_sortie_boss_constant() {
+        // Real shape from DE's live worldState.php: LiteSorties' Boss is a
+        // SORTIE_BOSS_* constant (e.g. "SORTIE_BOSS_NIRA"), not a /Lotus/
+        // ...ArchonXAgent path — must map to a display name, not pass through raw.
+        let raw = json!({
+            "LiteSorties": [{
+                "_id": { "$oid": "abc" },
+                "Boss": "SORTIE_BOSS_NIRA",
+                "Activation": ws_date(0),
+                "Expiry": ws_date(1_000_000),
+                "Missions": [],
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 500_000, &HashMap::new());
+        assert_eq!(result["archonHunt"]["boss"], "Archon Nira");
+    }
+
+    #[test]
+    fn zariman_and_hex_bounties_without_a_jobs_list_report_null_not_zero() {
+        // Real shape from DE's live worldState.php: ZarimanSyndicate/HexSyndicate
+        // entries never carry a "Jobs" array at all (unlike Cetus/Vallis/Deimos,
+        // which always do) — that must surface as "we don't know", not "0 jobs".
+        let raw = json!({
+            "SyndicateMissions": [
+                {
+                    "Tag": "ZarimanSyndicate",
+                    "Activation": ws_date(0),
+                    "Expiry": ws_date(1_000_000),
+                    "Nodes": [],
+                },
+                {
+                    "Tag": "CetusSyndicate",
+                    "Activation": ws_date(0),
+                    "Expiry": ws_date(1_000_000),
+                    "Jobs": [{ "jobType": "/Lotus/Types/Gameplay/Eidolon/Jobs/CapturePlant" }],
+                },
+            ],
+        });
+        let result = parse_worldstate_value(&raw, 500_000, &HashMap::new());
+        assert!(result["bounties"]["zariman"]["jobCount"].is_null());
+        assert_eq!(result["bounties"]["cetus"]["jobCount"], 1);
+    }
+
+    #[test]
+    fn darvo_deal_resolves_item_name_via_catalog() {
+        // Real shape from DE's live worldState.php: StoreItem is a
+        // /Lotus/StoreItems/... path, which must go through the same
+        // store_to_unique catalog lookup Void Trader/Prime Resurgence use —
+        // not raw path-splitting, which mangles names like "Greater Madurai
+        // Lens" into "Attack Lens Greater".
+        let mut catalog = HashMap::new();
+        catalog.insert(
+            "/Lotus/Upgrades/Focus/AttackLensGreater".to_string(),
+            "Greater Madurai Lens".to_string(),
+        );
+        let raw = json!({
+            "DailyDeals": [{
+                "StoreItem": "/Lotus/StoreItems/Upgrades/Focus/AttackLensGreater",
+                "Activation": ws_date(0),
+                "Expiry": ws_date(1_000_000),
+                "Discount": 20,
+                "OriginalPrice": 40,
+                "SalePrice": 32,
+                "AmountTotal": 125,
+                "AmountSold": 100,
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 500_000, &catalog);
+        assert_eq!(result["darvo"]["item"], "Greater Madurai Lens");
+    }
+
+    #[test]
+    fn alert_reward_item_reads_items_array_of_paths() {
+        // Real shape from DE's live worldState.php: Alerts' missionReward carries
+        // "items" (plain path strings), not "countedItems" (that's the Invasion
+        // reward shape, {ItemType, ItemCount} objects).
+        let raw = json!({
+            "Alerts": [{
+                "_id": { "$oid": "abc" },
+                "Expiry": ws_date(1_000_000),
+                "MissionInfo": {
+                    "missionType": "MT_EXTERMINATION",
+                    "faction": "FC_GRINEER",
+                    "location": "SolNode1",
+                    "missionReward": {
+                        "credits": 10000,
+                        "items": ["/Lotus/StoreItems/Upgrades/Mods/Randomized/RawRifleRandomMod"],
+                    },
+                },
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 0, &HashMap::new());
+        let alerts = result["alerts"].as_array().expect("alerts should be an array");
+        assert_eq!(alerts.len(), 1);
+        assert!(alerts[0]["rewardItem"].as_str().is_some(), "rewardItem should resolve from the items[] path");
+        assert_eq!(alerts[0]["rewardCredits"], 10000);
+    }
+
+    #[test]
+    fn alert_reward_item_falls_back_to_counted_items_shape_and_uses_catalog() {
+        // Real shape from DE's live worldState.php: ItemType paths like this one
+        // don't display-name from path-splitting ("Chem Component") — DE's own
+        // catalog (confirmed against WFCD's Resources.json and browse.wf's
+        // getItemNamePromise) says this uniqueName is "Detonite Injector".
+        let mut catalog = HashMap::new();
+        catalog.insert(
+            "/Lotus/Types/Items/Research/ChemComponent".to_string(),
+            "Detonite Injector".to_string(),
+        );
+        let raw = json!({
+            "Alerts": [{
+                "_id": { "$oid": "abc" },
+                "Expiry": ws_date(1_000_000),
+                "MissionInfo": {
+                    "missionType": "MT_EXTERMINATION",
+                    "faction": "FC_GRINEER",
+                    "location": "SolNode1",
+                    "missionReward": {
+                        "credits": 5000,
+                        "countedItems": [{ "ItemType": "/Lotus/Types/Items/Research/ChemComponent", "ItemCount": 3 }],
+                    },
+                },
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 0, &catalog);
+        assert_eq!(result["alerts"][0]["rewardItem"], "Detonite Injector");
+    }
+
+    #[test]
+    fn invasion_reward_items_use_catalog_not_path_splitting() {
+        // Same ChemComponent/EnergyComponent case as the alert fallback test,
+        // but through Invasions' AttackerReward/DefenderReward.
+        let mut catalog = HashMap::new();
+        catalog.insert(
+            "/Lotus/Types/Items/Research/ChemComponent".to_string(),
+            "Detonite Injector".to_string(),
+        );
+        catalog.insert(
+            "/Lotus/Types/Items/Research/EnergyComponent".to_string(),
+            "Fieldron".to_string(),
+        );
+        let raw = json!({
+            "Invasions": [{
+                "_id": { "$oid": "abc" },
+                "Node": "SolNode1",
+                "Faction": "FC_GRINEER",
+                "DefenderFaction": "FC_CORPUS",
+                "Count": 0,
+                "Goal": 100,
+                "Completed": false,
+                "AttackerReward": { "countedItems": [{ "ItemType": "/Lotus/Types/Items/Research/ChemComponent", "ItemCount": 3 }] },
+                "DefenderReward": { "countedItems": [{ "ItemType": "/Lotus/Types/Items/Research/EnergyComponent", "ItemCount": 3 }] },
+            }],
+        });
+        let result = parse_worldstate_value(&raw, 0, &catalog);
+        assert_eq!(result["invasions"][0]["attReward"], "Detonite Injector");
+        assert_eq!(result["invasions"][0]["defReward"], "Fieldron");
+    }
 }
