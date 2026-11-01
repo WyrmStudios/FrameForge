@@ -99,6 +99,25 @@ fn ms_to_iso(ms: i64) -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", year, m, d, hour, min, sec, millis)
 }
 
+/// "Now", for comparing against this payload's Expiry timestamps. DE's
+/// worldState.php includes its own generation time as a top-level "Time"
+/// field (Unix seconds) — using that instead of the local system clock means
+/// expiry filtering (Fissures, Alerts, Void Storms, ...) stays correct even
+/// when the player's OS clock is wrong (e.g. time-zone/clock set manually
+/// instead of via NTP auto-sync), since both "now" and "Expiry" then come
+/// from the same DE server clock. Falls back to the local clock only if DE
+/// ever omits the field.
+fn worldstate_now_ms(raw: &serde_json::Value) -> i64 {
+    raw["Time"].as_i64()
+        .map(|secs| secs * 1000)
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        })
+}
+
 /// Extract milliseconds from a MongoDB Extended JSON date: {"$date":{"$numberLong":"..."}}
 fn ws_ms(v: &serde_json::Value) -> i64 {
     v.get("$date")
@@ -755,11 +774,8 @@ pub(crate) async fn fetch_worldstate(state: State<'_, AppState>) -> Result<serde
 
     type CachedPayload = (Arc<serde_json::Value>, Arc<serde_json::Value>);
     let (result, fetched) = tokio::task::spawn_blocking(move || -> Result<(serde_json::Value, Option<CachedPayload>), String> {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
         if let Some((raw, news)) = cached {
+            let now_ms = worldstate_now_ms(&raw);
             let mut result = parse_worldstate_value(&raw, now_ms, &catalog);
             if let Some(obj) = result.as_object_mut() {
                 obj.insert("news".to_string(), news.as_ref().clone());
@@ -773,6 +789,7 @@ pub(crate) async fn fetch_worldstate(state: State<'_, AppState>) -> Result<serde
             .map_err(|e| format!("worldstate fetch failed: {}", e))?
             .into_json::<serde_json::Value>()
             .map_err(|e| format!("worldstate parse failed: {}", e))?;
+        let now_ms = worldstate_now_ms(&raw);
         let mut result = parse_worldstate_value(&raw, now_ms, &catalog);
 
         // Fetch news/promotions from Steam — official Warframe community announcements only.
@@ -829,6 +846,30 @@ pub fn refresh_worldstate(app: &tauri::AppHandle, _force: bool) -> Result<(), St
     // Invalidate the in-memory worldstate cache so the next fetch goes upstream.
     *state.worldstate_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod worldstate_now_ms_tests {
+    use super::worldstate_now_ms;
+    use serde_json::json;
+
+    #[test]
+    fn reads_des_time_field_in_seconds_as_ms() {
+        let raw = json!({ "Time": 1_700_000_000 });
+        assert_eq!(worldstate_now_ms(&raw), 1_700_000_000_000);
+    }
+
+    #[test]
+    fn falls_back_to_local_clock_when_time_field_missing() {
+        let raw = json!({});
+        let local_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let result = worldstate_now_ms(&raw);
+        // Allow slack for test execution time between the two SystemTime::now() reads.
+        assert!((result - local_now).abs() < 5_000, "expected fallback near local clock, got {result} vs {local_now}");
+    }
 }
 
 #[cfg(test)]
