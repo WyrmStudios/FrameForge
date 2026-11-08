@@ -784,7 +784,16 @@ pub(crate) fn get_weapon_catalog(state: State<AppState>) -> Vec<CatalogItem> {
     result
 }
 
+/// Founders-program items (closed November 2013) — permanently unobtainable by
+/// anyone, unlike every other category below which remains acquirable today.
+const FOUNDERS_ITEMS: [&str; 3] = [
+    "/Lotus/Powersuits/Excalibur/ExcaliburPrime",
+    "/Lotus/Weapons/Tenno/Pistol/LatoPrime",
+    "/Lotus/Weapons/Tenno/Melee/LongSword/SkanaPrime",
+];
+
 fn acquired_source_label(name: &str, path: &str) -> &'static str {
+    if FOUNDERS_ITEMS.contains(&path) { return "founders"; }
     if name.ends_with(" Prisma") || name.starts_with("Prisma ") { return "baro"; }
     if name.ends_with(" Wraith") || name.ends_with(" Vandal") || name.starts_with("MK1-") { return "event"; }
     if name.starts_with("Coda ") { return "duviri"; }
@@ -865,7 +874,7 @@ pub(crate) fn get_craftable_items(state: State<AppState>) -> Vec<CatalogItem> {
     for i in items.iter() {
         if i.unique_name.contains("PvPVariant") { continue; }
         let mut cat = fix_category(&i.name, &i.item_type, &i.product_category, &i.category, &i.unique_name);
-        if !weapon_cats.contains(&cat.as_str()) { continue; }
+        if !weapon_cats.contains(&cat.as_str()) && !FOUNDERS_ITEMS.contains(&i.unique_name.as_str()) { continue; }
         if covered.contains(&i.unique_name) { continue; }
         let mut name = i.name.clone();
         if let Some(c) = corrections.get(&i.unique_name) {
@@ -1223,5 +1232,27 @@ mod load_items_cache_tests {
         let items = load_items_cache(&path).expect("current-schema cache should load");
         let relic = items.iter().find(|i| i.name == "Axi A1 Intact").expect("relic should be present");
         assert_eq!(relic.vaulted, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod acquired_source_label_tests {
+    use super::*;
+
+    #[test]
+    fn founders_items_are_labelled_founders_not_generic_acquired() {
+        for path in FOUNDERS_ITEMS {
+            assert_eq!(acquired_source_label("doesn't matter", path), "founders");
+        }
+    }
+
+    #[test]
+    fn non_founders_weapons_still_resolve_existing_labels() {
+        assert_eq!(acquired_source_label("Soma Prisma", "/Lotus/Weapons/Grineer/SomaPrisma"), "baro");
+        assert_eq!(acquired_source_label("Braton Vandal", "/Lotus/Weapons/Corpus/BratonVandal"), "event");
+        assert_eq!(acquired_source_label("Coda Broadblade", "/Lotus/Weapons/Tenno/CodaBroadblade"), "duviri");
+        assert_eq!(acquired_source_label("Plinx", "/Lotus/Weapons/Tenno/ZawWeapon/Plinx"), "zaw");
+        assert_eq!(acquired_source_label("Mote Prism", "/Lotus/Weapons/Tenno/Amp/MotePrism"), "amp");
+        assert_eq!(acquired_source_label("Some Other Weapon", "/Lotus/Weapons/Other/Weapon"), "acquired");
     }
 }

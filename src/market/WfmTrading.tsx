@@ -4,8 +4,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import type { WfmAuction, WfmItem, WfmManagedOrder, WfmWhisper } from "../types/market";
-import type { TradeCompletedEvent } from "../types/trades";
-import type { AddTradeArgs, WfmCloseOrderArgs, WfmCreateOrderArgs, WfmCredentials, WfmSaveCredentialsArgs, WfmSession, WfmSetAuctionVisibleArgs, WfmUpdateOrderArgs } from "../types/tauri";
+import type { TradeCompletedEvent, TradeSplitItem, TradeSplitPendingEvent } from "../types/trades";
+import type { AddTradeArgs, UpdateTradeArgs, WfmCloseOrderArgs, WfmCreateOrderArgs, WfmCredentials, WfmSaveCredentialsArgs, WfmSession, WfmSetAuctionVisibleArgs, WfmUpdateOrderArgs } from "../types/tauri";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -720,6 +720,38 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // Multi-item trades split one platinum total evenly across items by default —
+  // surface that split here so the user can correct individual amounts.
+  const [splitReviews, setSplitReviews] = useState<(TradeSplitPendingEvent & { key: number })[]>([]);
+  const nextSplitKey = useRef(0);
+
+  useEffect(() => {
+    const unlisten = listen<TradeSplitPendingEvent>(TAURI_EVENTS.TRADE_SPLIT_PENDING, e => {
+      setSplitReviews(prev => [...prev, { ...e.payload, key: nextSplitKey.current++ }]);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const updateSplitAmount = (reviewKey: number, itemIndex: number, platinum: number) => {
+    setSplitReviews(prev => prev.map(r => {
+      if (r.key !== reviewKey) return r;
+      const items = [...r.items];
+      items[itemIndex] = { ...items[itemIndex], platinum };
+      return { ...r, items };
+    }));
+  };
+
+  const saveSplitAmount = (item: TradeSplitItem) => {
+    if (item.id == null) return;
+    invoke(TAURI_COMMANDS.UPDATE_TRADE, { id: item.id, platinum: item.platinum } satisfies UpdateTradeArgs)
+      .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
+      .catch((e) => console.error("[trade-log] update_trade failed:", e));
+  };
+
+  const dismissSplitReview = (reviewKey: number) => {
+    setSplitReviews(prev => prev.filter(r => r.key !== reviewKey));
+  };
+
   // Auto-complete a matching whisper when an in-game trade finishes.
   useEffect(() => {
     const unlisten = listen<TradeCompletedEvent>(TAURI_EVENTS.TRADE_COMPLETED, (e) => {
@@ -741,10 +773,13 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
         updated[idx] = { ...updated[idx], completedAt: now };
         matchedFrom = updated[idx].from;
 
-        // Copy the sold reply to clipboard automatically
+        // Copy a reply to clipboard automatically, worded for which side we were
         const w = updated[idx];
         if (w.item) {
-          navigator.clipboard.writeText(`/w ${w.from} ${w.item} sold! Thank you.`).catch(() => {});
+          const reply = w.direction === "sell"
+            ? `/w ${w.from} ${w.item} sold! Thank you.`
+            : `/w ${w.from} Got it, thanks!`;
+          navigator.clipboard.writeText(reply).catch(() => {});
         }
 
         // Remove the ghost after 5 minutes
@@ -869,28 +904,41 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
     });
   };
 
+  // Local player sold `item` to `from` (local player sent a "want to sell" whisper).
   const copySold = (from: string, item?: string, price?: number) => {
     const msg = item
       ? `/w ${from} ${item} sold! Thank you.`
       : `/w ${from} Sold! Thank you.`;
     navigator.clipboard.writeText(msg);
-    // Auto-log the trade to Statistics
-    if (item) {
-      const args: AddTradeArgs = {
-        withPlayer: from,
-        direction: "sold",
-        itemName: item,
-        itemUrl: "",
-        quantity: 1,
-        platinum: price ?? 0,
-        source: "wfm",
-        notes: "",
-      };
-      invoke(TAURI_COMMANDS.ADD_TRADE, { params: args })
-        .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
-        .catch((e) => console.error("[trade-log] add_trade failed:", e));
-    }
+    logWfmTrade(from, "sold", item, price);
     setWhispers(prev => prev.filter(w => w.from !== from));
+  };
+
+  // Local player bought `item` from `from` (local player sent a "want to buy" whisper).
+  const copyBought = (from: string, item?: string, price?: number) => {
+    const msg = item
+      ? `/w ${from} Got it, thanks!`
+      : `/w ${from} Thank you!`;
+    navigator.clipboard.writeText(msg);
+    logWfmTrade(from, "bought", item, price);
+    setWhispers(prev => prev.filter(w => w.from !== from));
+  };
+
+  const logWfmTrade = (withPlayer: string, direction: "sold" | "bought", item?: string, price?: number) => {
+    if (!item) return;
+    const args: AddTradeArgs = {
+      withPlayer,
+      direction,
+      itemName: item,
+      itemUrl: "",
+      quantity: 1,
+      platinum: price ?? 0,
+      source: "wfm",
+      notes: "",
+    };
+    invoke(TAURI_COMMANDS.ADD_TRADE, { params: args })
+      .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
+      .catch((e) => console.error("[trade-log] add_trade failed:", e));
   };
 
   const revertOrder = async (w: WfmWhisper, idx: number) => {
@@ -919,6 +967,34 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
 
   return (
     <div className={WFM_PANEL}>
+      {splitReviews.map(r => (
+        <div key={r.key} className={`${WFM_WHISPER} border-border/40 bg-white/4`}>
+          <div className={WFM_W_HEADER}>
+            <span className={WFM_W_FROM}>{r.withPlayer}</span>
+          </div>
+          <div className={WFM_W_SUMMARY}>
+            {fmt(r.totalPlatinum)}p {r.direction === "sold" ? "received" : "paid"} for {r.items.length} items — split evenly below, edit if it's wrong:
+          </div>
+          <div className="flex flex-col gap-1">
+            {r.items.map((item, i) => (
+              <div key={i} className="flex justify-between items-center gap-2">
+                <span className={WFM_W_ITEM}>{item.name}{item.qty > 1 ? ` ×${item.qty}` : ""}</span>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-20 bg-white/6 border border-border/50 rounded-4 px-1.5 py-0.5 text-12 text-right text-foreground"
+                  value={item.platinum}
+                  onChange={e => updateSplitAmount(r.key, i, Number(e.target.value))}
+                  onBlur={() => saveSplitAmount(r.items[i])}
+                />
+              </div>
+            ))}
+          </div>
+          <div className={WFM_W_ACTIONS}>
+            <button className={WFM_SM_OFF} onClick={() => dismissSplitReview(r.key)}>Done</button>
+          </div>
+        </div>
+      ))}
       {whispers.length === 0 ? (
         <div className={WFM_EMPTY}>
           <div>No trade whispers yet.</div>
@@ -940,7 +1016,7 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
               )}
               {w.item && (
                 <div className={WFM_W_SUMMARY}>
-                  Wants: <span className={WFM_W_ITEM}>{w.item}</span>
+                  {w.direction === "sell" ? "Selling" : "Buying"}: <span className={WFM_W_ITEM}>{w.item}</span>
                   {w.price && <span className={WFM_W_PRICE}> · {fmt(w.price)}p</span>}
                 </div>
               )}
@@ -949,9 +1025,15 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
                   <button className={WFM_SM_INVITE} onClick={() => copyInvite(w.from)}>
                     {copied === w.from ? "✓ Copied!" : "📋 Copy invite"}
                   </button>
-                  <button className={WFM_SM_SAVE} onClick={() => copySold(w.from, w.item, w.price)}>
-                    ✓ Sold
-                  </button>
+                  {w.direction === "sell" ? (
+                    <button className={WFM_SM_SAVE} onClick={() => copySold(w.from, w.item, w.price)}>
+                      ✓ Sold
+                    </button>
+                  ) : (
+                    <button className={WFM_SM_SAVE} onClick={() => copyBought(w.from, w.item, w.price)}>
+                      ✓ Bought
+                    </button>
+                  )}
                   <button className={WFM_SM_OFF} onClick={() => setWhispers(prev => prev.filter((_, j) => j !== i))}>
                     Ignore
                   </button>

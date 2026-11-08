@@ -558,7 +558,7 @@ const CraftCard = memo(function CraftCard({ item, recipe, inventory, relicDrops,
           {formaCount > 0 && <FormaIcon count={formaCount} />}
         </div>
         {item.source_type
-          ? <span className={FY_ROW_ACQUIRED}>Acquired in-game</span>
+          ? <span className={FY_ROW_ACQUIRED}>{item.source_type === "founders" ? "Founders Item" : "Acquired in-game"}</span>
           : mergedRecipe && mergedRecipe.length > 0
             ? <span className={FY_ROW_PARTS}>{mergedRecipe.length} part{mergedRecipe.length !== 1 ? "s" : ""}</span>
             : null}
@@ -634,7 +634,7 @@ const CraftCard = memo(function CraftCard({ item, recipe, inventory, relicDrops,
         {recipe === null ? (
           <div className={FY_COMP_LOADING}>Loading…</div>
         ) : item.source_type ? (
-          <div className={FY_COMP_ACQUIRED}>Acquired in-game</div>
+          <div className={FY_COMP_ACQUIRED}>{item.source_type === "founders" ? "Founders Item" : "Acquired in-game"}</div>
         ) : recipe.length === 0 ? (
           <div className={FY_COMP_LOADING}>No recipe</div>
         ) : (

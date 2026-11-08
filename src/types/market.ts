@@ -76,6 +76,8 @@ export interface WfmWhisper {
   message: string;
   item?: string;
   price?: number;
+  /** The local player's own intent: "buy" means `from` is the seller, "sell" means `from` is the buyer. */
+  direction?: "buy" | "sell";
   timestamp: string;
   completedAt?: number;
   revertInfo?: {

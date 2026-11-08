@@ -1384,21 +1384,37 @@ pub(crate) fn log_reward_confirm_no_improvement(
 
 // ── WFM whisper parsing ──────────────────────────────────────────────────────
 
-pub(crate) fn parse_and_emit_wfm_whisper(
-    app: &tauri::AppHandle,
-    log_line: &str,
-) {
-    let raw = log_line;
-    let from = raw.find("@From ")
-        .map(|i| &raw[i+6..])
+pub(crate) struct ParsedWfmWhisper {
+    pub from: String,
+    pub item: Option<String>,
+    pub price: Option<u64>,
+    /// "buy" when the *local* player sent this whisper to buy the item (they
+    /// are the buyer, `from` is the seller); "sell" when the local player
+    /// sent it to sell (they are the seller, `from` is the buyer). This is
+    /// always the local player's own intent, since EE.log only logs whispers
+    /// the local client sends ("IRC out") — never ones it receives.
+    pub direction: &'static str,
+}
+
+/// Parse an outgoing WFM trade-whisper line from EE.log.
+/// Real format: "... IRC out: PRIVMSG <name> :Hi! I want to buy: \"<item>\" for N platinum. (warframe.market)"
+/// (or "...want to sell: ..." for the seller-side template.)
+/// ("@From " never appears for outgoing whispers — PRIVMSG's target *is* the trade partner.)
+fn parse_wfm_whisper(raw: &str) -> ParsedWfmWhisper {
+    let from = raw.find("PRIVMSG ")
+        .map(|i| &raw[i+8..])
         .and_then(|s| s.split(" :").next())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "Unknown".to_string());
+    let (direction, item_prefix) = if raw.contains("want to sell: \"") {
+        ("sell", "want to sell: \"")
+    } else {
+        ("buy", "want to buy: \"")
+    };
     let item = {
-        let prefix = "want to buy ";
-        let suffix = " for ";
-        raw.find(prefix).and_then(|i| {
-            let rest = &raw[i+prefix.len()..];
+        let suffix = "\" for ";
+        raw.find(item_prefix).and_then(|i| {
+            let rest = &raw[i+item_prefix.len()..];
             rest.find(suffix).map(|j| crate::sanitize_chat_item_name(&rest[..j]))
         })
     };
@@ -1406,13 +1422,85 @@ pub(crate) fn parse_and_emit_wfm_whisper(
         let rest = &raw[i+5..];
         rest.find(" platinum").and_then(|j| rest[..j].trim().parse().ok())
     });
+    ParsedWfmWhisper { from, item, price, direction }
+}
+
+pub(crate) fn parse_and_emit_wfm_whisper(
+    app: &tauri::AppHandle,
+    log_line: &str,
+) {
+    let raw = log_line;
+    let parsed = parse_wfm_whisper(raw);
     let _ = app.emit(events::WFM_WHISPER, serde_json::json!({
-        "from": from,
+        "from": parsed.from,
         "message": raw.trim(),
-        "item": item,
-        "price": price,
+        "item": parsed.item,
+        "price": parsed.price,
+        "direction": parsed.direction,
         "timestamp": chrono::Local::now().format("%H:%M:%S").to_string(),
     }));
+}
+
+#[cfg(test)]
+mod wfm_whisper_tests {
+    use super::*;
+
+    /// Real EE.log line (player name redacted) captured directly from a live
+    /// game session for the "trade partner shows as Unknown" report
+    /// (2026-11-08). The old extraction looked for an "@From " token that
+    /// never appears for outgoing whispers — the recipient is the PRIVMSG
+    /// target instead — and the item prefix was missing the colon that
+    /// actually precedes the opening quote, so `item` was always None.
+    #[test]
+    fn outgoing_whisper_extracts_recipient_item_and_price() {
+        let raw = "2602.089 Net [Info]: IRC out: PRIVMSG Mojhe1 :Hi! I want to buy: \"Mecha Recharge (rank 0)\" for 20 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Mojhe1");
+        assert_eq!(parsed.item, Some("Mecha Recharge (rank 0)".to_string()));
+        assert_eq!(parsed.price, Some(20));
+        assert_eq!(parsed.direction, "buy", "local player is buying, so `from` is the seller, not someone who 'wants' the item");
+    }
+
+    /// The seller-side WFM template ("want to sell") must be recognized too,
+    /// and must not be misclassified as "buy" just because the message also
+    /// contains the word "buy" nowhere relevant.
+    #[test]
+    fn outgoing_whisper_detects_sell_direction() {
+        let raw = "Net [Info]: IRC out: PRIVMSG Buyer99 :Hi! I want to sell: \"Primed Flow\" for 15 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Buyer99");
+        assert_eq!(parsed.item, Some("Primed Flow".to_string()));
+        assert_eq!(parsed.direction, "sell", "local player is selling, so `from` is the buyer");
+    }
+
+    /// Second real example, with a dotted player name and a multi-word item,
+    /// confirming the fix generalizes beyond the first captured line.
+    #[test]
+    fn outgoing_whisper_handles_dotted_names_and_multiword_items() {
+        let raw = "Net [Info]: IRC out: PRIVMSG Mr.FaHai :Hi! I want to buy: \"Momentous Bond (rank 0)\" for 18 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Mr.FaHai");
+        assert_eq!(parsed.item, Some("Momentous Bond (rank 0)".to_string()));
+        assert_eq!(parsed.price, Some(18));
+    }
+
+    /// A line with no PRIVMSG target at all should fall back to "Unknown"
+    /// rather than panicking or extracting garbage.
+    #[test]
+    fn whisper_without_privmsg_falls_back_to_unknown() {
+        let raw = "some unrelated line mentioning (warframe.market) with no PRIVMSG";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Unknown");
+        assert_eq!(parsed.item, None);
+    }
 }
 
 #[cfg(test)]

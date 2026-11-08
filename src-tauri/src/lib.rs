@@ -580,6 +580,7 @@ pub fn run() {
             trade_log::get_trades,
             trade_log::add_trade,
             trade_log::delete_trade,
+            trade_log::update_trade,
             diagnostics::clear_cache,
             settings::load_settings,
             settings::save_settings,

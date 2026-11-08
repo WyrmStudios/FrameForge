@@ -80,6 +80,11 @@ export interface AddTradeArgs extends Record<string, unknown> {
   timestamp?: string;
 }
 
+export interface UpdateTradeArgs extends Record<string, unknown> {
+  id: number;
+  platinum: number;
+}
+
 export interface WfmCreateRivenAuctionArgs extends Record<string, unknown> {
   weaponUrlName: string;
   rivenName: string;

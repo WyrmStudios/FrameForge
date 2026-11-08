@@ -294,6 +294,11 @@ pub fn delete_trade(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+pub fn update_trade_platinum(conn: &Connection, id: i64, platinum: i64) -> Result<()> {
+    conn.execute("UPDATE trades SET platinum = ?1 WHERE id = ?2", params![platinum, id])?;
+    Ok(())
+}
+
 pub fn add_quantity_change(
     conn: &Connection,
     unique_name: &str,

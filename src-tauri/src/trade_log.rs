@@ -63,3 +63,9 @@ pub(crate) fn delete_trade(state: State<AppState>, id: i64) -> Result<(), String
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::delete_trade(&conn, id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub(crate) fn update_trade(state: State<AppState>, id: i64, platinum: i64) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db::update_trade_platinum(&conn, id, platinum).map_err(|e| e.to_string())
+}

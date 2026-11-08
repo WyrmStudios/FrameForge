@@ -237,7 +237,7 @@ export function useSettings(
         if (typeof s.clockFormat === "string" && CLOCK_FORMAT_OPTIONS.includes(s.clockFormat)) {
           setClockFormat(s.clockFormat as ClockFormat);
         }
-        if (typeof s.foundryPageSize === "string" && FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) {
+        if (typeof s.foundryPageSize === "number" && FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) {
           setFoundryPageSize(s.foundryPageSize);
         }
         const relicPickEnabled = typeof s.relicPickEnabled === "boolean" ? s.relicPickEnabled : true;

@@ -242,19 +242,50 @@ export function useOverlays(
           tradeType:  p.tradeType,
           timestamp:  p.timestamp,
         };
-        return invoke(TAURI_COMMANDS.ADD_TRADE, { params: args })
-          .catch((e) => console.error("[trade-log] add_trade failed:", e));
+        return invoke<number>(TAURI_COMMANDS.ADD_TRADE, { params: args })
+          .catch((e) => { console.error("[trade-log] add_trade failed:", e); return null; });
+      };
+
+      // A single platinum total can cover several items in one trade (e.g. a
+      // bundled whisper deal) — split it evenly rather than dumping it all on
+      // the first item and leaving the rest at 0. The split is just a default;
+      // a pending-review card lets the user correct individual amounts after.
+      const splitEvenly = (total: number, count: number): number[] => {
+        if (count <= 0) return [];
+        const base = Math.floor(total / count);
+        const remainder = total - base * count;
+        return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
       };
 
       if (p.tradeType === "sale") {
+        const splits = splitEvenly(p.receivedPlat, p.offeredItems.length);
+        const ids: (number | null)[] = [];
         for (let i = 0; i < p.offeredItems.length; i++) {
           const item = p.offeredItems[i];
-          await save("sold", item.name, item.qty, i === 0 ? p.receivedPlat : 0);
+          ids.push(await save("sold", item.name, item.qty, splits[i]));
+        }
+        if (p.offeredItems.length > 1 && p.receivedPlat > 0) {
+          await emit(TAURI_EVENTS.TRADE_SPLIT_PENDING, {
+            withPlayer: p.withPlayer,
+            direction: "sold",
+            totalPlatinum: p.receivedPlat,
+            items: p.offeredItems.map((item, i) => ({ id: ids[i], name: item.name, qty: item.qty, platinum: splits[i] })),
+          }).catch(() => {});
         }
       } else if (p.tradeType === "purchase") {
+        const splits = splitEvenly(p.offeredPlat, p.receivedItems.length);
+        const ids: (number | null)[] = [];
         for (let i = 0; i < p.receivedItems.length; i++) {
           const item = p.receivedItems[i];
-          await save("bought", item.name, item.qty, i === 0 ? p.offeredPlat : 0);
+          ids.push(await save("bought", item.name, item.qty, splits[i]));
+        }
+        if (p.receivedItems.length > 1 && p.offeredPlat > 0) {
+          await emit(TAURI_EVENTS.TRADE_SPLIT_PENDING, {
+            withPlayer: p.withPlayer,
+            direction: "bought",
+            totalPlatinum: p.offeredPlat,
+            items: p.receivedItems.map((item, i) => ({ id: ids[i], name: item.name, qty: item.qty, platinum: splits[i] })),
+          }).catch(() => {});
         }
       } else {
         for (const item of p.offeredItems)  await save("traded-out", item.name, item.qty, 0);

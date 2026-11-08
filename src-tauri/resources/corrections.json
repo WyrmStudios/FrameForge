@@ -11,6 +11,10 @@
         "category": "Ignored"
     },
     {
+        "path": "/Lotus/Weapons/Tenno/Grimoire/TnDoppelgangerGrimoire",
+        "category": "Ignored"
+    },
+    {
         "path": "/Lotus/Types/Recipes/WarframeRecipes/ChromaBeaconCBlueprint",
         "name": "Chroma Mark Blueprint",
         "category": "Blueprints",
