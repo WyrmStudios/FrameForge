@@ -182,27 +182,38 @@ fn fetch_wiki_reward_names() -> HashSet<String> {
 
 /// Hand-curated exceptions where a prime part's ducat value doesn't follow the
 /// standard drop-rarity formula (`ducat_value_from_rarities`). Mirrors the Warframe
-/// Wiki's `Module:Void/data` `DUCAT_EXCEPTIONS` table — fetched once and bundled here
-/// rather than queried live, so no per-user runtime dependency on the wiki is added.
+/// Wiki's `Module:Void/data` `DUCAT_EXCEPTIONS` table. The authoritative copy lives
+/// in our own `FrameForgePricing` mirror (`DUCAT_EXCEPTIONS_URL`) — not the wiki
+/// directly, so no per-user runtime dependency on it is added — and gets fetched
+/// through the same catalogue source pipeline as Relics/ExportRecipes/etc, which
+/// means a new exception can ship without a FrameForge release. This bundled copy
+/// is only the offline/first-run fallback for when that fetch fails.
 /// Keys are lowercased full item+part display names.
 const DUCAT_EXCEPTIONS_JSON: &str = include_str!("../resources/ducat_exceptions.json");
 
-fn load_ducat_exceptions() -> HashMap<String, u32> {
-    let parsed: serde_json::Value = match serde_json::from_str(DUCAT_EXCEPTIONS_JSON) {
+fn parse_ducat_exceptions_value(v: &serde_json::Value) -> Option<HashMap<String, u32>> {
+    let obj = v.get("exceptions")?.as_object()?;
+    Some(
+        obj.iter()
+            .filter_map(|(k, v)| v.as_u64().map(|n| (k.to_lowercase(), n as u32)))
+            .collect(),
+    )
+}
+
+fn load_ducat_exceptions(fetched: Option<&serde_json::Value>) -> HashMap<String, u32> {
+    if let Some(map) = fetched.and_then(parse_ducat_exceptions_value) {
+        if !map.is_empty() {
+            return map;
+        }
+    }
+    let bundled: serde_json::Value = match serde_json::from_str(DUCAT_EXCEPTIONS_JSON) {
         Ok(v) => v,
         Err(e) => {
             warn!(error = %e, "failed to parse bundled ducat_exceptions.json");
             return HashMap::new();
         }
     };
-    parsed.get("exceptions")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_u64().map(|n| (k.to_lowercase(), n as u32)))
-                .collect()
-        })
-        .unwrap_or_default()
+    parse_ducat_exceptions_value(&bundled).unwrap_or_default()
 }
 
 /// Derive a prime part/blueprint's ducat value from the set of rarities it drops as
@@ -276,6 +287,11 @@ const DICT_EN_URLS: [&str; 2] = [
 ];
 const SYNDICATES_URL: &str =
     "https://raw.githubusercontent.com/WFCD/warframe-drop-data/gh-pages/data/syndicates.json";
+/// Our own mirror (not a third-party dependency — same repo `pricing.rs` already
+/// fetches bulk WFM prices from) so the ducat exceptions table can be corrected
+/// between app releases instead of requiring a new build for every entry.
+const DUCAT_EXCEPTIONS_URL: &str =
+    "https://raw.githubusercontent.com/WyrmStudios/FrameForgePricing/main/ducat_exceptions.json";
 
 /// One upstream file, and what its absence costs.
 struct SourceSpec {
@@ -318,6 +334,21 @@ fn source_specs() -> Vec<SourceSpec> {
     specs.push(SourceSpec {
         name: "syndicates".to_string(),
         urls: vec![SYNDICATES_URL.to_string()],
+        required: false,
+    });
+    specs.push(SourceSpec {
+        name: "DucatExceptions".to_string(),
+        urls: vec![DUCAT_EXCEPTIONS_URL.to_string()],
+        required: false,
+    });
+    specs.push(SourceSpec {
+        // Fallback relic-reward source for when WFCD's own Relics.json ships
+        // empty rewards[] (see parse_relics_rewards_from_drop_data). Reuses
+        // the same URL get_drop_data/refresh_drop_data fetch independently for
+        // RelicHelper — two separate cache layers for the same upstream body
+        // is harmless and keeps this ladder free of a cross-module dependency.
+        name: "DropData".to_string(),
+        urls: vec![DROP_DATA_URL.to_string()],
         required: false,
     });
     specs
@@ -591,10 +622,13 @@ fn fetch_items_with(
     let syndicates_json = bodies.get("syndicates");
     let resources_json = bodies.get("ExportResources");
     let dict_json = bodies.get("dict_en");
+    let ducat_exceptions_json = bodies.get("DucatExceptions");
+    let drop_data_json = bodies.get("DropData");
 
     info!(raw_items = all_items.len(), "catalogue sources assembled");
     let result = fetch_from_wfcd(
         &all_items, recipes_json, syndicates_json, relics_json, resources_json, dict_json,
+        ducat_exceptions_json, drop_data_json,
     )?;
     info!(
         items = result.items.len(),
@@ -1141,17 +1175,44 @@ fn parse_relics_rewards(
             None => continue,
         };
 
+        // WFCD's rewards[].rarity string never labels the 3-slot Common tier —
+        // across the whole Relics.json it only ever emits "Uncommon" or "Rare",
+        // which silently collapses Common into Uncommon and breaks any Bronze-
+        // tier ducat derivation downstream. Every relic's 6 reward slots always
+        // split 3 Common / 2 Uncommon / 1 Rare sharing an identical `chance`
+        // value, so derive the tier structurally from that grouping instead of
+        // trusting the mislabeled string.
+        let mut chance_counts: HashMap<String, usize> = HashMap::new();
+        for r in rewards_arr {
+            if let Some(chance) = r.get("chance").and_then(|v| v.as_f64()) {
+                *chance_counts.entry(format!("{chance:.2}")).or_insert(0) += 1;
+            }
+        }
+
         let mut reward_list: Vec<RelicReward> = rewards_arr.iter().filter_map(|r| {
             // Relics.json structure: rewards[].item.name (not rewards[].name)
             let item = r.get("item")?;
             let name = item.get("name").and_then(|v| v.as_str())?.to_string();
             if name.is_empty() { return None; }
             let unique_name = item.get("uniqueName").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let rarity_raw = r.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
-            let rarity = match rarity_raw.to_lowercase().as_str() {
-                "uncommon" => "Silver",
-                "rare"     => "Gold",
-                _          => "Bronze",
+            let chance = r.get("chance").and_then(|v| v.as_f64());
+            let slot_count = chance.and_then(|c| chance_counts.get(&format!("{c:.2}")).copied());
+            let rarity = match slot_count {
+                Some(3) => "Bronze",
+                Some(2) => "Silver",
+                Some(1) => "Gold",
+                _ => {
+                    // Non-standard relic (e.g. a flat equal-odds reward table) —
+                    // fall back to WFCD's string label (never "Common", but
+                    // harmless here since these relics don't carry standard-
+                    // formula ducat items).
+                    let rarity_raw = r.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
+                    match rarity_raw.to_lowercase().as_str() {
+                        "uncommon" => "Silver",
+                        "rare"     => "Gold",
+                        _          => "Bronze",
+                    }
+                }
             }.to_string();
             let image_name = image_by_name.get(&name.to_lowercase()).cloned()
                 .or_else(|| {
@@ -1177,7 +1238,127 @@ fn parse_relics_rewards(
     result
 }
 
+/// Fallback relic → reward mappings from `warframe-drop-data`'s `all.json`
+/// (`DROP_DATA_URL`), used when WFCD's own Relics.json ships empty `rewards[]`
+/// for every entry (observed since 2026-10; see project memory). This source
+/// has no relic uniqueName (EE.log path) and no per-reward uniqueName, only
+/// display names, so entries are keyed by display name only ("Lith A1
+/// Intact") and `unique_name` is resolved through `name_to_unique`, a
+/// lowercased item-name → uniqueName index built from the finished catalog.
+/// Like WFCD's own data, this source's `rewards[].rarity` string never labels
+/// the 3-slot Common tier (it mislabels those "Uncommon" too), so rarity is
+/// derived structurally from `chance` grouping, exactly as `parse_relics_rewards`
+/// does for WFCD's Relics.json.
+/// Map relic display name ("Axi A1 Intact") → uniqueName (EE.log path),
+/// built from WFCD's Relics.json top-level fields. Unlike `parse_relics_rewards`,
+/// this does not require `rewards[]` to be non-empty — Relics.json currently
+/// ships every relic with an empty `rewards[]` (see `parse_relics_rewards_from_drop_data`),
+/// but the name/uniqueName pair on the relic entry itself is still intact, so
+/// it can still be used to path-key the warframe-drop-data fallback rewards,
+/// which otherwise have no uniqueName of their own.
+fn build_relic_name_to_path(json: Option<&serde_json::Value>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(relics) = json.and_then(|v| v.as_array()) else { return out };
+    for relic in relics {
+        let (Some(name), Some(unique)) = (
+            relic.get("name").and_then(|v| v.as_str()),
+            relic.get("uniqueName").and_then(|v| v.as_str()),
+        ) else { continue };
+        if !name.is_empty() && !unique.is_empty() {
+            out.insert(name.to_string(), unique.to_string());
+        }
+    }
+    out
+}
+
 #[tracing::instrument(level = "debug", skip_all)]
+fn parse_relics_rewards_from_drop_data(
+    json: Option<&serde_json::Value>,
+    image_by_name: &HashMap<String, String>,
+    name_to_unique: &HashMap<String, String>,
+    relic_name_to_path: &HashMap<String, String>,
+) -> HashMap<String, Vec<RelicReward>> {
+    let json = match json {
+        Some(v) => v,
+        None => {
+            warn!("no drop-data available for relic rewards fallback");
+            return HashMap::new();
+        }
+    };
+
+    let relics = match json.get("relics").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return HashMap::new(),
+    };
+
+    let mut result: HashMap<String, Vec<RelicReward>> = HashMap::new();
+
+    for relic in relics {
+        let tier = relic.get("tier").and_then(|v| v.as_str()).unwrap_or("");
+        let relic_name_short = relic.get("relicName").and_then(|v| v.as_str()).unwrap_or("");
+        let state = relic.get("state").and_then(|v| v.as_str()).unwrap_or("");
+        if tier.is_empty() || relic_name_short.is_empty() || state.is_empty() {
+            continue;
+        }
+        let display_name = format!("{tier} {relic_name_short} {state}");
+
+        let rewards_arr = match relic.get("rewards").and_then(|v| v.as_array()) {
+            Some(a) => a,
+            None => continue,
+        };
+
+        let mut chance_counts: HashMap<String, usize> = HashMap::new();
+        for r in rewards_arr {
+            if let Some(chance) = r.get("chance").and_then(|v| v.as_f64()) {
+                *chance_counts.entry(format!("{chance:.2}")).or_insert(0) += 1;
+            }
+        }
+
+        let mut reward_list: Vec<RelicReward> = rewards_arr.iter().filter_map(|r| {
+            let name = r.get("itemName").and_then(|v| v.as_str())?.to_string();
+            if name.is_empty() { return None; }
+            let unique_name = name_to_unique.get(&name.to_lowercase()).cloned().unwrap_or_default();
+            let chance = r.get("chance").and_then(|v| v.as_f64());
+            let slot_count = chance.and_then(|c| chance_counts.get(&format!("{c:.2}")).copied());
+            let rarity = match slot_count {
+                Some(3) => "Bronze",
+                Some(2) => "Silver",
+                Some(1) => "Gold",
+                _ => {
+                    let rarity_raw = r.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
+                    match rarity_raw.to_lowercase().as_str() {
+                        "uncommon" => "Silver",
+                        "rare"     => "Gold",
+                        _          => "Bronze",
+                    }
+                }
+            }.to_string();
+            let image_name = image_by_name.get(&name.to_lowercase()).cloned()
+                .or_else(|| {
+                    let no_bp = name.to_lowercase().replace(" blueprint", "");
+                    image_by_name.get(&no_bp).cloned()
+                });
+            Some(RelicReward { unique_name, name, rarity, image_name })
+        }).collect();
+
+        reward_list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
+        if !reward_list.is_empty() {
+            // Also key by uniqueName (EE.log path) when Relics.json still carries
+            // the name/uniqueName pair for this relic, so the OCR prefilter
+            // (which looks up by path, not display name) can find it — see
+            // build_relic_name_to_path.
+            if let Some(path) = relic_name_to_path.get(&display_name) {
+                result.insert(path.clone(), reward_list.clone());
+            }
+            result.insert(display_name, reward_list);
+        }
+    }
+
+    result
+}
+
+#[tracing::instrument(level = "debug", skip_all)]
+#[allow(clippy::too_many_arguments)]
 fn fetch_from_wfcd(
     all_items_raw: &[&serde_json::Value],
     recipes_json: Option<&serde_json::Value>,
@@ -1185,6 +1366,8 @@ fn fetch_from_wfcd(
     relics_json: Option<&serde_json::Value>,
     resources_json: Option<&serde_json::Value>,
     dict_json: Option<&serde_json::Value>,
+    ducat_exceptions_json: Option<&serde_json::Value>,
+    drop_data_json: Option<&serde_json::Value>,
 ) -> Result<FetchResult, String> {
     let mut items: Vec<WfcdItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -1715,8 +1898,31 @@ fn fetch_from_wfcd(
         }
     }
 
-    // Build relic_rewards from pre-fetched Relics.json.
-    let relic_rewards = parse_relics_rewards(relics_json, &image_by_name);
+    // Build relic_rewards from both pre-fetched sources and merge them, rather
+    // than treating one as a fallback for total failure of the other — DE's own
+    // export (via Relics.json) lags behind on newly-released relics/Primes (e.g.
+    // Corufell Prime shipped with zero entries there), while warframe-drop-data
+    // picks those up faster but Relics.json carries richer per-item uniqueNames
+    // for the EE.log-path lookup. Relics.json wins per-relic when both have an
+    // entry; drop-data fills in any relic missing from Relics.json entirely.
+    let mut relic_rewards = parse_relics_rewards(relics_json, &image_by_name);
+    let name_to_unique: HashMap<String, String> = items.iter()
+        .map(|i| (i.name.to_lowercase(), i.unique_name.clone()))
+        .collect();
+    let relic_name_to_path = build_relic_name_to_path(relics_json);
+    let drop_data_rewards = parse_relics_rewards_from_drop_data(drop_data_json, &image_by_name, &name_to_unique, &relic_name_to_path);
+    if relic_rewards.is_empty() {
+        warn!("Relics.json rewards empty upstream — using warframe-drop-data for relic rewards");
+        relic_rewards = drop_data_rewards;
+    } else {
+        let mut filled = 0u32;
+        for (name, rewards) in drop_data_rewards {
+            relic_rewards.entry(name).or_insert_with(|| { filled += 1; rewards });
+        }
+        if filled > 0 {
+            info!(filled, "filled in relics missing from Relics.json using warframe-drop-data");
+        }
+    }
 
     // Backfill ducat values that WFCD's components[] no longer carries (the same
     // upstream schema change that dropped `name`/`imageName` from every component
@@ -1724,7 +1930,7 @@ fn fetch_from_wfcd(
     // see `ducat_value_from_rarities`). This must run before blueprint_names below,
     // which reads item.ducats.
     {
-        let ducat_exceptions = load_ducat_exceptions();
+        let ducat_exceptions = load_ducat_exceptions(ducat_exceptions_json);
         let mut rarities_by_unique: HashMap<String, HashSet<String>> = HashMap::new();
         let mut rarities_by_name: HashMap<String, HashSet<String>> = HashMap::new();
         for rewards in relic_rewards.values() {
@@ -2129,13 +2335,107 @@ mod tests {
     }
 
     #[test]
-    fn ducat_exceptions_load_and_contain_known_entries() {
-        let exceptions = load_ducat_exceptions();
+    fn ducat_exceptions_fall_back_to_bundled_copy_when_nothing_was_fetched() {
+        let exceptions = load_ducat_exceptions(None);
         assert!(!exceptions.is_empty(), "bundled ducat_exceptions.json should parse to a non-empty map");
         // Sanity-check a couple of entries against the wiki's DUCAT_EXCEPTIONS table.
         assert_eq!(exceptions.get("akstiletto prime receiver"), Some(&45));
         assert_eq!(exceptions.get("forma blueprint"), Some(&0));
         // The "_comment" key must never leak in as a fake exception entry.
         assert!(!exceptions.contains_key("_comment"));
+    }
+
+    #[test]
+    fn ducat_exceptions_prefer_the_fetched_mirror_over_the_bundled_copy() {
+        let fetched = serde_json::json!({ "exceptions": { "soma prime blueprint": 999 } });
+        let exceptions = load_ducat_exceptions(Some(&fetched));
+        assert_eq!(exceptions.get("soma prime blueprint"), Some(&999));
+        // Only the fetched map is used — it does not merge with the bundled one.
+        assert!(!exceptions.contains_key("akstiletto prime receiver"));
+    }
+
+    #[test]
+    fn ducat_exceptions_fall_back_when_the_fetched_body_is_empty_or_malformed() {
+        assert_eq!(
+            load_ducat_exceptions(Some(&serde_json::json!({ "exceptions": {} }))).get("forma blueprint"),
+            Some(&0)
+        );
+        assert_eq!(
+            load_ducat_exceptions(Some(&serde_json::json!({ "not_exceptions": {} }))).get("forma blueprint"),
+            Some(&0)
+        );
+    }
+
+    // ── parse_relics_rewards: rarity derived from chance grouping, not the
+    // mislabeled WFCD string (real bug: Lex Prime showed 45 ducats for all
+    // three parts because WFCD's `rarity` field never emits "Common") ──────
+
+    fn reward(name: &str, chance: f64) -> serde_json::Value {
+        serde_json::json!({
+            "item": { "name": name, "uniqueName": format!("/Lotus/{name}") },
+            // WFCD mislabels every Common slot as "Uncommon" — the fixture
+            // deliberately keeps that wrong string to prove the fix ignores it.
+            "rarity": "Uncommon",
+            "chance": chance
+        })
+    }
+
+    #[test]
+    fn relic_rarity_comes_from_chance_grouping_not_the_mislabeled_string() {
+        // Mirrors a real relic shape: 3 Common slots sharing one chance value,
+        // 2 Uncommon, 1 Rare — all three tiers wrongly say "Uncommon" upstream.
+        let relics = serde_json::json!([{
+            "name": "Lith A1 Intact",
+            "uniqueName": "/Lotus/Relics/LithA1Intact",
+            "rewards": [
+                reward("Lex Prime Barrel", 25.33),
+                reward("Lex Prime Barrel", 25.33),
+                reward("Lex Prime Barrel", 25.33),
+                reward("Lex Prime Receiver", 11.0),
+                reward("Lex Prime Receiver", 11.0),
+                reward("Lex Prime Blueprint", 2.0),
+            ]
+        }]);
+
+        let result = parse_relics_rewards(Some(&relics), &HashMap::new());
+        let rewards = result.get("Lith A1 Intact").expect("relic should be keyed by name");
+
+        let rarity_of = |name: &str| {
+            rewards.iter().find(|r| r.name == name).map(|r| r.rarity.clone())
+        };
+        assert_eq!(rarity_of("Lex Prime Barrel"), Some("Bronze".to_string()));
+        assert_eq!(rarity_of("Lex Prime Receiver"), Some("Silver".to_string()));
+        assert_eq!(rarity_of("Lex Prime Blueprint"), Some("Gold".to_string()));
+    }
+
+    #[test]
+    fn relic_rarity_falls_back_to_string_label_for_non_standard_relics() {
+        // Requiem Eterna Relic's real shape: 8 equal-chance slots, no 3/2/1
+        // grouping exists, so the chance-based derivation can't apply.
+        let relics = serde_json::json!([{
+            "name": "Requiem Eterna Relic",
+            "uniqueName": "/Lotus/Relics/RequiemEterna",
+            "rewards": [
+                reward("Requiem Mod A", 12.5),
+                reward("Requiem Mod B", 12.5),
+            ]
+        }]);
+
+        let result = parse_relics_rewards(Some(&relics), &HashMap::new());
+        let rewards = result.get("Requiem Eterna Relic").expect("relic should be keyed by name");
+        // Falls back to the (mislabeled) string, matching old behavior for this shape.
+        assert!(rewards.iter().all(|r| r.rarity == "Silver"));
+    }
+
+    #[test]
+    fn relic_vaulted_field_is_extracted_by_fetch_from_wfcd() {
+        // Real WFCD Relics.json shape (trimmed) for "Axi A1 Intact".
+        let item: serde_json::Value = serde_json::from_str(r#"{"uniqueName":"/Lotus/Types/Game/Projections/T4VoidProjectionEBronze","name":"Axi A1 Intact","type":"Relic","imageName":"RelicAxiD.png","category":"Relics","tradable":true,"rewards":[{"chance":11,"item":{"name":"Akstiletto Prime Barrel","uniqueName":"/Lotus/Types/Recipes/Weapons/WeaponParts/AkstilettoPrimeBarrel"},"rarity":"Uncommon"}],"vaulted":true,"masterable":false}"#).unwrap();
+        let all_items: Vec<&serde_json::Value> = vec![&item];
+        let result = fetch_from_wfcd(&all_items, None, None, None, None, None, None, None).expect("fetch_from_wfcd should succeed");
+        let found = result.items.iter()
+            .find(|i| i.unique_name == "/Lotus/Types/Game/Projections/T4VoidProjectionEBronze")
+            .expect("relic item should be in result.items");
+        assert_eq!(found.vaulted, Some(true));
     }
 }

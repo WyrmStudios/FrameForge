@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use tauri::{Emitter, Manager, State};
+use tauri::State;
 
 use crate::app_state::AppState;
 use crate::db::QuantityChange;
-use crate::events;
 use crate::inventory_state::{is_unique_path, load_inventory_state_cache, modular_component_path};
 use crate::memory_scanner;
 
@@ -66,184 +65,13 @@ pub(crate) fn set_relic_pick_enabled(state: State<AppState>, enabled: bool) {
 }
 
 #[tauri::command]
-pub(crate) fn set_mem_trigger_enabled(state: State<AppState>, enabled: bool) {
-    state.mem_trigger_enabled.store(enabled, Ordering::SeqCst);
+pub(crate) fn set_overlays_enabled(state: State<AppState>, enabled: bool) {
+    state.overlays_enabled.store(enabled, Ordering::SeqCst);
 }
 
 #[tauri::command]
 pub(crate) fn get_monitor_status(state: State<AppState>) -> bool {
     state.monitor_active.load(Ordering::SeqCst)
-}
-
-/// Scan the process heap for a live EE.log trigger string.
-///
-/// The full scan caches the static-string address; later scans use the narrow,
-/// writable-only range around it to avoid scanning read-only .rodata repeatedly.
-pub(crate) fn scan_heap_for_trigger(
-    pid: u32,
-    pat: &[u8],
-    cached_bare: Option<u64>,
-) -> (bool, String, Option<u64>) {
-    use crate::platform::{Platform, ProcessAccess};
-
-    const FULL_MIN: u64 = 0x0000_0001_0000_0000; // 4 GB
-    const FULL_MAX: u64 = 0x0000_8000_0000_0000; // 512 TB (covers DLL image range)
-    const NARROW_R: u64 = 128 * 1024 * 1024; // +/-128 MB around bare_hit
-    const REGION_MAX: usize = 32 * 1024 * 1024; // skip regions > 32 MB
-
-    let bare_pat = &pat[..pat.len().saturating_sub(1)];
-    let (scan_min, scan_max, rw_only) = match cached_bare {
-        Some(ba) => (ba.saturating_sub(NARROW_R), ba.saturating_add(NARROW_R), true),
-        None => (FULL_MIN, FULL_MAX, false),
-    };
-
-    let handle = match Platform::open_process(pid) {
-        Ok(h) => h,
-        Err(e) => return (false, format!("OpenProcess failed pid={}: {}", pid, e), cached_bare),
-    };
-
-    let mut found = false;
-    let mut regions_read = 0u32;
-    let mut bare_hit: Option<u64> = None;
-    let mut addr = scan_min as usize;
-    let t = std::time::Instant::now();
-
-    loop {
-        if addr >= scan_max as usize { break; }
-
-        let regions: Vec<_> = handle.regions_from(addr).collect();
-        if regions.is_empty() { break; }
-
-        for region in &regions {
-            let base = region.base_address;
-            let size = region.region_size;
-            addr = base + size;
-
-            if base < scan_min as usize || base >= scan_max as usize || !region.is_committed || !region.is_readable {
-                continue;
-            }
-            if rw_only && !region.is_writable { continue; }
-            if size > REGION_MAX { continue; }
-
-            let buf = match handle.read(base, size) {
-                Some(r) => r,
-                None => continue,
-            };
-            if buf.is_empty() { continue; }
-
-            regions_read += 1;
-            if bare_hit.is_none() {
-                if let Some(off) = buf.windows(bare_pat.len()).position(|w| w == bare_pat) {
-                    bare_hit = Some(base as u64 + off as u64);
-                }
-            }
-            if buf.windows(pat.len()).any(|w| w == pat) {
-                found = true;
-                break;
-            }
-        }
-        if found { break; }
-    }
-
-    let mode = if cached_bare.is_some() { "narrow" } else { "full" };
-    let diag = format!(
-        "{} scan in {}ms: {} regions, bare={}, live={}",
-        mode,
-        t.elapsed().as_millis(),
-        regions_read,
-        bare_hit.map_or("none".to_string(), |a| format!("{:#x}", a)),
-        found
-    );
-    (found, diag, if cached_bare.is_none() { bare_hit } else { cached_bare })
-}
-
-/// Start the memory-based relic reward trigger alongside the EE.log watcher.
-pub(crate) fn start_memory_trigger(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        let session_log = std::env::temp_dir().join("frameforge_overlay_session.txt");
-        let mut was_open = false;
-        let mut open_at: Option<std::time::Instant> = None;
-        // Include \r so we only match live EE.log ring-buffer entries
-        // (Windows line ending: \r\n). The static .rodata copy ends with \n\0.
-        const OPEN_PAT: &[u8] = b"VoidProjections: GetVoidProjectionRewards\r";
-        // 200 ms is fine in narrow mode (each scan < 10 ms).
-        // The first scan (full mode, ~30 s) will block here once per game session.
-        const POLL_MS: u64 = 200;
-        // Auto-reset after 90 s regardless (reward screen max duration).
-        const AUTO_RESET_SECS: u64 = 90;
-
-        // Two-phase scan state. Reset when the game PID changes (ASLR re-randomizes).
-        let mut cached_bare: Option<u64> = None;
-        let mut last_pid: u32 = 0;
-
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
-
-            let state = app.state::<AppState>();
-            if !state.monitor_active.load(Ordering::SeqCst) {
-                break;
-            }
-            if !state.mem_trigger_enabled.load(Ordering::SeqCst) {
-                was_open = false;
-                open_at = None;
-                continue;
-            }
-
-            // Auto-reset open state after the max reward window duration.
-            if was_open {
-                if open_at.is_some_and(|t| t.elapsed().as_secs() >= AUTO_RESET_SECS) {
-                    was_open = false;
-                    open_at = None;
-                } else {
-                    continue;
-                }
-            }
-
-            let pid = match crate::memory_scanner::find_warframe_pid_pub() {
-                Some(p) => p,
-                None => {
-                    was_open = false;
-                    open_at = None;
-                    cached_bare = None;
-                    last_pid = 0;
-                    continue;
-                }
-            };
-            // Game restart → ASLR changed all addresses; start over with a full scan.
-            if pid != last_pid {
-                cached_bare = None;
-                last_pid = pid;
-            }
-
-            let (found, diag, new_bare) = scan_heap_for_trigger(pid, OPEN_PAT, cached_bare);
-            // Promote bare_hit from a full scan; preserve across narrow scans.
-            if cached_bare.is_none() {
-                cached_bare = new_bare;
-            }
-
-            let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-            let _ = std::fs::OpenOptions::new()
-                .append(true)
-                .open(&session_log)
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "[MEM SCAN] @ {} — {}", ts, diag)
-                });
-            if found {
-                was_open = true;
-                open_at = Some(std::time::Instant::now());
-                let _ = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&session_log)
-                    .and_then(|mut f| {
-                        use std::io::Write;
-                        writeln!(f, "[MEM TRIGGER] Open detected @ {}", ts)
-                    });
-                let _ = app.emit(events::FF_STATUS, "🔍 [MEM] Relic reward screen detected");
-                let _ = app.emit(events::RELIC_TRIGGER, ());
-            }
-        }
-    });
 }
 
 pub(crate) fn start_legacy_reward_worker(
@@ -286,6 +114,7 @@ pub(crate) struct MonitorCatalog {
     pub path_to_vaulted: HashMap<String, bool>,
     pub path_to_tradable: HashMap<String, bool>,
     pub path_to_masterable: HashMap<String, bool>,
+    pub path_to_max_level_cap: HashMap<String, u32>,
     pub path_to_category: HashMap<String, String>,
     pub path_to_item_type: HashMap<String, String>,
     pub path_to_product_category: HashMap<String, String>,
@@ -348,6 +177,9 @@ pub(crate) fn build_monitor_catalog(
     let path_to_masterable: HashMap<String, bool> = wfcd_items.iter()
         .filter_map(|i| i.masterable.map(|m| (i.unique_name.clone(), m)))
         .collect();
+    let path_to_max_level_cap: HashMap<String, u32> = wfcd_items.iter()
+        .filter_map(|i| i.max_level_cap.map(|c| (i.unique_name.clone(), c)))
+        .collect();
     let path_to_item_type: HashMap<String, String> = wfcd_items.iter()
         .map(|i| (i.unique_name.clone(), i.item_type.clone())).collect();
     let path_to_product_category: HashMap<String, String> = wfcd_items.iter()
@@ -395,7 +227,7 @@ pub(crate) fn build_monitor_catalog(
 
     MonitorCatalog {
         path_to_name, path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable, path_to_category,
+        path_to_tradable, path_to_masterable, path_to_max_level_cap, path_to_category,
         path_to_item_type, path_to_product_category, path_to_wfcd_cat,
         alias_excluded, ignored_paths, stackable_paths, path_aliases,
         unique_names, display_names,

@@ -38,51 +38,25 @@ export function useContextMenu() {
   return { ctxMenu, open, close };
 }
 
-const menuStyle: React.CSSProperties = {
-  position: "fixed",
-  zIndex: 999,
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  minWidth: 160,
-  boxShadow: "0 4px 16px rgba(0,0,0,.5)",
-};
+const MENU_CLASS =
+  "fixed z-999 min-w-40 rounded-8 bg-surface shadow-[0_4px_16px_rgba(0,0,0,.5)] border";
 
-const itemStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  textAlign: "left",
-  background: "none",
-  border: "none",
-  padding: "6px 14px",
-  color: "var(--text)",
-  cursor: "default",
-  whiteSpace: "nowrap",
-};
+const ITEM_CLASS =
+  "block w-full cursor-default whitespace-nowrap border-none px-3.5 py-1.5 text-left text-foreground";
 
-const menuHoverStyle: React.CSSProperties = {
-  borderColor: "rgba(56,139,253,.5)",
-};
-
-const itemHoverStyle: React.CSSProperties = {
-  background: "rgba(56,139,253,.15)",
-};
-
-const sepStyle: React.CSSProperties = {
-  height: 1,
-  background: "var(--border)",
-};
+const SEP_CLASS = "h-px bg-border";
 
 export function CtxMenu({ state, onClose }: { state: CtxMenuState; onClose: () => void }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <div style={{ ...menuStyle, ...(hovered ? menuHoverStyle : {}), left: state.x, top: state.y }}
+    <div className={`${MENU_CLASS} ${hovered ? "border-accent/50" : "border-border"}`}
+         style={{ left: state.x, top: state.y }}
          onMouseDown={e => e.stopPropagation()}
          onMouseEnter={() => setHovered(true)}
          onMouseLeave={() => setHovered(false)}>
       {state.items.map((item, i) => (
         <span key={i}>
-          {i > 0 && <div style={sepStyle} />}
+          {i > 0 && <div className={SEP_CLASS} />}
           <HoverItem onClick={() => { item.action(); onClose(); }}>
             {item.label}
           </HoverItem>
@@ -95,7 +69,7 @@ export function CtxMenu({ state, onClose }: { state: CtxMenuState; onClose: () =
 function HoverItem({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <button style={hovered ? { ...itemStyle, ...itemHoverStyle } : itemStyle}
+    <button className={`${ITEM_CLASS} ${hovered ? "bg-accent/15" : "bg-transparent"}`}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
             onClick={onClick}>

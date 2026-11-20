@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TAURI_EVENTS } from "../constants/tauri";
 import type { CacheStatuses } from "../types/cache";
+import { CONN_CHIP, CONN_DOT, CONN_LABEL, CONN_STATUS } from "./connStatus";
 
 function overall(statuses: CacheStatuses): "online" | "warn" | "offline" {
   const values = Object.values(statuses);
@@ -30,6 +31,13 @@ const DISPLAY: Record<string, string> = {
   "wfm-top": "WFM Top Items",
 };
 
+const SOURCE_CLASS: Record<string, string> = {
+  fresh: "text-success",
+  refreshed: "text-success",
+  stale: "text-warning",
+  fallback: "text-inactive",
+};
+
 export default function CacheStatusChip() {
   const [statuses, setStatuses] = useState<CacheStatuses>({});
   const [open, setOpen] = useState(false);
@@ -54,6 +62,7 @@ export default function CacheStatusChip() {
   }, [open]);
 
   const state = overall(statuses);
+  const s = CONN_STATUS[state];
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -62,48 +71,34 @@ export default function CacheStatusChip() {
   };
 
   return (
-    <div ref={chipRef} style={{ position: "relative" }}>
+    <div ref={chipRef} className="relative">
       <div
-        className={`conn-chip conn-${state}`}
+        className={`${CONN_CHIP} ${s.chip}`}
         onClick={() => setOpen((v) => !v)}
         title="Data cache status"
       >
-        <span className="conn-dot" />
-        <span className="conn-label">Data</span>
-        <span className="conn-detail">
+        <span className={`${CONN_DOT} ${s.dot}`} />
+        <span className={CONN_LABEL}>Data</span>
+        <span className={s.detail}>
           {state === "online" ? "fresh" : state === "warn" ? "stale" : "offline"}
         </span>
       </div>
 
       {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", right: 0,
-          background: "var(--surface, #1e1e2e)", border: "1px solid var(--border, #333)",
-          borderRadius: 8, padding: "10px 12px", minWidth: 220, zIndex: 999,
-          boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
-        }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+        <div className="absolute right-0 top-[calc(100%+6px)] z-999 min-w-55 rounded-8 border border-border bg-surface px-3 py-2.5 shadow-[0_4px_16px_rgba(0,0,0,0.4)]">
+          <div className="mb-2.5 flex flex-col gap-1.5">
             {Object.entries(statuses).map(([key, s]) => (
-              <div key={key} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "center",
-                fontSize: 12, gap: 8,
-              }}>
-                <span style={{ color: "var(--text, #cdd6f4)", fontWeight: 500 }}>
+              <div key={key} className="flex items-center justify-between gap-2 text-12">
+                <span className="font-medium text-foreground">
                   {DISPLAY[key] ?? key}
                 </span>
-                <span style={{
-                  color: s.source === "fresh" || s.source === "refreshed"
-                    ? "#3fb950"
-                    : s.source === "stale" ? "#d29922" : "#6e7681",
-                  fontVariantNumeric: "tabular-nums",
-                  fontSize: 11,
-                }}>
+                <span className={`text-11 tabular-nums ${SOURCE_CLASS[s.source] ?? "text-inactive"}`}>
                   {s.source} · {age(s.last_updated)}
                 </span>
               </div>
             ))}
             {Object.keys(statuses).length === 0 && (
-              <span style={{ color: "var(--muted, #6e7681)", fontSize: 12 }}>
+              <span className="text-12 text-muted">
                 No cache data yet
               </span>
             )}
@@ -111,12 +106,7 @@ export default function CacheStatusChip() {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            style={{
-              width: "100%", padding: "5px 10px", fontSize: 12, cursor: "pointer",
-              background: "var(--accent, #89b4fa)", color: "#1e1e2e",
-              border: "none", borderRadius: 5, fontWeight: 600,
-              opacity: refreshing ? 0.6 : 1,
-            }}
+            className={`w-full cursor-pointer rounded-5 border-none bg-accent px-2.5 py-1.25 text-12 font-semibold text-accent-ink ${refreshing ? "opacity-60" : "opacity-100"}`}
           >
             {refreshing ? "Refreshing…" : "Refresh all data"}
           </button>

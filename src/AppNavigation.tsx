@@ -1,5 +1,12 @@
 export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "statistics" | "completionist";
 
+const MODULE_NAV = "w-18 shrink-0 bg-surface border-r border-border flex flex-col items-center py-2 gap-1";
+const MODULE_BTN =
+  "flex flex-col items-center gap-1 w-17 px-1 py-2 bg-transparent border-0 rounded-8 text-muted cursor-pointer transition-[background,color] duration-100 overflow-hidden";
+const MODULE_BTN_ON = "text-accent! bg-accent/12!";
+const MODULE_BTN_OFF = "text-muted hover:bg-white/6 hover:text-foreground";
+const MODULE_LABEL = "text-9 font-semibold tracking-normal w-full text-center line-clamp-2 break-all leading-1.3";
+
 interface AppNavigationProps {
   activeModule: Module;
   onModuleChange: (module: Module) => void;
@@ -7,38 +14,38 @@ interface AppNavigationProps {
 
 export default function AppNavigation({ activeModule, onModuleChange }: AppNavigationProps) {
   return (
-    <nav className="module-nav">
-      <button className={`module-btn ${activeModule === "inventory" ? "module-active" : ""}`} onClick={() => onModuleChange("inventory")} title="Inventory">
-        <img src="/inventory-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Inventory</span>
+    <nav className={MODULE_NAV}>
+      <button className={`${MODULE_BTN} ${activeModule === "inventory" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("inventory")} title="Inventory">
+        <img src="/inventory-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Inventory</span>
       </button>
-      <button className={`module-btn ${activeModule === "foundry" ? "module-active" : ""}`} onClick={() => onModuleChange("foundry")} title="Foundry">
-        <img src="/foundry-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Foundry</span>
+      <button className={`${MODULE_BTN} ${activeModule === "foundry" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("foundry")} title="Foundry">
+        <img src="/foundry-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Foundry</span>
       </button>
-      <button className={`module-btn ${activeModule === "market" ? "module-active" : ""}`} onClick={() => onModuleChange("market")} title="Market Helper">
-        <img src="/market-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Market</span>
+      <button className={`${MODULE_BTN} ${activeModule === "market" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("market")} title="Market Helper">
+        <img src="/market-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Market</span>
       </button>
-      <button className={`module-btn ${activeModule === "relics" ? "module-active" : ""}`} onClick={() => onModuleChange("relics")} title="Relic Helper">
-        <img src="/relic-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Relics</span>
+      <button className={`${MODULE_BTN} ${activeModule === "relics" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("relics")} title="Relic Helper">
+        <img src="/relic-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Relics</span>
       </button>
-      <button className={`module-btn ${activeModule === "timers" ? "module-active" : ""}`} onClick={() => onModuleChange("timers")} title="Timers">
-        <img src="/timers-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Timers</span>
+      <button className={`${MODULE_BTN} ${activeModule === "timers" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("timers")} title="Timers">
+        <img src="/timers-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Timers</span>
       </button>
-      <button className={`module-btn ${activeModule === "statistics" ? "module-active" : ""}`} onClick={() => onModuleChange("statistics")} title="Statistics">
-        <img src="/statistics-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Statistics</span>
+      <button className={`${MODULE_BTN} ${activeModule === "statistics" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("statistics")} title="Statistics">
+        <img src="/statistics-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Statistics</span>
       </button>
-      <button className={`module-btn ${activeModule === "rivens" ? "module-active" : ""}`} onClick={() => onModuleChange("rivens")} title="Riven Analyzer">
-        <img src="/riven-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Rivens</span>
+      <button className={`${MODULE_BTN} ${activeModule === "rivens" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("rivens")} title="Riven Analyzer">
+        <img src="/riven-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Rivens</span>
       </button>
-      <button className={`module-btn ${activeModule === "completionist" ? "module-active" : ""}`} onClick={() => onModuleChange("completionist")} title="Completionist">
-        <img src="/completionist-icon.png" alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-        <span className="module-label">Completionist</span>
+      <button className={`${MODULE_BTN} ${activeModule === "completionist" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("completionist")} title="Completionist">
+        <img src="/completionist-icon.png" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Completionist</span>
       </button>
     </nav>
   );

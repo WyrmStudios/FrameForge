@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PREFERENCE_KEYS } from "../constants/preferences";
-import { TAURI_COMMANDS } from "../constants/tauri";
+import { COMPANION_API_SUSPENDED, TAURI_COMMANDS } from "../constants/tauri";
 import {
   CLOCK_FORMAT_OPTIONS,
   DEFAULT_CLOCK_FORMAT,
@@ -15,7 +15,8 @@ import {
   RELIC_PICK_PRIORITY_OPTIONS,
   RELIC_PICK_REFINEMENT_OPTIONS,
 } from "../constants/settings";
-import type { ClockFormat, FissureWatch, FoundryPageSize, RelicOverlayPriority, RelicPickLines, RelicPickPriority, RelicRefinement, SettingsSnapshot } from "../types/settings";
+import type { ClockFormat, FissureWatch, FoundryPageSize, OverlayOffsets, RelicOverlayPriority, RelicPickLines, RelicPickPriority, RelicRefinement, SettingsSnapshot } from "../types/settings";
+import { DEFAULT_OVERLAY_OFFSETS, parseOverlayOffsets } from "../types/settings";
 import type { FilterPresetSettings } from "../types/filterPresets";
 import { parseFilterPresetSettings } from "../types/filterPresets";
 import type { SettingsFile, SettingsPatch } from "../types/tauri";
@@ -26,15 +27,17 @@ interface UseSettingsReturn {
   blobLogEnabled: boolean;
   apiLogEnabled: boolean;
   autoDiagEnabled: boolean;
+  overlaysEnabled: boolean;
   overlayEnabled: boolean;
   overlayPriority: RelicOverlayPriority;
+  overlayOffsets: OverlayOffsets;
+  rivenEnabled: boolean;
   textScale: number;
   colorblindMode: boolean;
   clockFormat: ClockFormat;
   systemLocale: string;
   foundryPageSize: FoundryPageSize;
   relicPickEnabled: boolean;
-  memTriggerEnabled: boolean;
   relicPickPriority: RelicPickPriority;
   relicPickRefinement: RelicRefinement;
   relicPickLines: RelicPickLines;
@@ -47,19 +50,22 @@ interface UseSettingsReturn {
   filterPresets: FilterPresetSettings;
 
   // Setters
+  setCompanionApiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setAutoDiagEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setOverlaysEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayPriority: React.Dispatch<React.SetStateAction<RelicOverlayPriority>>;
+  setOverlayOffsets: React.Dispatch<React.SetStateAction<OverlayOffsets>>;
+  setRivenEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setTextScale: React.Dispatch<React.SetStateAction<number>>;
   setColorblindMode: React.Dispatch<React.SetStateAction<boolean>>;
   setClockFormat: React.Dispatch<React.SetStateAction<ClockFormat>>;
   setSystemLocale: React.Dispatch<React.SetStateAction<string>>;
   setFoundryPageSize: React.Dispatch<React.SetStateAction<FoundryPageSize>>;
   setRelicPickEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  setMemTriggerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setRelicPickPriority: React.Dispatch<React.SetStateAction<RelicPickPriority>>;
   setRelicPickRefinement: React.Dispatch<React.SetStateAction<RelicRefinement>>;
   setRelicPickLines: React.Dispatch<React.SetStateAction<RelicPickLines>>;
@@ -77,7 +83,7 @@ interface UseSettingsReturn {
   wfmInvisibleOnCloseRef: React.MutableRefObject<boolean>;
 
   // Callbacks
-  saveAllSettings: () => void;
+  saveAllSettings: () => Promise<void>;
   loadSettings: () => Promise<SettingsFile | null>;
 }
 
@@ -89,11 +95,18 @@ export function useSettings(
   const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [apiLogEnabled, setApiLogEnabled] = useState(false);
   const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
+  const [overlaysEnabled, setOverlaysEnabled] = useState<boolean>(
+    () => localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false"
+  );
   const [overlayEnabled, setOverlayEnabled] = useState<boolean>(
     () => localStorage.getItem(PREFERENCE_KEYS.OVERLAY_ENABLED) !== "false"
   );
   const [overlayPriority, setOverlayPriority] = useState<RelicOverlayPriority>(
     () => (localStorage.getItem(PREFERENCE_KEYS.OVERLAY_PRIORITY) ?? DEFAULT_RELIC_OVERLAY_PRIORITY) as RelicOverlayPriority
+  );
+  const [overlayOffsets, setOverlayOffsets] = useState<OverlayOffsets>(DEFAULT_OVERLAY_OFFSETS);
+  const [rivenEnabled, setRivenEnabled] = useState<boolean>(
+    () => localStorage.getItem(PREFERENCE_KEYS.RIVEN_OVERLAY_ENABLED) !== "false"
   );
   const [textScale, setTextScale] = useState(() => {
     const s = parseFloat(localStorage.getItem(PREFERENCE_KEYS.TEXT_SCALE) ?? "1");
@@ -107,7 +120,6 @@ export function useSettings(
   const [systemLocale, setSystemLocale] = useState("en-US");
   const [foundryPageSize, setFoundryPageSize] = useState<FoundryPageSize>(DEFAULT_FOUNDRY_PAGE_SIZE);
   const [relicPickEnabled, setRelicPickEnabled] = useState<boolean>(true);
-  const [memTriggerEnabled, setMemTriggerEnabled] = useState<boolean>(false);
   const [relicPickPriority, setRelicPickPriority] = useState<RelicPickPriority>(DEFAULT_RELIC_PICK_PRIORITY);
   const [relicPickRefinement, setRelicPickRefinement] = useState<RelicRefinement>(DEFAULT_RELIC_PICK_REFINEMENT);
   const [relicPickLines, setRelicPickLines] = useState<RelicPickLines>(DEFAULT_RELIC_PICK_LINES);
@@ -117,13 +129,16 @@ export function useSettings(
   const [wfmAutoInvisibleMins, setWfmAutoInvisibleMins] = useState(30);
   const [wfmRecordSales, setWfmRecordSales] = useState(false);
   const [filterPresets, setFilterPresets] = useState<FilterPresetSettings>(() => parseFilterPresetSettings(undefined));
-  const companionApiEnabled = false; // Feature suspended pending DE clarification
+  const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const settingsLoadedRef = useRef(false);
   const settingsRef = useRef<SettingsSnapshot>({
+    overlaysEnabled: true,
     overlayEnabled: true,
     overlayPriority: DEFAULT_RELIC_OVERLAY_PRIORITY,
+    overlayOffsets: DEFAULT_OVERLAY_OFFSETS,
+    rivenEnabled: true,
     textScale: 1,
     colorblindMode: false,
     clockFormat: DEFAULT_CLOCK_FORMAT,
@@ -150,7 +165,6 @@ export function useSettings(
     relicPickRefinement: DEFAULT_RELIC_PICK_REFINEMENT,
     relicPickLines: DEFAULT_RELIC_PICK_LINES,
     foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
-    memTriggerEnabled: false,
     filterPresets: { presets: [], restorePreviousFiltersOnPresetClick: false },
   });
   const wfmInvisibleOnStartRef = useRef(false);
@@ -160,10 +174,10 @@ export function useSettings(
   const saveAllSettings = useCallback(() => {
     if (!settingsLoadedRef.current) {
       console.error("save_settings skipped: settings not loaded yet, saving now would clobber the file");
-      return;
+      return Promise.resolve();
     }
     const settings: SettingsPatch = { ...settingsRef.current };
-    invoke(TAURI_COMMANDS.SAVE_SETTINGS, { json: JSON.stringify(settings) }).catch((e) => {
+    return invoke(TAURI_COMMANDS.SAVE_SETTINGS, { json: JSON.stringify(settings) }).then(() => {}).catch((e) => {
       console.error("save_settings failed:", e);
     });
   }, []);
@@ -172,16 +186,27 @@ export function useSettings(
   const loadSettings = useCallback(async (): Promise<SettingsFile | null> => {
     try {
       const json = await invoke<string>(TAURI_COMMANDS.LOAD_SETTINGS);
-      if (!json) { settingsLoadedRef.current = true; return null; }
+      if (!json) {
+        const overlaysEnabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false";
+        invoke(TAURI_COMMANDS.SET_OVERLAYS_ENABLED, { enabled: overlaysEnabled });
+        invoke(TAURI_COMMANDS.SET_RELIC_PICK_ENABLED, { enabled: true });
+        settingsLoadedRef.current = true;
+        return null;
+      }
       try {
         const s = JSON.parse(json) as SettingsFile;
         if (typeof s.memoryScannerEnabled === "boolean") setMemoryScannerEnabled(s.memoryScannerEnabled);
+        if (!COMPANION_API_SUSPENDED && typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled === "boolean") setApiLogEnabled(s.apiLogEnabled);
         if (typeof s.autoDiagEnabled === "boolean") {
           setAutoDiagEnabled(s.autoDiagEnabled);
           localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(s.autoDiagEnabled));
         }
+        const overlaysEnabled = typeof s.overlaysEnabled === "boolean" ? s.overlaysEnabled : true;
+        setOverlaysEnabled(overlaysEnabled);
+        localStorage.setItem(PREFERENCE_KEYS.OVERLAYS_ENABLED, String(overlaysEnabled));
+        invoke(TAURI_COMMANDS.SET_OVERLAYS_ENABLED, { enabled: overlaysEnabled });
         if (typeof s.overlayEnabled === "boolean") {
           setOverlayEnabled(s.overlayEnabled);
           localStorage.setItem(PREFERENCE_KEYS.OVERLAY_ENABLED, String(s.overlayEnabled));
@@ -189,6 +214,16 @@ export function useSettings(
         if (typeof s.overlayPriority === "string") {
           setOverlayPriority(s.overlayPriority as RelicOverlayPriority);
           localStorage.setItem(PREFERENCE_KEYS.OVERLAY_PRIORITY, s.overlayPriority);
+        }
+        if (s.overlayOffsets) {
+          const offsets = parseOverlayOffsets(s.overlayOffsets);
+          setOverlayOffsets(offsets);
+          // Mirror for overlay windows, which read localStorage directly.
+          localStorage.setItem(PREFERENCE_KEYS.OVERLAY_OFFSETS, JSON.stringify(offsets));
+        }
+        if (typeof s.rivenEnabled === "boolean") {
+          setRivenEnabled(s.rivenEnabled);
+          localStorage.setItem(PREFERENCE_KEYS.RIVEN_OVERLAY_ENABLED, String(s.rivenEnabled));
         }
         if (typeof s.textScale === "number") {
           setTextScale(s.textScale);
@@ -202,17 +237,12 @@ export function useSettings(
         if (typeof s.clockFormat === "string" && CLOCK_FORMAT_OPTIONS.includes(s.clockFormat)) {
           setClockFormat(s.clockFormat as ClockFormat);
         }
-        if (typeof s.foundryPageSize === "string" && FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) {
+        if (typeof s.foundryPageSize === "number" && FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) {
           setFoundryPageSize(s.foundryPageSize);
         }
-        if (typeof s.relicPickEnabled === "boolean") {
-          setRelicPickEnabled(s.relicPickEnabled);
-          invoke(TAURI_COMMANDS.SET_RELIC_PICK_ENABLED, { enabled: s.relicPickEnabled });
-        }
-        if (typeof s.memTriggerEnabled === "boolean") {
-          setMemTriggerEnabled(s.memTriggerEnabled);
-          invoke(TAURI_COMMANDS.SET_MEM_TRIGGER_ENABLED, { enabled: s.memTriggerEnabled });
-        }
+        const relicPickEnabled = typeof s.relicPickEnabled === "boolean" ? s.relicPickEnabled : true;
+        setRelicPickEnabled(relicPickEnabled);
+        invoke(TAURI_COMMANDS.SET_RELIC_PICK_ENABLED, { enabled: relicPickEnabled });
         if (RELIC_PICK_PRIORITY_OPTIONS.includes(s.relicPickPriority)) setRelicPickPriority(s.relicPickPriority);
         if (RELIC_PICK_REFINEMENT_OPTIONS.includes(s.relicPickRefinement)) setRelicPickRefinement(s.relicPickRefinement);
         if (RELIC_PICK_LINES_OPTIONS.includes(s.relicPickLines)) setRelicPickLines(s.relicPickLines);
@@ -230,6 +260,9 @@ export function useSettings(
         if (s.filterPresets) setFilterPresets(parseFilterPresetSettings(s.filterPresets));
         return s;
       } catch {
+        const overlaysEnabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false";
+        invoke(TAURI_COMMANDS.SET_OVERLAYS_ENABLED, { enabled: overlaysEnabled });
+        invoke(TAURI_COMMANDS.SET_RELIC_PICK_ENABLED, { enabled: true });
         settingsLoadedRef.current = true;
         return null;
       }
@@ -265,15 +298,17 @@ export function useSettings(
     blobLogEnabled,
     apiLogEnabled,
     autoDiagEnabled,
+    overlaysEnabled,
     overlayEnabled,
     overlayPriority,
+    overlayOffsets,
+    rivenEnabled,
     textScale,
     colorblindMode,
     clockFormat,
     systemLocale,
     foundryPageSize,
     relicPickEnabled,
-    memTriggerEnabled,
     relicPickPriority,
     relicPickRefinement,
     relicPickLines,
@@ -283,6 +318,7 @@ export function useSettings(
     wfmAutoInvisibleMins,
     wfmRecordSales,
     companionApiEnabled,
+    setCompanionApiEnabled,
     filterPresets,
 
     // Setters
@@ -290,15 +326,17 @@ export function useSettings(
     setBlobLogEnabled,
     setApiLogEnabled,
     setAutoDiagEnabled,
+    setOverlaysEnabled,
     setOverlayEnabled,
     setOverlayPriority,
+    setOverlayOffsets,
+    setRivenEnabled,
     setTextScale,
     setColorblindMode,
     setClockFormat,
     setSystemLocale,
     setFoundryPageSize,
     setRelicPickEnabled,
-    setMemTriggerEnabled,
     setRelicPickPriority,
     setRelicPickRefinement,
     setRelicPickLines,

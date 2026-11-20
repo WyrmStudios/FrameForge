@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "FrameForge",
-  "version": "4.5.0",
-  "identifier": "com.jochem.frameforge",
+  "version": "4.6.0",
+  "identifier": "com.wyrmstudios.frameforge",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -53,19 +53,6 @@
         "skipTaskbar": true,
         "resizable": false,
         "focus": false
-      },
-      {
-        "label": "overlay-test",
-        "url": "index.html?overlaytest",
-        "title": "FF Overlay Test",
-        "width": 480,
-        "height": 220,
-        "x": 0,
-        "y": -3000,
-        "visible": false,
-        "decorations": true,
-        "resizable": true,
-        "skipTaskbar": false
       }
     ],
     "security": {
@@ -76,7 +63,9 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MURFOTcyNDY0REI4MEIKUldRTHVFMUdjdWtkeU5EU2Z2c0FNSWNGUmRIdG53b3BETVYxaFBIeG9ENFVHYnV1MVQ5MHJHY3oK",
       "endpoints": [
-        "https://github.com/WyrmStudios/FrameForge/releases/latest/download/latest.json"
+        "https://github.com/WyrmStudios/FrameForge/releases/latest/download/latest.json",
+        "https://codeberg.org/Sikewyrm/FrameForge/releases/download/latest/latest.json",
+        "https://gitlab.com/api/v4/projects/WyrmStudios%2FFrameForge/packages/generic/frameforge/latest/latest.json"
       ]
     }
   },

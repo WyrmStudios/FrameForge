@@ -1,13 +1,16 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HelpTip } from "./shared/HelpTip";
 import FilterPresets from "./shared/FilterPresets";
+import { SecondaryButton } from "./shared/ui/ActionButton";
+import { EmptyMessage, FilterBar, FilterChip, FilterLabel, FilterSeparator, FoundrySearch } from "./shared/ui/FilterControls";
 import { PREFERENCE_KEYS } from "./constants/preferences";
 import { matchesSearchTerms, splitSearchTerms } from "./lib/search";
 import { RELIC_DROP_RATES, RELIC_REFINEMENT_LABELS, RELIC_REFINEMENT_ORDER } from "./constants/relics";
 import { warframeStatImageUrl } from "./constants/urls";
 import { TAURI_COMMANDS } from "./constants/tauri";
 import { useCatalog } from "./hooks/useCatalog";
+import { useDebouncedSearch } from "./hooks/useDebouncedSearch";
 import type { CatalogItem, InventoryItem } from "./types/items";
 import type { RelicFilters } from "./types/filters";
 import type { FilterPresetModule, FilterPresetSettings } from "./types/filterPresets";
@@ -40,6 +43,143 @@ function chanceToRarity(chance: number): string {
   if (chance >= 15) return "Common";
   if (chance >= 5)  return "Uncommon";
   return "Rare";
+}
+
+// ─── Tailwind class constants ────────────────────────────────────────────────
+
+type CardState = "none" | "unowned" | "complete";
+
+const RL_RARITY_LABEL_COLOR: Record<string, string> = {
+  bronze: "text-relic-bronze",
+  silver: "text-rarity-silver",
+  gold: "text-rarity-gold",
+};
+const PLANNER_RARITY_COLOR: Record<string, string> = {
+  bronze: "text-rarity-bronze",
+  silver: "text-rarity-silver",
+  gold: "text-rarity-gold",
+};
+const RL_RBOX_TOP: Record<string, string> = {
+  bronze: "border-t-4 border-t-rarity-bronze",
+  silver: "border-t-4 border-t-rarity-silver",
+  gold: "border-t-4 border-t-rarity-gold",
+};
+const RL_TEXT_REWARD_COLOR: Record<string, string> = {
+  rare: "text-rarity-gold",
+  uncommon: "text-rarity-silver",
+  common: "text-muted",
+};
+
+const RL_CORNER = "absolute top-0.5 right-0.75 z-1 flex flex-col items-center gap-px";
+const RL_RARITY_LABEL = "text-11 font-black leading-none tracking-[-.02em]";
+const RL_CB_CHECK = "text-9 font-black leading-none tracking-[-.1em]";
+const RL_CB_RELIC_CHECK = "text-11 font-black tracking-[-.1em] text-ducat";
+const RL_RBOX =
+  "flex flex-col items-center justify-center gap-1 px-1 py-1.5 relative border-r border-b border-r-border border-b-border overflow-hidden " +
+  "[&:nth-child(3n)]:border-r-0 [&:nth-child(n+4)]:border-b-0";
+const RL_RBOX_EMPTY = `${RL_RBOX} opacity-25`;
+const RL_RBOX_NAME = "w-full px-0.75 text-center text-9 leading-1.3 line-clamp-2";
+const RL_CARD_LEFT =
+  "flex flex-col gap-0.75 shrink-0 w-40 pl-3 pr-2.5 py-2.5 border-r border-r-border overflow-hidden";
+const RL_CARD_LEFT_TEXT = "flex flex-col gap-0.75 shrink-0 w-30 p-2 border-r border-r-border overflow-hidden";
+const RL_ICON_ROW = "flex items-center gap-2 shrink-0";
+const RL_TOTAL = "text-18 font-bold text-foreground";
+const RL_CARD_NAME = "shrink-0 text-12 font-semibold text-foreground leading-1.3";
+const RL_REFINEMENTS = "flex flex-col gap-px";
+const RL_REF = "text-10 whitespace-nowrap";
+const RL_REWARDS_GRID = "grid grid-cols-3 grid-rows-[80px_80px] flex-1 overflow-hidden";
+const RL_ICON_COUNT = "text-10 font-bold text-muted";
+const RL_ROW_IMG = "shrink-0 [&_img]:size-6! [&_img]:object-contain!";
+const RL_ROW_NAME =
+  "flex-1 min-w-0 text-12 font-medium text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
+const RL_ROW_TOTAL = "shrink-0 text-12 font-bold text-muted";
+const RL_ROW_REFS = "shrink-0 text-10 tracking-0.02 text-muted";
+const RL_TEXT_REWARDS = "flex-1 min-w-0 px-2 py-1 flex flex-col justify-around";
+const RL_TEXT_REWARD = "text-10 whitespace-nowrap overflow-hidden text-ellipsis leading-normal";
+const RL_VAULT_BADGE = "whitespace-nowrap rounded-3 border border-vaulted/35 bg-vaulted/15 px-1 py-px text-9 font-bold tracking-0.02 text-vaulted";
+const RL_PAGINATION = "flex items-center gap-2.5 px-3.5 py-1.5 border-b border-border shrink-0";
+const RL_SUBTAB =
+  "border-0 border-b-2 bg-transparent text-12 font-medium px-3.5 pt-1 pb-1.5 cursor-pointer transition-[color]";
+const RL_SUBTAB_ON = `${RL_SUBTAB} border-b-accent text-accent hover:text-accent`;
+const RL_SUBTAB_OFF = `${RL_SUBTAB} border-b-transparent text-muted hover:text-foreground`;
+const RL_ROOT = "flex flex-col flex-1 overflow-hidden min-h-0";
+const RL_SUBTAB_BAR = "flex gap-0.5 px-3 pt-1.5 border-b border-border shrink-0";
+
+const RL_LIST_CLS: Record<ViewMode, string> = {
+  cards:
+    "grid grid-cols-[repeat(auto-fill,minmax(420px,1fr))] gap-2 content-start py-2.5 px-3 flex-1 overflow-y-auto",
+  icons: "grid grid-cols-[repeat(auto-fill,76px)] gap-1.5 content-start p-2 flex-1 overflow-y-auto",
+  "text-cards":
+    "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2 content-start py-2.5 px-3 flex-1 overflow-y-auto",
+  list: "flex flex-col gap-px px-0 py-1 flex-1 overflow-y-auto",
+  "list-compact": "flex flex-col gap-px px-0 py-1 flex-1 overflow-y-auto",
+};
+
+  // Card shell + state modifiers. Background and border color depend on state,
+  // so complete uses its gold background only for cards and rows.
+function relicCardCls(view: ViewMode, state: CardState): string {
+  const isRow = view === "list" || view === "list-compact";
+  const shell =
+    view === "icons"
+      ? "w-19 h-22 rounded-8 px-1 pt-1.5 pb-1 flex flex-col items-center justify-center gap-1 cursor-default transition-[border-color] [&_img]:size-13! [&_img]:object-contain!"
+      : isRow
+      ? "h-40 rounded-8 flex flex-row items-center gap-2 px-3 py-1.25 min-h-8 transition-[border-color]"
+      : view === "text-cards"
+      ? "h-40 rounded-8 flex flex-row gap-0 overflow-hidden min-h-25 transition-[border-color]"
+      : "h-40 rounded-8 flex flex-row transition-[border-color]";
+  const gold = "border-ducat/55!";
+  const mod =
+    state === "complete"
+      ? isRow
+        ? `border border-l-2! ${gold} bg-ducat/3`
+        : view === "icons" || view === "text-cards"
+        ? `border ${gold} bg-surface`
+        : `border ${gold} bg-ducat/3`
+      : state === "unowned"
+      ? isRow
+        ? "border border-t-border border-r-border border-l-border border-b-border/35 bg-surface opacity-45 hover:opacity-70 hover:border-muted/40!"
+        : "border border-border bg-surface opacity-45 hover:opacity-70 hover:border-muted/40!"
+      : isRow
+      ? "border border-t-border border-r-border border-l-border border-b-border/35 bg-surface hover:border-accent/40"
+      : "border border-border bg-surface hover:border-accent/40";
+  return `${shell} ${mod}`;
+}
+
+// ── Planner ──
+const PL_WRAP = "flex flex-col flex-1 overflow-hidden min-h-0";
+const PL_CONTROLS = "flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border shrink-0";
+const PL_GROUP = "flex items-center gap-1";
+const PL_LABEL = "text-10 text-muted mr-0.5 uppercase tracking-0.04";
+const PL_COUNT = "text-11 text-muted";
+const PL_HEADER =
+  "flex items-center px-3 py-1 text-10 text-muted uppercase tracking-wider border-b border-border shrink-0";
+const PL_LIST = "flex-1 overflow-y-auto";
+const PL_COL_NAME = "flex-1 min-w-0 flex items-center gap-1.5";
+const PL_SORTABLE =
+  "bg-transparent border-0 cursor-pointer p-0 inline-flex items-center gap-0.75 transition-[color] uppercase tracking-wider text-10";
+const PL_SORT_ARROW = "text-8 leading-none";
+const PL_SPACER = "w-5 shrink-0";
+const PL_ROW = "border-b border-border/50";
+const PL_ROW_MAIN =
+  "flex items-center gap-0 px-3 py-1.75 cursor-pointer transition-[background] duration-100 hover:bg-white/3";
+const PL_RELIC_NAME =
+  "text-12 font-semibold text-foreground whitespace-nowrap overflow-hidden text-ellipsis";
+const PL_OWNED = "text-11 text-muted shrink-0 ml-auto";
+const PL_EV = "w-18 text-right shrink-0 text-12";
+const PL_EV_ZERO = "text-muted/40";
+const PL_GAIN_POS = "text-11 text-success";
+const PL_GAIN_NEG = "text-11 text-danger";
+const PL_EXPAND_BTN = "bg-transparent border-0 text-muted text-10 cursor-pointer pl-2 shrink-0 w-5";
+const PL_DETAIL = "pt-1.5 pr-3 pb-2.5 pl-6 bg-black/15 border-t border-border/40";
+const PL_TIER_ROW = "flex gap-4 mb-1.5 text-10 text-muted";
+const PL_REWARD_ROW = "flex items-center gap-2 py-0.75 text-11 border-b border-border/30 last:border-b-0";
+const PL_REWARD_RARITY = "w-3 shrink-0 font-bold";
+const PL_REWARD_NAME = "flex-1 text-foreground";
+const PL_REWARD_CHANCE = "w-12 text-right text-muted shrink-0";
+const PL_REWARD_VAL = "w-13 text-right text-accent shrink-0 font-semibold";
+
+function plSortableCls(active: boolean, extra = "") {
+  return `${PL_SORTABLE} ${extra} ${active ? "text-foreground" : "text-muted hover:text-foreground"}`;
 }
 
 
@@ -102,10 +242,9 @@ function parseDropData(raw: any): RelicDrop[] {
 
 function RelicImg({ src }: { src?: string }) {
   const [failed, setFailed] = useState(false);
-  const base = { width: 44, height: 44, borderRadius: 6, flexShrink: 0 } as const;
   if (!src || failed)
-    return <div style={{ ...base, background: "rgba(255,255,255,.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#8b949e" }}>R</div>;
-  return <img style={{ ...base, objectFit: "contain" }} src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+    return <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-white/6 text-11 text-muted">R</div>;
+  return <img className="size-11 shrink-0 rounded-md object-contain" src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
 const RARITY_BG: Record<string, string> = {
@@ -118,15 +257,14 @@ function PartImg({ srcs, rarity }: { srcs: (string | undefined)[]; rarity?: stri
   // Deduplicate so the same failing URL isn't retried
   const valid = [...new Set(srcs.filter(Boolean) as string[])];
   const [idx, setIdx] = useState(0);
-  const base = { width: 40, height: 40, borderRadius: 4 } as const;
   const src = valid[idx];
   if (!src) {
     const bg = rarity ? (RARITY_BG[rarity] ?? "rgba(255,255,255,.06)") : "rgba(255,255,255,.06)";
-    return <div style={{ ...base, background: bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "rgba(255,255,255,.3)" }}>?</div>;
+    return <div className="flex size-10 items-center justify-center rounded bg-white/6 text-9 text-white/30" style={{ background: bg }}>?</div>;
   }
   // key={src} forces React to unmount/remount the img when src changes,
   // preventing the broken-image icon from persisting between attempts
-  return <img key={src} style={{ ...base, objectFit: "contain", display: "block" }} src={src} alt="" loading="lazy"
+  return <img key={src} className="block size-10 rounded object-contain" src={src} alt="" loading="lazy"
     onError={() => setIdx(i => i + 1)} />;
 }
 
@@ -143,24 +281,37 @@ function RewardBox({ reward, imageSrcs, isOwned, isComplete, isHighlighted, colo
   colorblindMode: boolean;
 }) {
   const cls   = RARITY_CSS[reward.rarity] ?? "bronze";
-  const state = isComplete ? "complete" : isOwned ? "owned" : "";
   const shortName = reward.itemName.replace(" Blueprint", "").replace("Prime", "P.").trim();
+  const rboxState = isHighlighted
+    ? " bg-accent/18 outline-2 outline-accent"
+    : isComplete
+    ? " bg-ducat/12"
+    : isOwned
+    ? " bg-success/10"
+    : "";
+  const nameColor = isHighlighted
+    ? "text-relic-highlight"
+    : isComplete
+    ? "text-ducat"
+    : isOwned
+    ? "text-owned"
+    : "text-muted";
   return (
     <div
-      className={["relic-rbox", `relic-rbox-${cls}`, state ? `relic-rbox-${state}` : "", isHighlighted ? "relic-rbox-highlight" : ""].join(" ").trim()}
+      className={`relic-rbox ${RL_RBOX} ${RL_RBOX_TOP[cls]}${rboxState}`}
       title={`${reward.itemName} — ${reward.rarity} (${reward.chance.toFixed(1)}%)`}
     >
       {/* Top-right corner: rarity label + optional colorblind checkmark stacked */}
-      <span className="relic-corner-indicator">
-        <span className={`relic-rarity-label relic-rl-${cls}`} title={reward.rarity}>
+      <span className={RL_CORNER}>
+        <span className={`${RL_RARITY_LABEL} ${RL_RARITY_LABEL_COLOR[cls]}`} title={reward.rarity}>
           {cls === "bronze" ? "C" : cls === "silver" ? "U" : "R"}
         </span>
         {colorblindMode && (isOwned || isComplete) && (
-          <span className={`relic-cb-check relic-cb-${state}`}>{isComplete ? "✓✓" : "✓"}</span>
+          <span className={`${RL_CB_CHECK} ${isComplete ? "text-ducat" : "text-owned"}`}>{isComplete ? "✓✓" : "✓"}</span>
         )}
       </span>
       <PartImg srcs={imageSrcs} rarity={reward.rarity} />
-      <span className="relic-rbox-name">{shortName}</span>
+      <span className={`${RL_RBOX_NAME} ${nameColor}`}>{shortName}</span>
     </div>
   );
 }
@@ -171,7 +322,7 @@ function isFormaOrKuva(itemName: string): boolean {
   return itemName.includes("Forma") || itemName === "Kuva";
 }
 
-function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchTerms, nameMap, colorblindMode, view, ignoreFormaKuva }: {
+const RelicCard = memo(function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searchTerms, nameMap, colorblindMode, view, ignoreFormaKuva }: {
   drop: RelicDrop;
   catalogRelicByName: Map<string, CatalogItem>;
   inventory: Record<string, InventoryItem>;
@@ -248,13 +399,13 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
     ...Array<null>(Math.max(0, 6 - drop.rewards.length)).fill(null),
   ];
 
-  const cardClass = `relic-card${total === 0 ? " relic-card-unowned" : allComplete ? " relic-card-complete" : ""}`;
+  const cardState: CardState = total === 0 ? "unowned" : allComplete ? "complete" : "none";
 
   if (view === "icons") {
     return (
-      <div className={`${cardClass} relic-card-icon-only`} title={`${drop.fullName} ×${total}`}>
+      <div className={relicCardCls("icons", cardState)} title={`${drop.fullName} ×${total}`}>
         <RelicImg src={CDN(intactCat?.image_name)} />
-        <span className="relic-icon-count">×{total}</span>
+        <span className={RL_ICON_COUNT}>×{total}</span>
       </div>
     );
   }
@@ -264,35 +415,35 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
       .map(r => `${r.label[0].toUpperCase()}:${r.count}`)
       .join(" ");
     return (
-      <div className={`${cardClass} relic-card-row`}>
-        {view === "list" && <div className="relic-row-img"><RelicImg src={CDN(intactCat?.image_name)} /></div>}
-        <div className="relic-row-name">{drop.fullName}</div>
-        {intactCat?.vaulted && <span className="vault-badge vault-yes" style={{ fontSize: 9 }}>🔒</span>}
-        <span className="relic-row-total">×{total}</span>
-        {refCompact && <span className="relic-row-refs">{refCompact}</span>}
+      <div className={relicCardCls(view, cardState)}>
+        {view === "list" && <div className={RL_ROW_IMG}><RelicImg src={CDN(intactCat?.image_name)} /></div>}
+        <div className={RL_ROW_NAME}>{drop.fullName}</div>
+        {intactCat?.vaulted && <span className={RL_VAULT_BADGE}>🔒</span>}
+        <span className={RL_ROW_TOTAL}>×{total}</span>
+        {refCompact && <span className={RL_ROW_REFS}>{refCompact}</span>}
       </div>
     );
   }
 
   if (view === "text-cards") {
     return (
-      <div className={`${cardClass} relic-text-card`}>
-        <div className="relic-card-left">
-          <div className="relic-card-name">{drop.fullName}</div>
-          {intactCat?.vaulted && <span className="vault-badge vault-yes">🔒 Vaulted</span>}
-          <div className="relic-refinements">
+      <div className={relicCardCls("text-cards", cardState)}>
+        <div className={RL_CARD_LEFT_TEXT}>
+          <div className={RL_CARD_NAME}>{drop.fullName}</div>
+          {intactCat?.vaulted && <span className={RL_VAULT_BADGE}>🔒 Vaulted</span>}
+          <div className={RL_REFINEMENTS}>
             {refCounts.some(r => r.count > 0)
               ? refCounts.map(r => (
-                <span key={r.label} className={`relic-ref ${r.count > 0 ? "relic-ref-owned" : "relic-ref-zero"}`}>
+                <span key={r.label} className={`${RL_REF} ${r.count > 0 ? "text-foreground font-medium" : "text-muted opacity-40"}`}>
                   {r.count} {r.label}
                 </span>
               ))
-              : <span className="relic-ref relic-ref-owned">Total: {total}</span>}
+              : <span className={`${RL_REF} text-foreground font-medium`}>Total: {total}</span>}
           </div>
         </div>
-        <div className="relic-text-rewards">
+        <div className={RL_TEXT_REWARDS}>
           {drop.rewards.map((r, i) => (
-            <div key={i} className={`relic-text-reward relic-rarity-${r.rarity?.toLowerCase() ?? "common"}`}>
+            <div key={i} className={`${RL_TEXT_REWARD} ${RL_TEXT_REWARD_COLOR[r.rarity?.toLowerCase() ?? "common"] ?? "text-muted"}`}>
               {r.itemName}
             </div>
           ))}
@@ -302,33 +453,33 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
   }
 
   return (
-    <div className={cardClass}>
-      <div className="relic-card-left">
-        <div className="relic-card-icon-row">
+    <div className={relicCardCls("cards", cardState)}>
+      <div className={RL_CARD_LEFT}>
+        <div className={RL_ICON_ROW}>
           <RelicImg src={CDN(intactCat?.image_name)} />
-          <span className="relic-total">×{total}</span>
-          {colorblindMode && allComplete && <span className="relic-cb-relic-check" title="All rewards obtained">✓✓</span>}
+          <span className={RL_TOTAL}>×{total}</span>
+          {colorblindMode && allComplete && <span className={RL_CB_RELIC_CHECK} title="All rewards obtained">✓✓</span>}
         </div>
-        <div className="relic-card-name">{drop.fullName}</div>
-        {intactCat?.vaulted && <span className="vault-badge vault-yes">🔒 Vaulted</span>}
-        <div className="relic-refinements">
+        <div className={RL_CARD_NAME}>{drop.fullName}</div>
+        {intactCat?.vaulted && <span className={RL_VAULT_BADGE}>🔒 Vaulted</span>}
+        <div className={RL_REFINEMENTS}>
           {refCounts.some(r => r.count > 0)
             ? refCounts.map(r => (
-              <span key={r.label} className={`relic-ref ${r.count > 0 ? "relic-ref-owned" : "relic-ref-zero"}`}>
+              <span key={r.label} className={`${RL_REF} ${r.count > 0 ? "text-foreground font-medium" : "text-muted opacity-40"}`}>
                 {r.count} {r.label}
               </span>
             ))
-            : <span className="relic-ref relic-ref-owned">Total: {total}</span>
+            : <span className={`${RL_REF} text-foreground font-medium`}>Total: {total}</span>
           }
         </div>
       </div>
 
-      <div className="relic-rewards-grid">
+      <div className={RL_REWARDS_GRID}>
         {slots.map((r, i) => {
           if (!r) return (
-            <div key={i} className="relic-rbox relic-rbox-empty">
+            <div key={i} className={`relic-rbox ${RL_RBOX_EMPTY}`}>
               <PartImg srcs={[]} rarity={undefined} />
-              <span className="relic-rbox-name">—</span>
+              <span className={`${RL_RBOX_NAME} text-muted`}>—</span>
             </div>
           );
           const catalogItem = findCatalogItem(r.itemName);
@@ -382,7 +533,7 @@ function RelicCard({ drop, catalogRelicByName, inventory, ownedPrimeNames, searc
       </div>
     </div>
   );
-}
+});
 
 // ─── Planner ─────────────────────────────────────────────────────────────────
 
@@ -539,100 +690,100 @@ function PlannerTab({
   }
   function sortArrow(col: typeof sortCol) {
     return (
-      <span className="planner-sort-arrow" style={{ visibility: col === sortCol ? "visible" : "hidden" }}>
+      <span className={`${PL_SORT_ARROW} ${col === sortCol ? "visible" : "invisible"}`}>
         {sortDir === "desc" ? "▼" : "▲"}
       </span>
     );
   }
 
   return (
-    <div className="planner-wrap">
+    <div className={PL_WRAP}>
       {/* Controls */}
-      <div className="planner-controls">
-        <div className="planner-control-group">
-          <span className="planner-label">Metric</span>
-          <button className={`fchip${metric === "plat"  ? " fchip-on" : ""}`} onClick={() => setMetric("plat")}>Platinum</button>
-          <button className={`fchip${metric === "ducat" ? " fchip-on" : ""}`} onClick={() => setMetric("ducat")}>Ducats</button>
+      <div className={PL_CONTROLS}>
+        <div className={PL_GROUP}>
+          <span className={PL_LABEL}>Metric</span>
+          <FilterChip active={metric === "plat"} onClick={() => setMetric("plat")}>Platinum</FilterChip>
+          <FilterChip active={metric === "ducat"} onClick={() => setMetric("ducat")}>Ducats</FilterChip>
         </div>
-        <div className="planner-control-group">
-          <span className="planner-label">Squad</span>
+        <div className={PL_GROUP}>
+          <span className={PL_LABEL}>Squad</span>
           {([1, 2, 3, 4] as const).map(n => (
-            <button key={n} className={`fchip${squadSize === n ? " fchip-on" : ""}`} onClick={() => setSquadSize(n)}>
+            <FilterChip key={n} active={squadSize === n} onClick={() => setSquadSize(n)}>
               {n === 1 ? "Solo" : `${n}p`}
-            </button>
+            </FilterChip>
           ))}
         </div>
-        <div className="planner-control-group">
-          <span className="planner-label">Era</span>
+        <div className={PL_GROUP}>
+          <span className={PL_LABEL}>Era</span>
           {(["lith","meso","neo","axi"] as const).map(t => (
-            <button key={t} className={`fchip${tierFilter.includes(t) ? " fchip-on" : ""}`}
+            <FilterChip key={t} active={tierFilter.includes(t)}
               onClick={() => setTierFilter(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])}>
               {t[0].toUpperCase() + t.slice(1)}
-            </button>
+            </FilterChip>
           ))}
         </div>
-        <div className="planner-control-group">
-          <button className={`fchip${vaultFilter === "unvaulted" ? " fchip-on" : ""}`} onClick={() => setVaultFilter(v => v === "unvaulted" ? "all" : "unvaulted")}>Unvaulted</button>
-          <button className={`fchip${vaultFilter === "vaulted"   ? " fchip-on" : ""}`} onClick={() => setVaultFilter(v => v === "vaulted"   ? "all" : "vaulted")}>Vaulted</button>
-          <button className={`fchip${ownedOnly ? " fchip-on" : ""}`} onClick={() => setOwnedOnly(v => !v)}>Owned Only</button>
+        <div className={PL_GROUP}>
+          <FilterChip active={vaultFilter === "unvaulted"} onClick={() => setVaultFilter(v => v === "unvaulted" ? "all" : "unvaulted")}>Unvaulted</FilterChip>
+          <FilterChip active={vaultFilter === "vaulted"} onClick={() => setVaultFilter(v => v === "vaulted" ? "all" : "vaulted")}>Vaulted</FilterChip>
+          <FilterChip active={ownedOnly} onClick={() => setOwnedOnly(v => !v)}>Owned Only</FilterChip>
         </div>
-        <span className="planner-count" style={{ marginLeft: "auto" }}>{plannerRows.length} relics</span>
+        <span className={`${PL_COUNT} ml-auto`}>{plannerRows.length} relics</span>
       </div>
 
       {/* Column header */}
-      <div className="planner-header-row">
-        <div className="planner-col-name">
-          <button className={`planner-col-sortable${sortCol === "name" ? " active" : ""}`} onClick={() => handleSort("name")}>
+      <div className={PL_HEADER}>
+        <div className={PL_COL_NAME}>
+          <button className={plSortableCls(sortCol === "name")} onClick={() => handleSort("name")}>
             Relic{sortArrow("name")}
           </button>
-          <button className={`planner-col-sortable planner-col-owned-hdr${sortCol === "owned" ? " active" : ""}`} onClick={() => handleSort("owned")}>
+          <button className={plSortableCls(sortCol === "owned", "ml-auto")} onClick={() => handleSort("owned")}>
             Owned{sortArrow("owned")}
           </button>
         </div>
         {RELIC_REFINEMENT_ORDER.map(t => (
-          <button key={t} className={`planner-col-tier planner-col-sortable${sortCol === t ? " active" : ""}`} onClick={() => handleSort(t)}>
+          <button key={t} className={plSortableCls(sortCol === t, "w-18 text-right shrink-0 justify-end")} onClick={() => handleSort(t)}>
             {RELIC_REFINEMENT_LABELS[t]}{sortArrow(t)}
           </button>
         ))}
-        <button className={`planner-col-refine planner-col-sortable${sortCol === "gain" ? " active" : ""}`} onClick={() => handleSort("gain")}>
+        <button className={plSortableCls(sortCol === "gain", "w-32.5 text-right shrink-0 pr-8 justify-end")} onClick={() => handleSort("gain")}>
           Refine gain{sortArrow("gain")}
         </button>
-        <div className="planner-expand-spacer" aria-hidden />
+        <div className={PL_SPACER} aria-hidden />
       </div>
 
       {/* Rows */}
-      <div className="planner-list">
+      <div className={PL_LIST}>
         {plannerRows.length === 0 ? (
-          <div className="empty-msg">No relics match. Try turning off Owned Only.</div>
+          <EmptyMessage>No relics match. Try turning off Owned Only.</EmptyMessage>
         ) : plannerRows.map(({ drop, rewards, vals, evByTier, bestTier, totalOwned, vaulted }) => {
           const isOpen = expanded === drop.fullName;
           const gain   = evByTier.radiant - evByTier.intact;
           return (
-            <div key={drop.fullName} className="planner-row">
-              <div className="planner-row-main" onClick={() => setExpanded(isOpen ? null : drop.fullName)}>
-                <div className="planner-col-name">
-                  <span className="planner-relic-name">{drop.fullName}</span>
-                  {vaulted && <span className="vault-badge vault-yes" style={{ fontSize: 9 }}>🔒</span>}
-                  <span className="planner-owned">×{totalOwned}</span>
+            <div key={drop.fullName} className={PL_ROW}>
+              <div className={PL_ROW_MAIN} onClick={() => setExpanded(isOpen ? null : drop.fullName)}>
+                <div className={PL_COL_NAME}>
+                  <span className={PL_RELIC_NAME}>{drop.fullName}</span>
+                  {vaulted && <span className={RL_VAULT_BADGE}>🔒</span>}
+                  <span className={PL_OWNED}>×{totalOwned}</span>
                 </div>
                 {RELIC_REFINEMENT_ORDER.map(t => (
-                  <div key={t} className={`planner-col-tier planner-ev${t === bestTier ? " planner-ev-best" : ""}`}>
-                    {evByTier[t] < 0.05 ? <span className="planner-ev-zero">—</span> : `${evByTier[t].toFixed(1)}${unit}`}
+                  <div key={t} className={`${PL_EV} ${t === bestTier ? "text-success font-bold" : "text-muted"}`}>
+                    {evByTier[t] < 0.05 ? <span className={PL_EV_ZERO}>—</span> : `${evByTier[t].toFixed(1)}${unit}`}
                   </div>
                 ))}
-                <div className="planner-col-refine">
+                <div className="w-32.5 text-right shrink-0 pr-8">
                   {gain >= 0.1
-                    ? <span className="planner-gain-pos">+{gain.toFixed(1)}{unit}</span>
-                    : <span className="planner-gain-neg">{gain.toFixed(1)}{unit}</span>}
+                    ? <span className={PL_GAIN_POS}>+{gain.toFixed(1)}{unit}</span>
+                    : <span className={PL_GAIN_NEG}>{gain.toFixed(1)}{unit}</span>}
                 </div>
-                <button className="planner-expand-btn">{isOpen ? "▲" : "▼"}</button>
+                <button className={PL_EXPAND_BTN}>{isOpen ? "▲" : "▼"}</button>
               </div>
 
               {isOpen && (
-                <div className="planner-reward-detail">
-                  <div className="planner-detail-tier-row">
+                <div className={PL_DETAIL}>
+                  <div className={PL_TIER_ROW}>
                     {RELIC_REFINEMENT_ORDER.map(t => (
-                      <span key={t} className="planner-detail-tier-label">{RELIC_REFINEMENT_LABELS[t]}: {RELIC_DROP_RATES[t].Rare * 100}% rare</span>
+                      <span key={t}>{RELIC_REFINEMENT_LABELS[t]}: {RELIC_DROP_RATES[t].Rare * 100}% rare</span>
                     ))}
                   </div>
                   {rewards.map((r, i) => {
@@ -640,11 +791,11 @@ function PlannerTab({
                     const chance = rates[r.rarity as keyof typeof rates] ?? 0;
                     const cls = RARITY_CSS[r.rarity] ?? "bronze";
                     return (
-                      <div key={i} className={`planner-reward-row planner-reward-${cls}`}>
-                        <span className={`relic-rl-${cls} planner-reward-rarity`}>{r.rarity[0]}</span>
-                        <span className="planner-reward-name">{r.itemName}</span>
-                        <span className="planner-reward-chance">{(chance * 100).toFixed(2)}%</span>
-                        <span className="planner-reward-val">{vals[i] > 0 ? `${vals[i]}${unit}` : "—"}</span>
+                      <div key={i} className={PL_REWARD_ROW}>
+                        <span className={`${PL_REWARD_RARITY} ${PLANNER_RARITY_COLOR[cls]}`}>{r.rarity[0]}</span>
+                        <span className={PL_REWARD_NAME}>{r.itemName}</span>
+                        <span className={PL_REWARD_CHANCE}>{(chance * 100).toFixed(2)}%</span>
+                        <span className={PL_REWARD_VAL}>{vals[i] > 0 ? `${vals[i]}${unit}` : "—"}</span>
                       </div>
                     );
                   })}
@@ -675,6 +826,7 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
 
   const { search, tiers, ownership, vault, completion, sortMode, ignoreFormaKuva } = filters;
   const set = <K extends keyof RelicFilters>(k: K, v: RelicFilters[K]) => onFiltersChange({ ...filters, [k]: v });
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, value => set("search", value));
 
   const loadDrops = useCallback((force = false) => {
     const request = ++dropRequestRef.current;
@@ -793,11 +945,11 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
     && drops.some(d => d.rewards.some(reward => matchesSearchTerms(highlightSearchTerms, reward.itemName ?? "")));
 
   return (
-    <div className="relic-helper">
+    <div className={RL_ROOT}>
       {/* Sub-tab bar */}
-      <div className="relic-subtab-bar">
-        <button className={`relic-subtab${!plannerActive ? " active" : ""}`} onClick={() => setPlannerActive(false)}>Relics</button>
-        <button className={`relic-subtab${plannerActive  ? " active" : ""}`} onClick={() => setPlannerActive(true)}>Planner</button>
+      <div className={RL_SUBTAB_BAR}>
+        <button className={plannerActive ? RL_SUBTAB_OFF : RL_SUBTAB_ON} onClick={() => setPlannerActive(false)}>Relics</button>
+        <button className={plannerActive ? RL_SUBTAB_ON : RL_SUBTAB_OFF} onClick={() => setPlannerActive(true)}>Planner</button>
       </div>
 
       {plannerActive ? (
@@ -809,38 +961,38 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
         />
       ) : (<>
       <div className="market-header">
-        <input
-          className="foundry-search" style={{ width: 220 }}
+        <FoundrySearch
+          className="w-55"
           placeholder="Relic or item names (comma-separated)…"
-          value={search} onChange={e => set("search", e.target.value)}
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)}
         />
-        <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
+        <FilterBar className="flex-1 flex-wrap border-0 p-0">
           {(["Lith","Meso","Neo","Axi","Requiem"] as const).map(t => (
-            <button key={t} className={`fchip ${tiers.includes(t.toLowerCase()) ? "fchip-on" : ""}`}
-              onClick={() => set("tiers", toggle(tiers, t.toLowerCase()))}>{t}</button>
+            <FilterChip key={t} active={tiers.includes(t.toLowerCase())}
+              onClick={() => set("tiers", toggle(tiers, t.toLowerCase()))}>{t}</FilterChip>
           ))}
-          <span className="fbar-sep"/>
-          <button className={`fchip ${ownership.includes("owned")   ? "fchip-on" : ""}`} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</button>
-          <button className={`fchip ${ownership.includes("notowned") ? "fchip-on" : ""}`} onClick={() => set("ownership", toggle(ownership, "notowned"))}>Not Owned</button>
-          <span className="fbar-sep"/>
-          <button className={`fchip ${vault.includes("vaulted")   ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</button>
-          <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
-          <span className="fbar-sep"/>
-          <button className={`fchip ${completion.includes("complete")   ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "complete"))}>Completed</button>
-          <button className={`fchip ${completion.includes("incomplete") ? "fchip-on" : ""}`} onClick={() => set("completion", toggle(completion, "incomplete"))}>Uncompleted</button>
-          <button className={`fchip ${ignoreFormaKuva ? "fchip-on" : ""}`} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</button>
-          <span className="fbar-sep"/>
+          <FilterSeparator />
+          <FilterChip active={ownership.includes("owned")} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</FilterChip>
+          <FilterChip active={ownership.includes("notowned")} onClick={() => set("ownership", toggle(ownership, "notowned"))}>Not Owned</FilterChip>
+          <FilterSeparator />
+          <FilterChip active={vault.includes("vaulted")} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</FilterChip>
+          <FilterChip active={vault.includes("unvaulted")} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</FilterChip>
+          <FilterSeparator />
+          <FilterChip active={completion.includes("complete")} onClick={() => set("completion", toggle(completion, "complete"))}>Completed</FilterChip>
+          <FilterChip active={completion.includes("incomplete")} onClick={() => set("completion", toggle(completion, "incomplete"))}>Uncompleted</FilterChip>
+          <FilterChip active={ignoreFormaKuva} onClick={() => set("ignoreFormaKuva", !ignoreFormaKuva)} title="Treat Forma and Kuva rewards as always obtained when checking completion">Ignore Forma/Kuva</FilterChip>
+          <FilterSeparator />
           <FilterPresets module="relics" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
-          <span className="fbar-sep"/>
-          <span className="fbar-label">Sort:</span>
-          <button className={`fchip ${sortMode === "count"  ? "fchip-on" : ""}`} onClick={() => set("sortMode", "count")}>Most Owned</button>
-          <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Avg Plat</button>
-          <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Avg Ducats</button>
-          <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
-          <button className={`fchip ${sortMode === "za"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "za")}>Z–A</button>
-          <span className="fbar-sep"/>
-          {dropError && <button className="btn-secondary" style={{ marginLeft: 4 }} onClick={() => loadDrops(true)}>↺ Retry</button>}
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
+          <FilterSeparator />
+          <FilterLabel>Sort:</FilterLabel>
+          <FilterChip active={sortMode === "count"} onClick={() => set("sortMode", "count")}>Most Owned</FilterChip>
+          <FilterChip active={sortMode === "plat"} onClick={() => set("sortMode", "plat")}>Avg Plat</FilterChip>
+          <FilterChip active={sortMode === "ducats"} onClick={() => set("sortMode", "ducats")}>Avg Ducats</FilterChip>
+          <FilterChip active={sortMode === "az"} onClick={() => set("sortMode", "az")}>A–Z</FilterChip>
+          <FilterChip active={sortMode === "za"} onClick={() => set("sortMode", "za")}>Z–A</FilterChip>
+          <FilterSeparator />
+          {dropError && <SecondaryButton className="ml-1" onClick={() => loadDrops(true)}>↺ Retry</SecondaryButton>}
+          <span className="ml-auto text-11 text-muted">
             {dropLoading ? "Loading…" : `${visibleDrops.length} relics · ${ownedCount} owned`}
           </span>
           <ViewToggle view={relicView} onChange={v => { setRelicView(v); localStorage.setItem(PREFERENCE_KEYS.RELIC_VIEW, v); }} />
@@ -851,28 +1003,28 @@ export default function RelicHelper({ inventory, colorblindMode = false, filters
             { swatch: "rgba(63,185,80,.5)",  icon: "✓",  label: "Part owned",     desc: "Green box — blueprint or part in inventory" },
             { swatch: "rgba(240,192,64,.5)", icon: "✓✓", label: "Item complete",  desc: "Gold box — built warframe/weapon owned" },
           ]} />
-        </div>
+        </FilterBar>
       </div>
 
       {searchMatchesReward && (
-        <div style={{ padding: "4px 14px", fontSize: 11, color: "var(--accent)" }}>
+        <div className="px-3.5 py-1 text-11 text-accent">
           Showing relics with reward drops matching one or more search terms — highlighted in blue
         </div>
       )}
 
       {visibleDrops.length > PAGE_SIZE && (
-        <div className="relic-pagination">
-          <button className="btn-secondary" disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</button>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>
+        <div className={RL_PAGINATION}>
+          <SecondaryButton disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</SecondaryButton>
+          <span className="text-11 text-muted">
             {page + 1} / {totalPages} &nbsp;({visibleDrops.length} relics)
           </span>
-          <button className="btn-secondary" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</button>
+          <SecondaryButton disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</SecondaryButton>
         </div>
       )}
 
-      <div className={`relic-list relic-list-${relicView}`}>
+      <div className={`relic-list relic-list-${relicView} ${RL_LIST_CLS[relicView]}`}>
         {visibleDrops.length === 0 ? (
-          <div className="empty-msg">{dropLoading ? "Fetching drop data…" : "No relics match."}</div>
+          <EmptyMessage>{dropLoading ? "Fetching drop data…" : "No relics match."}</EmptyMessage>
         ) : pagedDrops.map(drop => (
           <RelicCard
             key={drop.fullName}

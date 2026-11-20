@@ -208,9 +208,6 @@ impl Iterator for RegionIter<'_> {
                 is_readable: mbi.State == MEM_COMMIT
                     && (protect & 0x02 != 0 || protect & 0x04 != 0 || protect & 0x08 != 0
                         || protect & 0x20 != 0 || protect & 0x40 != 0 || protect & 0x80 != 0),
-                is_writable: mbi.State == MEM_COMMIT
-                    && (protect & 0x04 != 0 || protect & 0x08 != 0
-                        || protect & 0x40 != 0 || protect & 0x80 != 0),
                 is_executable: protect & 0x10 != 0 || protect & 0x20 != 0 || protect & 0x40 != 0,
                 backing: if mbi.Type == 0x1000000 {
                     RegionBacking::File

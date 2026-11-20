@@ -643,7 +643,9 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
         "item_type": i.item_type, "product_category": i.product_category,
         "image_name": i.image_name, "vaulted": i.vaulted, "ducats": i.ducats,
         "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation,
-        "fusion_limit": i.fusion_limit, "max_level_cap": i.max_level_cap
+        "fusion_limit": i.fusion_limit, "max_level_cap": i.max_level_cap,
+        "masterable": i.masterable, "ducat_schema": DUCAT_SCHEMA_VERSION,
+        "vaulted_schema": VAULTED_SCHEMA_VERSION
     })).collect::<Vec<_>>()) {
         let _ = std::fs::write(&state.items_cache_path, json);
     }
@@ -782,7 +784,16 @@ pub(crate) fn get_weapon_catalog(state: State<AppState>) -> Vec<CatalogItem> {
     result
 }
 
+/// Founders-program items (closed November 2013) — permanently unobtainable by
+/// anyone, unlike every other category below which remains acquirable today.
+const FOUNDERS_ITEMS: [&str; 3] = [
+    "/Lotus/Powersuits/Excalibur/ExcaliburPrime",
+    "/Lotus/Weapons/Tenno/Pistol/LatoPrime",
+    "/Lotus/Weapons/Tenno/Melee/LongSword/SkanaPrime",
+];
+
 fn acquired_source_label(name: &str, path: &str) -> &'static str {
+    if FOUNDERS_ITEMS.contains(&path) { return "founders"; }
     if name.ends_with(" Prisma") || name.starts_with("Prisma ") { return "baro"; }
     if name.ends_with(" Wraith") || name.ends_with(" Vandal") || name.starts_with("MK1-") { return "event"; }
     if name.starts_with("Coda ") { return "duviri"; }
@@ -863,7 +874,7 @@ pub(crate) fn get_craftable_items(state: State<AppState>) -> Vec<CatalogItem> {
     for i in items.iter() {
         if i.unique_name.contains("PvPVariant") { continue; }
         let mut cat = fix_category(&i.name, &i.item_type, &i.product_category, &i.category, &i.unique_name);
-        if !weapon_cats.contains(&cat.as_str()) { continue; }
+        if !weapon_cats.contains(&cat.as_str()) && !FOUNDERS_ITEMS.contains(&i.unique_name.as_str()) { continue; }
         if covered.contains(&i.unique_name) { continue; }
         let mut name = i.name.clone();
         if let Some(c) = corrections.get(&i.unique_name) {
@@ -882,7 +893,7 @@ pub(crate) fn get_craftable_items(state: State<AppState>) -> Vec<CatalogItem> {
             ducats:        i.ducats,
             mastery_req:   i.mastery_req,
             max_level_cap: i.max_level_cap,
-            masterable:    i.masterable,
+            masterable:    resolve_masterable(i.masterable, &i.unique_name),
             tradeable_wfm: None,
             source_type:   Some(source.to_string()),
         });
@@ -956,12 +967,52 @@ fn patch_item_category(name: &str, category: &str, unique_name: &str) -> String 
     if name.contains("Blueprint") { "Blueprints".to_string() } else { category.to_string() }
 }
 
+/// Bump this whenever a parsing-logic change (not an upstream data change) makes
+/// previously-cached `ducats` values wrong, so upgrading users get a forced
+/// one-time recompute instead of carrying stale values forever (the normal
+/// refresh only refetches on an upstream ETag change, which a local logic fix
+/// never triggers). v2: rarity is derived from relic reward chance-grouping
+/// instead of WFCD's `rarity` string, which never labels the Common tier.
+const DUCAT_SCHEMA_VERSION: u32 = 2;
+
+/// Bump this whenever a parsing-logic change makes previously-cached `vaulted`
+/// values wrong, for the same reason as `DUCAT_SCHEMA_VERSION` above — a local
+/// logic fix never trips the ETag ladder's refetch, so a stale cache carries
+/// the wrong value forever without this. v1: caches built before relic `vaulted`
+/// extraction was wired up in `fetch_from_wfcd` persisted `null` for every
+/// Relics-category item, silently breaking the vaulted/unvaulted filter and badge.
+const VAULTED_SCHEMA_VERSION: u32 = 1;
+
 pub(crate) fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
     let s = std::fs::read_to_string(path).ok()?;
     let arr: Vec<serde_json::Value> = serde_json::from_str(&s).ok()?;
     // If the cache predates the item_type/product_category fields, discard it so
     // a fresh fetch populates the new fields needed by fix_category.
     if arr.first().is_some_and(|v| v.get("item_type").is_none()) {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    // If the cache predates masterable persistence, discard it so a fresh
+    // fetch populates the flag the Foundry mastery filters depend on.
+    if arr.first().is_some_and(|v| v.get("masterable").is_none()) {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    // If the cache predates the current ducat-derivation logic, discard it too.
+    let cache_ducat_schema = arr.first()
+        .and_then(|v| v.get("ducat_schema"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if cache_ducat_schema < DUCAT_SCHEMA_VERSION as u64 {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    // If the cache predates relic vaulted-field extraction, discard it too.
+    let cache_vaulted_schema = arr.first()
+        .and_then(|v| v.get("vaulted_schema"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if cache_vaulted_schema < VAULTED_SCHEMA_VERSION as u64 {
         let _ = std::fs::remove_file(path);
         return None;
     }
@@ -981,7 +1032,8 @@ pub(crate) fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
         let fusion_limit      = v["fusion_limit"].as_u64().map(|n| n as u32);
         let max_level_cap     = v["max_level_cap"].as_u64().map(|n| n as u32)
             .or_else(|| if unique_name.contains("/EntratiMech/") { Some(40) } else { None });
-        Some(WfcdItem { unique_name, name, category, item_type, product_category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap, tradable: None, masterable: None })
+        let masterable = v.get("masterable").and_then(|b| b.as_bool());
+        Some(WfcdItem { unique_name, name, category, item_type, product_category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap, tradable: None, masterable })
     }).collect();
     if items.is_empty() { None } else { Some(dedup_known_aliases(items)) }
 }
@@ -1131,5 +1183,76 @@ pub(crate) fn write_debug_unmatched_paths(
         if let Ok(json) = serde_json::to_string_pretty(&new_entries) {
             let _ = std::fs::write(&out, json);
         }
+    }
+}
+
+#[cfg(test)]
+mod load_items_cache_tests {
+    use super::*;
+
+    fn scratch_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("frameforge-catalogue-tests");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join(format!("{name}.json"))
+    }
+
+    fn relic_row(vaulted_schema: Option<u32>) -> serde_json::Value {
+        let mut row = serde_json::json!({
+            "unique_name": "/Lotus/Types/Game/Projections/T4VoidProjectionEBronze",
+            "name": "Axi A1 Intact",
+            "category": "Relics",
+            "item_type": "Relic",
+            "product_category": "",
+            "vaulted": true,
+            "masterable": false,
+            "ducat_schema": DUCAT_SCHEMA_VERSION,
+        });
+        if let Some(v) = vaulted_schema {
+            row["vaulted_schema"] = serde_json::json!(v);
+        }
+        row
+    }
+
+    #[test]
+    fn a_cache_predating_vaulted_extraction_is_discarded() {
+        let path = scratch_path("stale_vaulted_schema");
+        let body = serde_json::to_string(&vec![relic_row(None)]).unwrap();
+        std::fs::write(&path, body).unwrap();
+
+        assert!(load_items_cache(&path).is_none());
+        assert!(!path.exists(), "stale cache should be removed so a fresh fetch replaces it");
+    }
+
+    #[test]
+    fn a_cache_with_the_current_vaulted_schema_loads_its_vaulted_value() {
+        let path = scratch_path("current_vaulted_schema");
+        let body = serde_json::to_string(&vec![relic_row(Some(VAULTED_SCHEMA_VERSION))]).unwrap();
+        std::fs::write(&path, body).unwrap();
+
+        let items = load_items_cache(&path).expect("current-schema cache should load");
+        let relic = items.iter().find(|i| i.name == "Axi A1 Intact").expect("relic should be present");
+        assert_eq!(relic.vaulted, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod acquired_source_label_tests {
+    use super::*;
+
+    #[test]
+    fn founders_items_are_labelled_founders_not_generic_acquired() {
+        for path in FOUNDERS_ITEMS {
+            assert_eq!(acquired_source_label("doesn't matter", path), "founders");
+        }
+    }
+
+    #[test]
+    fn non_founders_weapons_still_resolve_existing_labels() {
+        assert_eq!(acquired_source_label("Soma Prisma", "/Lotus/Weapons/Grineer/SomaPrisma"), "baro");
+        assert_eq!(acquired_source_label("Braton Vandal", "/Lotus/Weapons/Corpus/BratonVandal"), "event");
+        assert_eq!(acquired_source_label("Coda Broadblade", "/Lotus/Weapons/Tenno/CodaBroadblade"), "duviri");
+        assert_eq!(acquired_source_label("Plinx", "/Lotus/Weapons/Tenno/ZawWeapon/Plinx"), "zaw");
+        assert_eq!(acquired_source_label("Mote Prism", "/Lotus/Weapons/Tenno/Amp/MotePrism"), "amp");
+        assert_eq!(acquired_source_label("Some Other Weapon", "/Lotus/Weapons/Other/Weapon"), "acquired");
     }
 }

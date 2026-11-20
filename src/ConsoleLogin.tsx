@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TAURI_EVENTS } from "./constants/tauri";
+import { SecondaryButton } from "./shared/ui/ActionButton";
 import type { ConsoleLoginSuccessPayload } from "./types/tauri";
 
 interface Props {
@@ -39,44 +40,38 @@ export default function ConsoleLogin({ onLogin }: Props) {
   };
 
   return (
-    <div className="settings-section" style={{ borderTop: "1px solid rgba(255,255,255,.06)", marginTop: 12, paddingTop: 12 }}>
-      <div className="settings-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div className="mt-3 border-t border-t-white/6 border-b border-b-border/60 px-5 pt-3 pb-3 last:border-b-0">
+      <div className="mb-2.5 flex items-center gap-2 text-10 font-bold uppercase tracking-0.07 text-muted">
         Console / Web Login
-        <span style={{
-          fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
-          background: "rgba(255,180,0,.15)", color: "#ffb400",
-          border: "1px solid rgba(255,180,0,.3)", borderRadius: 4,
-          padding: "1px 5px",
-        }}>EXPERIMENTAL</span>
+        <span className="rounded-4 border border-experimental/30 bg-experimental/15 px-1.25 py-px text-9 font-bold tracking-0.06 text-experimental">EXPERIMENTAL</span>
       </div>
 
-      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10, lineHeight: 1.6 }}>
+      <div className="mb-2.5 text-11 leading-1.6 text-muted">
         Opens warframe.com in a secure browser window. Log in with any method —
         PlayStation, Xbox, Nintendo, or email/password. FrameForge intercepts
         the session automatically and closes the window.
       </div>
 
       {status !== "waiting" && (
-        <button
-          className="btn-secondary"
+        <SecondaryButton
           onClick={open}
-          style={status === "done" ? { opacity: 0.5 } : undefined}
+          className={status === "done" ? "opacity-50" : undefined}
         >
           {status === "done" ? "Re-open Login" : "Open Warframe Login"}
-        </button>
+        </SecondaryButton>
       )}
 
       {status === "waiting" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>Waiting for login…</span>
-          <button className="btn-secondary" style={{ padding: "2px 10px", fontSize: 11 }} onClick={cancel}>
+        <div className="flex items-center gap-2.5">
+          <span className="text-12 text-muted">Waiting for login…</span>
+          <SecondaryButton onClick={cancel}>
             Cancel
-          </button>
+          </SecondaryButton>
         </div>
       )}
 
       {msg && (
-        <div className="settings-msg" style={{ marginTop: 6, color: status === "error" ? "var(--red)" : "var(--green)" }}>
+        <div className={`mt-2 text-11 ${status === "error" ? "text-red" : "text-green"}`}>
           {msg}
         </div>
       )}

@@ -1,15 +1,17 @@
-import { useState, useEffect, useMemo, useRef, memo, type Dispatch, type SetStateAction } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ItemImg from "../ItemImg";
 import { listen } from "@tauri-apps/api/event";
 import { HelpTip } from "../shared/HelpTip";
 import FilterPresets from "../shared/FilterPresets";
+import { EmptyMessage, FilterBar, FilterChip, FilterLabel, FilterSeparator, FoundrySearch } from "../shared/ui/FilterControls";
 import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { matchesSearchTerms, splitSearchTerms } from "../lib/search";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import { useCatalog } from "../hooks/useCatalog";
 import { useMarketData } from "../hooks/useMarketData";
+import { useDebouncedSearch } from "../hooks/useDebouncedSearch";
 import type { CatalogItem, CraftingJob, InventoryItem, RecipeComponent, RecipeMap } from "../types/items";
 import type { MarketFilters } from "../types/filters";
 import type { FilterPresetModule, FilterPresetSettings } from "../types/filterPresets";
@@ -45,10 +47,10 @@ function toggle<T>(arr: T[], val: T): T[] {
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 function PlatIcon({ size = 14 }: { size?: number }) {
-  return <img src="/platinum.webp" alt="plat" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0 }} />;
+  return <img src="/platinum.webp" alt="plat" width={size} height={size} className="inline-block shrink-0 object-contain" />;
 }
 function DucatIcon({ size = 14 }: { size?: number }) {
-  return <img src="/ducats.webp" alt="ducat" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0 }} />;
+  return <img src="/ducats.webp" alt="ducat" width={size} height={size} className="inline-block shrink-0 object-contain" />;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,19 +81,115 @@ function flattenRecipeCounts(comps: RecipeComponent[], multiplier: number, out: 
   }
 }
 
+// ─── Market classes (Tailwind) ───────────────────────────────────────────────
+const MK_TABS       = "flex gap-0.5 px-2.5 py-1.5 border-b border-border shrink-0";
+const MK_TAB        = "text-12 px-3.5 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100 border";
+const MK_TAB_OFF    = `${MK_TAB} border-border/60 bg-transparent text-muted hover:bg-white/6 hover:text-foreground`;
+const MK_TAB_ON     = `${MK_TAB} border-accent bg-accent/15 text-accent`;
+const MK_BADGE      = "inline-flex items-center justify-center bg-danger text-white text-10 font-bold rounded-10 min-w-4 h-4 px-1 ml-1 align-middle";
+const MK_HELPER     = "flex-1 flex flex-col overflow-hidden min-h-0";
+const MK_PLACEHOLDER = "flex items-center justify-center flex-1 text-muted text-13";
+const MK_HEADER     = "flex items-center gap-2 px-2.5 py-1.5 border-b border-border shrink-0 flex-wrap";
+const MK_SUMMARY    = "flex items-center gap-1.5 px-3 py-1 bg-white/2 border-b border-border shrink-0 text-11 text-muted";
+const MK_GRID       = "flex-1 overflow-y-auto overflow-x-hidden p-2.5 grid grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))] gap-2.5 content-start items-start min-h-0 columns-2 max-[600px]:columns-1";
+const MK_CARD       = "flex border rounded-8 overflow-hidden min-h-22.5 min-w-0 h-37 self-start mb-1.5 [break-inside:avoid]";
+const MK_CARD_LEFT  = "w-22.5 shrink-0 flex flex-col items-center gap-0.75 py-2 px-1.25 border-r border-border rounded-l-8 bg-white/2";
+const MK_CARD_CLICK = "cursor-pointer transition-[background] duration-120 hover:bg-white/5";
+const MK_SET_NAME   = "text-9 font-semibold text-center leading-1.3 text-foreground";
+const MK_SET_BADGES = "flex flex-col gap-0.5 items-center w-full";
+const MK_MSET       = "text-8 font-bold py-0.25 px-1.25 rounded-8 whitespace-nowrap";
+const MK_MSET_OK    = `${MK_MSET} text-success bg-success/12`;
+const MK_MSET_PARTS = `${MK_MSET} text-muted bg-white/6`;
+const MK_MSET_DUPES = `${MK_MSET} text-ducat bg-ducat/12`;
+const MK_PRICE_BOX  = "mt-auto pt-1 flex flex-col items-center gap-0.5";
+const MK_SET_PRICE  = "flex items-center gap-0.75 text-13 font-bold mt-1 text-set-price";
+const MK_PRICE_BIG  = "text-13 font-bold text-price-platinum";
+const MK_PRICE_LBL  = "text-8 text-muted";
+const MK_PRICE_SPIN = "text-9 text-muted";
+const MK_PRICE_NA   = "text-9 text-muted";
+const MK_CARD_RIGHT = "flex-1 min-w-0 flex flex-col overflow-hidden rounded-r-8";
+const MK_PART       = "flex-1 flex items-center gap-1.25 px-2 border-b border-border/28 min-h-6 min-w-0 last:border-b-0 last-of-type:border-b-0";
+const MK_PART_CLICK = "cursor-pointer transition-[background] duration-100 hover:bg-accent/8";
+const MK_DCAT       = "text-10 text-ducat font-semibold min-w-5 shrink-0 tabular-nums";
+const MK_SEP        = "text-10 text-white/18 shrink-0";
+const MK_PLATV      = "text-10 text-price-platinum font-semibold min-w-6 shrink-0 tabular-nums";
+const MK_NAME       = "flex-1 text-10 text-foreground truncate min-w-0";
+const MK_QTY        = "text-11 font-bold min-w-4.5 text-center shrink-0 rounded-3 px-0.75";
+const MK_QTY_ZERO   = "text-danger bg-danger/12";
+const MK_QTY_PARTIAL = "text-caution bg-caution/15";
+const MK_QTY_ONE    = "text-foreground bg-white/6";
+const MK_QTY_DUPE   = "text-ducat bg-ducat/15";
+const MK_TOTALS     = "mt-auto px-2 text-9 text-muted bg-white/2 flex items-center gap-0.75 border-t border-border/30 min-h-5 shrink-0";
+const MODS_GRID     = "flex-1 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(108px,1fr))] gap-1.5 p-2 min-h-0 content-start";
+const MOD_CARD      = "relative flex flex-col items-center gap-1 pt-2 px-1.5 pb-1.5 bg-white/3 border border-border rounded-7 cursor-pointer transition-[background,border-color] duration-120 text-center hover:bg-white/7 hover:border-accent";
+const MOD_UNOWNED   = "opacity-50 hover:opacity-100";
+const MOD_CAT       = "absolute top-1 left-1 text-9 font-bold py-0.25 px-1 rounded-3 whitespace-nowrap leading-1.4";
+const MOD_CAT_MOD   = `${MOD_CAT} bg-info/18 text-info`;
+const MOD_CAT_ARC   = `${MOD_CAT} bg-mod-arcane/18 text-mod-arcane`;
+const MOD_IMG       = "flex items-center justify-center w-14 h-14 mt-1 shrink-0";
+const MOD_NAME      = "text-11 text-foreground leading-1.3 line-clamp-2 w-full";
+const MOD_FOOTER    = "flex items-center gap-0.75 flex-wrap justify-center w-full mt-0.5";
+const MOD_RANK_NONE = "text-10 font-bold text-muted bg-transparent py-0.25 px-1 rounded-3";
+const MOD_CHIPS     = "flex flex-wrap gap-0.5 justify-center";
+const MOD_CHIP      = "text-10 font-bold text-mod-chip bg-mod-chip/12 py-0.25 px-1.25 rounded-3 cursor-pointer transition-[background] duration-150 hover:bg-mod-chip/30";
+const MOD_PLAT      = "flex items-center gap-0.5 text-10 text-accent whitespace-nowrap";
+const MOD_PLAT_NA   = "flex items-center gap-0.5 text-9 text-muted whitespace-nowrap";
+const MODS_PAG      = "flex items-center gap-2.5 justify-center p-2 border-t border-border shrink-0";
+const MODS_INFO     = "text-12 text-muted";
+const RIV_TAB       = "flex-1 overflow-y-auto p-2.5 flex flex-col gap-3";
+const RIV_SEC_HDR   = "text-11 font-semibold uppercase tracking-0.06 text-muted pt-0 pr-0 pb-1.5 pl-0.5";
+const RIV_LIST      = "flex flex-col gap-1.5";
+const RIV_CARD      = "bg-white/4 border rounded-6 px-3 py-2 flex flex-col gap-1";
+const RIV_CARD_HDR  = "flex items-center gap-2";
+const RIV_WEAPON    = "text-13 font-semibold text-foreground flex-1";
+const RIV_MOD_NAME  = "font-normal text-muted italic";
+const RIV_POLARITY  = "font-medium inline-flex items-center gap-0.75";
+const RIV_META      = "text-11 text-muted ml-auto";
+const RIV_STATS     = "flex flex-wrap gap-1 mt-0.5";
+const RIV_STAT      = "text-11 rounded-3 px-1.5 py-0.25";
+const RIV_BUFF      = "bg-riven-buff/18 text-success";
+const RIV_CURSE     = "bg-danger/14 text-danger";
+const RIV_SELL      = "bg-accent/12 border border-accent/35 text-accent text-10 font-semibold py-0.5 px-2 rounded-3 cursor-pointer transition-[background] duration-100 whitespace-nowrap hover:bg-accent/25";
+const RIV_OVERLAY   = "fixed inset-0 bg-black/60 flex items-center justify-center z-200";
+const RIV_MODAL     = "bg-surface border border-border rounded-10 px-5 py-4.5 w-90 max-w-[calc(100vw_-_32px)] flex flex-col gap-3";
+const RIV_M_TITLE   = "text-14 font-bold text-foreground flex items-center gap-2";
+const RIV_M_CLOSE   = "bg-transparent border-0 text-muted text-16 cursor-pointer ml-auto px-0.5 transition-[color] duration-100 hover:text-foreground";
+const RIV_M_WEAPON  = "text-13 font-semibold text-foreground";
+const RIV_M_META    = "text-11 text-muted";
+const RIV_M_STATS   = "flex flex-wrap gap-1";
+const RIV_M_DIV     = "border-x-0 border-b-0 border-t border-border";
+const RIV_M_ROW     = "flex items-center gap-2";
+const RIV_M_LABEL   = "text-12 text-muted min-w-32.5";
+const RIV_M_INPUT   = "flex-1 w-0 bg-black/25 border border-border rounded-4 text-foreground text-12 px-2 py-1 outline-none focus:border-accent";
+const RIV_M_NOTE    = "resize-none h-12";
+const RIV_M_TOGROW  = "mt-0.5";
+const RIV_TOG       = "inline-flex items-center gap-1.5 cursor-pointer select-none";
+const RIV_TOG_TRACK = "relative h-4.25 w-8 shrink-0 rounded-9 bg-[var(--color-border)] transition-[background] duration-150 peer-checked:bg-accent peer-checked:[&>span]:left-4.25";
+const RIV_TOG_THUMB = "absolute top-0.5 left-0.5 h-3.25 w-3.25 rounded-full bg-white transition-[left] duration-150";
+const RIV_TOG_LABEL = "text-12 text-foreground min-w-11";
+const RIV_POLARITY_ICON = "inline-block size-3.5 align-middle dark:invert [html[data-theme=dark]_&]:invert [html[data-theme=light]_&]:invert-0";
+const RIV_CARD_META = "flex gap-0 text-11 text-muted [&>span]:whitespace-nowrap [&>span+span]:before:content-['·'] [&>span+span]:before:mx-0.75";
+const RIV_M_WARN    = "text-11 text-caution bg-caution/10 border border-caution/30 rounded-4 px-2 py-1.5";
+const RIV_M_ERR     = "text-11 text-danger bg-danger/10 border border-danger/30 rounded-4 px-2 py-1.5";
+const RIV_SALE_TYPE = "flex gap-0 border border-border rounded-5 overflow-hidden";
+const RIV_SALE_BTN  = "border-0 bg-transparent py-1 px-3 text-12 cursor-pointer transition-[background,color] duration-100";
+const RIV_SALE_OFF  = `${RIV_SALE_BTN} text-muted hover:bg-white/6 hover:text-foreground`;
+const RIV_SALE_ON   = `${RIV_SALE_BTN} bg-[var(--color-accent)] text-white`;
+const RIV_SUBMIT    = "bg-accent/15 border border-accent text-accent text-12 font-semibold py-1.75 px-3.5 rounded-5 cursor-pointer transition-[background] duration-100 hover:enabled:bg-accent/28 disabled:opacity-50 disabled:cursor-default";
+
 // ─── Set card ─────────────────────────────────────────────────────────────────
 
 interface SetPart { item: CatalogItem; qty: number; required_count: number; sellMedian?: number; loading: boolean; urlName: string; }
 
-function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
+const SetCard = memo(function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesFetched, crafting, onCardClick, onPartClick }: {
   setKey: string; parts: SetPart[]; parentItem?: CatalogItem;
   setPrice?: WfmPrice; setPriceLoading: boolean; pricesFetched: boolean;
   crafting: CraftingJob[]; onCardClick?: () => void;
   onPartClick?: (urlName: string, displayName: string, imageName?: string) => void;
 }) {
   const totalDucats  = parts.reduce((s, p) => s + (p.item.ducats ?? 0) * p.qty, 0);
-  const ownedCount   = parts.filter(p => p.qty > 0).length;
-  const isComplete   = ownedCount === parts.length;
+  const satisfiedCount = parts.filter(p => p.qty >= p.required_count).length;
+  const isComplete   = satisfiedCount === parts.length;
   const hasDupes     = parts.some(p => p.qty > p.required_count);
   const isCrafting   = crafting.some(c =>
     c.unique_name === parentItem?.unique_name ||
@@ -99,69 +197,73 @@ function SetCard({ setKey, parts, parentItem, setPrice, setPriceLoading, pricesF
   );
 
   return (
-    <div className={`market-card${isComplete ? " market-card-complete" : ""}`}>
-      <div className={`market-card-left${onCardClick ? " market-card-clickable" : ""}`} onClick={onCardClick} title={onCardClick ? "View orders & prices" : undefined}>
-        <div style={{ position: "relative", display: "inline-block" }}>
+    <div className={`${MK_CARD} ${isComplete ? "border-success/40" : "border-border"}`}>
+      <div className={`${MK_CARD_LEFT}${onCardClick ? ` ${MK_CARD_CLICK}` : ""}`} onClick={onCardClick} title={onCardClick ? "View orders & prices" : undefined}>
+        <div className="relative inline-block">
           <ItemImg imageName={parentItem?.image_name} size={64} fallbackText="P" />
           {isCrafting && (
-            <span style={{ position: "absolute", top: -4, right: -6, fontSize: 13 }} title="Building in Foundry">⚒</span>
+            <span className="absolute -top-1 -right-1.5 text-13" title="Building in Foundry">⚒</span>
           )}
         </div>
-        <div className="market-set-name">{setKey}</div>
-        <div className="market-set-badges">
-          {isComplete && <span className="mset-badge mset-complete">✓ Complete</span>}
-          {!isComplete && <span className="mset-badge mset-parts">{ownedCount}/{parts.length}</span>}
-          {hasDupes && <span className="mset-badge mset-dupes">+ Dupes</span>}
+        <div className={MK_SET_NAME}>{setKey}</div>
+        <div className={MK_SET_BADGES}>
+          {isComplete && <span className={MK_MSET_OK}>✓ Complete</span>}
+          {!isComplete && <span className={MK_MSET_PARTS}>{satisfiedCount}/{parts.length}</span>}
+          {hasDupes && <span className={MK_MSET_DUPES}>+ Dupes</span>}
         </div>
-        <div className="market-set-price-box">
+        <div className={MK_PRICE_BOX}>
           {/* Prices are re-fetched periodically, so testing `loading` before the
               value blanks a known price back to "…" on every refresh. */}
           {setPrice?.sell_median ? (
-            <div className="market-set-price">
+            <div className={MK_SET_PRICE}>
               <PlatIcon size={16} />
-              <span className="market-price-big">{fmtPt(setPrice.sell_median)}</span>
-              <span className="market-price-lbl">set</span>
+              <span className={MK_PRICE_BIG}>{fmtPt(setPrice.sell_median)}</span>
+              <span className={MK_PRICE_LBL}>set</span>
             </div>
           ) : setPriceLoading ? (
-            <span className="market-price-spin">…</span>
+            <span className={MK_PRICE_SPIN}>…</span>
           ) : pricesFetched ? (
-            <span className="market-price-na">—</span>
+            <span className={MK_PRICE_NA}>—</span>
           ) : null}
         </div>
       </div>
 
-      <div className="market-card-right">
+      <div className={MK_CARD_RIGHT}>
         {parts.map(part => {
           const qty      = part.qty;
-          const qtyClass = qty === 0 ? "mqty-zero" : qty === 1 ? "mqty-one" : "mqty-dupe";
+          const required = part.required_count;
+          const qtyClass = qty === 0 ? MK_QTY_ZERO
+            : qty < required ? MK_QTY_PARTIAL
+            : qty === required ? MK_QTY_ONE
+            : MK_QTY_DUPE;
           const canClick = !!onPartClick;
           return (
             <div
               key={part.item.unique_name}
-              className={`market-part-row${qty === 0 ? " part-missing" : ""}${canClick ? " market-part-clickable" : ""}`}
+              className={`${MK_PART}${qty === 0 ? " opacity-40" : ""}${canClick ? ` ${MK_PART_CLICK}` : ""}`}
               onClick={canClick ? () => onPartClick(part.urlName, part.item.name, part.item.image_name ?? undefined) : undefined}
               title={canClick ? "View orders & prices" : undefined}
             >
               <DucatIcon size={12} />
-              <span className="mpart-ducat-val">{part.item.ducats ?? "—"}</span>
-              <span className="mpart-sep">/</span>
+              <span className={MK_DCAT}>{part.item.ducats ?? "—"}</span>
+              <span className={MK_SEP}>/</span>
               <PlatIcon size={12} />
-              <span className="mpart-plat-val">
+              <span className={MK_PLATV}>
                 {part.sellMedian ? fmtPt(part.sellMedian) : part.loading ? "…" : "—"}
               </span>
-              <span className="mpart-sep">/</span>
-              <span className="mpart-name">{partLabel(part.item.name, setKey)}</span>
-              <span className={`mpart-qty ${qtyClass}`}>{qty}</span>
+              <span className={MK_SEP}>/</span>
+              <span className={MK_NAME}>{partLabel(part.item.name, setKey)}</span>
+              <span className={`${MK_QTY} ${qtyClass}`}>{required > 1 ? `${qty}/${required}` : qty}</span>
             </div>
           );
         })}
         {totalDucats > 0 && (
-          <div className="mpart-totals"><DucatIcon size={11} /> {fmt(totalDucats)} ducats total</div>
+          <div className={MK_TOTALS}><DucatIcon size={11} /> {fmt(totalDucats)} ducats total</div>
         )}
       </div>
     </div>
   );
-}
+});
 
 // ─── Market Helper ────────────────────────────────────────────────────────────
 
@@ -177,6 +279,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
   const [rivens, setRivens]               = useState<BlobRivenEntry[]>([]);
   const { search, ownership, conditions, vault, sortMode, activeMarketTab } = filters;
   const set = <K extends keyof MarketFilters>(k: K, v: MarketFilters[K]) => onFiltersChange({ ...filters, [k]: v });
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, value => set("search", value));
 
   // Seed live prices map from shared cached prices on first load
   const seededRef = useRef(false);
@@ -431,7 +534,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
         // Group 2: specific conditions (OR — set matches if it satisfies ANY selected)
         if (conditions.length > 0) {
           const hasDupes   = parts.some(p => (inventory[p.unique_name]?.quantity ?? 0) > (recipeCountMap.get(p.unique_name) ?? 1));
-          const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) > 0);
+          const isFullSet  = parts.every(p => (inventory[p.unique_name]?.quantity ?? 0) >= (recipeCountMap.get(p.unique_name) ?? 1));
           const ok = conditions.some(c =>
             (c === "hasparts"  && ownedAny)    ||
             (c === "dupes"     && hasDupes)    ||
@@ -470,29 +573,63 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       });
   }, [sets, inventory, ownership, conditions, vault, sortMode, search, parentItems, prices, wfmLookup, recipeCountMap]);
 
+  const onPartClick = useCallback((urlName: string, displayName: string, imageName?: string) => {
+    invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
+    setPopup({ urlName, displayName, imageName });
+  }, []);
+
+  // Memoized so typing in the search box (which only changes `inputSearch`, not
+  // `search`/`visibleSets`, until the 150 ms debounce commits) doesn't re-run this
+  // per-set sort/map over every visible set on every keystroke.
+  const renderedSets = useMemo(() => visibleSets.map(([setKey, parts]) => {
+    const setNormalKey = normalizeForWfm(setKey + " Set");
+    const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
+    const parent        = parentItems.get(setKey) ?? parts[0];
+    const setPriceData = prices.get(setUrl);
+    const setParts: SetPart[] = [...parts]
+      .sort((a, b) => {
+        const qa = inventory[a.unique_name]?.quantity ?? 0;
+        const qb = inventory[b.unique_name]?.quantity ?? 0;
+        return qb - qa || a.name.localeCompare(b.name);
+      })
+      .map(p => {
+        const normalKey = normalizeForWfm(p.name);
+        const url = wfmLookup.get(normalKey) ?? normalKey;
+        const priceData = prices.get(url);
+        return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
+          required_count: recipeCountMap.get(p.unique_name) ?? 1,
+          sellMedian: priceData?.sell_median ?? undefined, loading: false, urlName: url };
+      });
+    const onCardClick = () => {
+      invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
+      setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
+    };
+    return { setKey, parent, setPriceData, setParts, onCardClick };
+  }), [visibleSets, wfmLookup, parentItems, prices, inventory, recipeCountMap]);
+
   return (
-    <div className="market-helper">
+    <div className={MK_HELPER}>
       {/* ── Market tab strip ── */}
-      <div className="market-tab-strip">
-        <button className={activeMarketTab === "trading" ? "active" : ""} onClick={() => { set("activeMarketTab", "trading"); setWfmBadge(0); }}>
-          Trading {wfmBadge > 0 && <span className="market-tab-badge">{wfmBadge}</span>}
+      <div className={MK_TABS}>
+        <button className={activeMarketTab === "trading" ? MK_TAB_ON : MK_TAB_OFF} onClick={() => { set("activeMarketTab", "trading"); setWfmBadge(0); }}>
+          Trading {wfmBadge > 0 && <span className={MK_BADGE}>{wfmBadge}</span>}
         </button>
-        <button className={activeMarketTab === "sets" ? "active" : ""} onClick={() => set("activeMarketTab", "sets")}>
+        <button className={activeMarketTab === "sets" ? MK_TAB_ON : MK_TAB_OFF} onClick={() => set("activeMarketTab", "sets")}>
           Prime Sets
         </button>
-        <button className={activeMarketTab === "mods" ? "active" : ""} onClick={() => set("activeMarketTab", "mods")}>
+        <button className={activeMarketTab === "mods" ? MK_TAB_ON : MK_TAB_OFF} onClick={() => set("activeMarketTab", "mods")}>
           Mods &amp; Arcanes
         </button>
-        <button className={activeMarketTab === "rivens" ? "active" : ""} onClick={() => set("activeMarketTab", "rivens")}>
+        <button className={activeMarketTab === "rivens" ? MK_TAB_ON : MK_TAB_OFF} onClick={() => set("activeMarketTab", "rivens")}>
           Rivens
         </button>
-        <button className={activeMarketTab === "sisters" ? "active" : ""} onClick={() => set("activeMarketTab", "sisters")}>
+        <button className={activeMarketTab === "sisters" ? MK_TAB_ON : MK_TAB_OFF} onClick={() => set("activeMarketTab", "sisters")}>
           Variants
         </button>
       </div>
 
       {/* Keep WfmTrading mounted at all times so auction/whisper state isn't lost on tab switch */}
-      <div style={{ display: activeMarketTab === "trading" ? "flex" : "none", flex: 1, flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+      <div className={activeMarketTab === "trading" ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "hidden"}>
         <WfmTrading
           wfmLookup={wfmLookup}
           wfmItems={wfmItems}
@@ -524,92 +661,66 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
       )}
 
       {activeMarketTab === "sisters" && (
-        <div className="market-placeholder">
+        <div className={MK_PLACEHOLDER}>
           <p>Sisters / Tenet weapons market coming soon.</p>
         </div>
       )}
 
       {activeMarketTab === "sets" && <>
-      <div className="market-header">
-        <input className="foundry-search" style={{ width: 200 }} placeholder="Search sets (comma-separated)…"
-          value={search} onChange={e => set("search", e.target.value)} />
-        <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
-          <button className={`fchip ${ownership.includes("owned")    ? "fchip-on" : ""}`} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</button>
-          <button className={`fchip ${ownership.includes("notowned") ? "fchip-on" : ""}`} onClick={() => set("ownership", toggle(ownership, "notowned"))}>Not Owned</button>
-          <span className="fbar-sep"/>
-          <button className={`fchip ${conditions.includes("dupes")     ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "dupes"))}>Dupes</button>
-          <button className={`fchip ${conditions.includes("itemowned") ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "itemowned"))}>Item Owned</button>
-          <button className={`fchip ${conditions.includes("fullset")   ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "fullset"))}>Full Set</button>
-          <button className={`fchip ${conditions.includes("hasparts")  ? "fchip-on" : ""}`} onClick={() => set("conditions", toggle(conditions, "hasparts"))}>Has Parts</button>
-          <span className="fbar-sep"/>
-          <button className={`fchip ${vault.includes("vaulted")   ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</button>
-          <button className={`fchip ${vault.includes("unvaulted") ? "fchip-on" : ""}`} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</button>
-          <span className="fbar-sep"/>
+      <div className={MK_HEADER}>
+        <FoundrySearch className="w-50" placeholder="Search sets (comma-separated)…"
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)} />
+        <FilterBar className="flex-1 flex-wrap border-0 p-0">
+          <FilterChip active={ownership.includes("owned")} onClick={() => set("ownership", toggle(ownership, "owned"))}>Owned</FilterChip>
+          <FilterChip active={ownership.includes("notowned")} onClick={() => set("ownership", toggle(ownership, "notowned"))}>Not Owned</FilterChip>
+          <FilterSeparator />
+          <FilterChip active={conditions.includes("dupes")} onClick={() => set("conditions", toggle(conditions, "dupes"))}>Dupes</FilterChip>
+          <FilterChip active={conditions.includes("itemowned")} onClick={() => set("conditions", toggle(conditions, "itemowned"))}>Item Owned</FilterChip>
+          <FilterChip active={conditions.includes("fullset")} onClick={() => set("conditions", toggle(conditions, "fullset"))}>Full Set</FilterChip>
+          <FilterChip active={conditions.includes("hasparts")} onClick={() => set("conditions", toggle(conditions, "hasparts"))}>Has Parts</FilterChip>
+          <FilterSeparator />
+          <FilterChip active={vault.includes("vaulted")} onClick={() => set("vault", toggle(vault, "vaulted"))}>Vaulted</FilterChip>
+          <FilterChip active={vault.includes("unvaulted")} onClick={() => set("vault", toggle(vault, "unvaulted"))}>Unvaulted</FilterChip>
+          <FilterSeparator />
           <FilterPresets module="market" {...{ filters, onFiltersChange, filterPresets, onFilterPresetsChange, onOpenSettings }} />
-          <span className="fbar-sep"/>
-          <span className="fbar-label">Sort:</span>
-          <button className={`fchip ${sortMode === "plat"   ? "fchip-on" : ""}`} onClick={() => set("sortMode", "plat")}>Most Plat</button>
-          <button className={`fchip ${sortMode === "ducats" ? "fchip-on" : ""}`} onClick={() => set("sortMode", "ducats")}>Most Ducats</button>
-          <button className={`fchip ${sortMode === "az"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "az")}>A–Z</button>
-          <button className={`fchip ${sortMode === "za"     ? "fchip-on" : ""}`} onClick={() => set("sortMode", "za")}>Z–A</button>
-          <span className="fbar-sep"/>
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>{visibleSets.length} sets</span>
+          <FilterSeparator />
+          <FilterLabel>Sort:</FilterLabel>
+          <FilterChip active={sortMode === "plat"} onClick={() => set("sortMode", "plat")}>Most Plat</FilterChip>
+          <FilterChip active={sortMode === "ducats"} onClick={() => set("sortMode", "ducats")}>Most Ducats</FilterChip>
+          <FilterChip active={sortMode === "az"} onClick={() => set("sortMode", "az")}>A–Z</FilterChip>
+          <FilterChip active={sortMode === "za"} onClick={() => set("sortMode", "za")}>Z–A</FilterChip>
+          <FilterSeparator />
+          <span className="ml-auto text-11 text-muted">{visibleSets.length} sets</span>
           <HelpTip items={[
             { swatch: "rgba(240,192,64,.5)", icon: "✓", label: "Complete set", desc: "Gold border + ✓ — all parts in inventory" },
             { icon: "+",  label: "+ Dupes",    desc: "Extra copies of at least one part" },
             { icon: "⚒",  label: "⚒ Building", desc: "Item is currently crafting in Foundry" },
           ]} />
-        </div>
+        </FilterBar>
       </div>
 
-      <div className="market-summary">
+      <div className={MK_SUMMARY}>
         <DucatIcon size={13} />
         <span><strong>{fmt(totalDucats)}</strong> total ducats (owned parts)</span>
-        <span className="fbar-sep"/>
+        <FilterSeparator />
         <DucatIcon size={13} />
-        <span><strong style={{ color: "#f0c040" }}>{fmt(dupeDucats)}</strong> from dupes</span>
-        {wfmItems.length === 0 && <span style={{ color: "var(--muted)", fontSize: 11 }}>· Connecting to warframe.market…</span>}
-        {wfmItems.length > 0 && <span style={{ color: "var(--green)", fontSize: 11 }}>· {wfmItems.length.toLocaleString()} items from warframe.market</span>}
+        <span><strong className="text-ducat">{fmt(dupeDucats)}</strong> from dupes</span>
+        {wfmItems.length === 0 && <span className="text-11 text-muted">· Connecting to warframe.market…</span>}
+        {wfmItems.length > 0 && <span className="text-11 text-green">· {wfmItems.length.toLocaleString()} items from warframe.market</span>}
       </div>
 
-      <div className="market-grid">
-        {visibleSets.length === 0 ? (
-          <div className="empty-msg" style={{ gridColumn: "1/-1" }}>No sets match. Adjust filters or own some prime parts first.</div>
-        ) : visibleSets.map(([setKey, parts]) => {
-          const setNormalKey = normalizeForWfm(setKey + " Set");
-          const setUrl       = wfmLookup.get(setNormalKey) ?? setNormalKey;
-          const parent       = parentItems.get(setKey) ?? parts[0];
-          const setPriceData = prices.get(setUrl);
-          const setParts: SetPart[] = [...parts]
-            .sort((a, b) => {
-              const qa = inventory[a.unique_name]?.quantity ?? 0;
-              const qb = inventory[b.unique_name]?.quantity ?? 0;
-              return qb - qa || a.name.localeCompare(b.name);
-            })
-            .map(p => {
-              const normalKey = normalizeForWfm(p.name);
-              const url = wfmLookup.get(normalKey) ?? normalKey;
-              const priceData = prices.get(url);
-              return { item: p, qty: inventory[p.unique_name]?.quantity ?? 0,
-                required_count: recipeCountMap.get(p.unique_name) ?? 1,
-                sellMedian: priceData?.sell_median ?? undefined, loading: false, urlName: url };
-            });
-          return (
-            <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
-              setPrice={setPriceData}
-              setPriceLoading={false}
-              pricesFetched={prices.size > 0}
-              crafting={crafting}
-              onCardClick={() => {
-                invoke("wfm_queue_price_priority", { urlName: setUrl }).catch(() => {});
-                setPopup({ urlName: setUrl, displayName: setKey + " Set", imageName: parent?.image_name ?? undefined });
-              }}
-              onPartClick={(urlName, displayName, imageName) => {
-                invoke("wfm_queue_price_priority", { urlName }).catch(() => {});
-                setPopup({ urlName, displayName, imageName });
-              }} />
-          );
-        })}
+      <div className={MK_GRID}>
+        {renderedSets.length === 0 ? (
+          <EmptyMessage className="col-span-full">No sets match. Adjust filters or own some prime parts first.</EmptyMessage>
+        ) : renderedSets.map(({ setKey, parent, setPriceData, setParts, onCardClick }) => (
+          <SetCard key={setKey} setKey={setKey} parts={setParts} parentItem={parent}
+            setPrice={setPriceData}
+            setPriceLoading={false}
+            pricesFetched={prices.size > 0}
+            crafting={crafting}
+            onCardClick={onCardClick}
+            onPartClick={onPartClick} />
+        ))}
       </div>
       </>}
 
@@ -641,6 +752,7 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
   onOpenPopup: (urlName: string, displayName: string, imageName?: string, prefillModRank?: number) => void;
 }) {
   const [search, setSearch]       = useState("");
+  const [inputSearch, setInputSearch] = useDebouncedSearch(search, setSearch);
   const [catFilter, setCatFilter] = useState<"all" | "mods" | "arcanes">("all");
   const [ownFilter, setOwnFilter] = useState<"all" | "owned" | "notowned">("all");
   const [sortMode, setSortMode]   = useState<"qty" | "plat" | "az" | "za">("qty");
@@ -701,34 +813,34 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <div className="market-header">
-        <input className="foundry-search" style={{ width: 200 }} placeholder="Search mods &amp; arcanes…"
-          value={search} onChange={e => setSearch(e.target.value)} />
-        <div className="filter-bar" style={{ border: "none", padding: 0, flex: 1, flexWrap: "wrap" }}>
-          <button className={`fchip ${catFilter === "all"     ? "fchip-on" : ""}`} onClick={() => setCatFilter("all")}>All</button>
-          <button className={`fchip ${catFilter === "mods"    ? "fchip-on" : ""}`} onClick={() => setCatFilter("mods")}>Mods</button>
-          <button className={`fchip ${catFilter === "arcanes" ? "fchip-on" : ""}`} onClick={() => setCatFilter("arcanes")}>Arcanes</button>
-          <span className="fbar-sep"/>
-          <button className={`fchip ${ownFilter === "all"      ? "fchip-on" : ""}`} onClick={() => setOwnFilter("all")}>All</button>
-          <button className={`fchip ${ownFilter === "owned"    ? "fchip-on" : ""}`} onClick={() => setOwnFilter("owned")}>Owned</button>
-          <button className={`fchip ${ownFilter === "notowned" ? "fchip-on" : ""}`} onClick={() => setOwnFilter("notowned")}>Not Owned</button>
-          <span className="fbar-sep"/>
-          <span className="fbar-label">Sort:</span>
-          <button className={`fchip ${sortMode === "qty"  ? "fchip-on" : ""}`} onClick={() => setSortMode("qty")}>Most Owned</button>
-          <button className={`fchip ${sortMode === "plat" ? "fchip-on" : ""}`} onClick={() => setSortMode("plat")}>Most Plat</button>
-          <button className={`fchip ${sortMode === "az"   ? "fchip-on" : ""}`} onClick={() => setSortMode("az")}>A–Z</button>
-          <button className={`fchip ${sortMode === "za"   ? "fchip-on" : ""}`} onClick={() => setSortMode("za")}>Z–A</button>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className={MK_HEADER}>
+        <FoundrySearch className="w-50" placeholder="Search mods &amp; arcanes…"
+          value={inputSearch} onChange={e => setInputSearch(e.target.value)} />
+        <FilterBar className="flex-1 flex-wrap border-0 p-0">
+          <FilterChip active={catFilter === "all"} onClick={() => setCatFilter("all")}>All</FilterChip>
+          <FilterChip active={catFilter === "mods"} onClick={() => setCatFilter("mods")}>Mods</FilterChip>
+          <FilterChip active={catFilter === "arcanes"} onClick={() => setCatFilter("arcanes")}>Arcanes</FilterChip>
+          <FilterSeparator />
+          <FilterChip active={ownFilter === "all"} onClick={() => setOwnFilter("all")}>All</FilterChip>
+          <FilterChip active={ownFilter === "owned"} onClick={() => setOwnFilter("owned")}>Owned</FilterChip>
+          <FilterChip active={ownFilter === "notowned"} onClick={() => setOwnFilter("notowned")}>Not Owned</FilterChip>
+          <FilterSeparator />
+          <FilterLabel>Sort:</FilterLabel>
+          <FilterChip active={sortMode === "qty"} onClick={() => setSortMode("qty")}>Most Owned</FilterChip>
+          <FilterChip active={sortMode === "plat"} onClick={() => setSortMode("plat")}>Most Plat</FilterChip>
+          <FilterChip active={sortMode === "az"} onClick={() => setSortMode("az")}>A–Z</FilterChip>
+          <FilterChip active={sortMode === "za"} onClick={() => setSortMode("za")}>Z–A</FilterChip>
+        </FilterBar>
       </div>
 
-      <div className="market-summary">
+      <div className={MK_SUMMARY}>
         <span><strong>{ownedCount.toLocaleString()}</strong> owned · <strong>{catalog.length.toLocaleString()}</strong> total</span>
-        <span className="fbar-sep"/>
-        <span style={{ color: "var(--muted)" }}>{filtered.length.toLocaleString()} shown</span>
+        <FilterSeparator />
+        <span className="text-muted">{filtered.length.toLocaleString()} shown</span>
       </div>
 
-      <div className="mods-grid">
+      <div className={MODS_GRID}>
         {pageItems.map(item => {
           const urlName  = wfmLookup.get(normalizeForWfm(item.name)) ?? normalizeForWfm(item.name);
           const price    = prices.get(urlName)?.sell_median;
@@ -742,23 +854,23 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
           return (
             <div
               key={item.unique_name}
-              className={`mod-card ${qty === 0 ? "mod-card-unowned" : ""}`}
+              className={`${MOD_CARD}${qty === 0 ? ` ${MOD_UNOWNED}` : ""}`}
               onClick={() => onOpenPopup(urlName, item.name, item.image_name ?? undefined)}
             >
-              <span className={`mod-cat-badge ${isArcane ? "mod-cat-arcane" : "mod-cat-mod"}`}>
+              <span className={isArcane ? MOD_CAT_ARC : MOD_CAT_MOD}>
                 {isArcane ? "Arcane" : "Mod"}
               </span>
-              <div className="mod-card-img">
+              <div className={MOD_IMG}>
                 <ItemImg imageName={item.image_name ?? undefined} size={56} fallbackText="P" />
               </div>
-              <div className="mod-card-name">{item.name}</div>
-              <div className="mod-card-footer">
+              <div className={MOD_NAME}>{item.name}</div>
+              <div className={MOD_FOOTER}>
                 {rankedCopies.length > 0 ? (
-                  <div className="mod-rank-chips">
+                  <div className={MOD_CHIPS}>
                     {rankedCopies.map(c => (
                       <span
                         key={c.rank ?? "null"}
-                        className="mod-rank-chip"
+                        className={MOD_CHIP}
                         title={`Open market for rank ${c.rank ?? "?"}`}
                         onClick={e => {
                           e.stopPropagation();
@@ -770,25 +882,25 @@ function ModsTab({ catalog: allCatalog, inventory, wfmLookup, prices, modCopiesM
                     ))}
                   </div>
                 ) : (
-                  <span className="mod-rank-badge mod-rank-none">—</span>
+                  <span className={MOD_RANK_NONE}>—</span>
                 )}
                 {price != null
-                  ? <span className="mod-plat-cell"><PlatIcon size={10} />{fmtPt(price)}</span>
-                  : <span className="mod-plat-cell market-price-na">—</span>}
+                  ? <span className={MOD_PLAT}><PlatIcon size={10} />{fmtPt(price)}</span>
+                  : <span className={MOD_PLAT_NA}>—</span>}
               </div>
             </div>
           );
         })}
         {pageItems.length === 0 && (
-          <div className="empty-msg" style={{ padding: 24, gridColumn: "1/-1" }}>No items match the current filters.</div>
+          <EmptyMessage className="col-span-full p-6">No items match the current filters.</EmptyMessage>
         )}
       </div>
 
       {totalPages > 1 && (
-        <div className="mods-pagination">
-          <button className="fchip" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ Prev</button>
-          <span className="mods-page-info">Page {page + 1} of {totalPages} · {filtered.length} items</span>
-          <button className="fchip" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next ›</button>
+        <div className={MODS_PAG}>
+          <FilterChip disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹ Prev</FilterChip>
+          <span className={MODS_INFO}>Page {page + 1} of {totalPages} · {filtered.length} items</span>
+          <FilterChip disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next ›</FilterChip>
         </div>
       )}
     </div>
@@ -1240,86 +1352,86 @@ function RivenSellModal({ riven, weaponName, disposition, category, onClose, onS
   }
 
   return (
-    <div className="riven-modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="riven-modal">
-        <div className="riven-modal-title">
+    <div className={RIV_OVERLAY} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={RIV_MODAL}>
+        <div className={RIV_M_TITLE}>
           Post Riven Auction
-          <button className="riven-modal-close" onClick={onClose}>×</button>
+          <button className={RIV_M_CLOSE} onClick={onClose}>×</button>
         </div>
 
         <div>
-          <div className="riven-modal-weapon">{weaponName}{(() => { const mn = (riven.mod_name || rivenModName(riven)); return mn ? <> <span className="riven-mod-name">{mn.replace(/^./, c => c.toUpperCase())}</span></> : null; })()}</div>
-          <div className="riven-modal-meta">{category} · MR {riven.lvl_req ?? "?"} · Rank {riven.mod_rank} · {disposition.toFixed(2)}x · {riven.rerolls} roll{riven.rerolls !== 1 ? "s" : ""}{riven.polarity && POLARITY_DISPLAY[riven.polarity] ? <> · <img src={POLARITY_DISPLAY[riven.polarity].icon} className="polarity-icon" alt={POLARITY_DISPLAY[riven.polarity].name} /> {POLARITY_DISPLAY[riven.polarity].name}</> : ""}</div>
+          <div className={RIV_M_WEAPON}>{weaponName}{(() => { const mn = (riven.mod_name || rivenModName(riven)); return mn ? <> <span className={RIV_MOD_NAME}>{mn.replace(/^./, c => c.toUpperCase())}</span></> : null; })()}</div>
+          <div className={RIV_M_META}>{category} · MR {riven.lvl_req ?? "?"} · Rank {riven.mod_rank} · {disposition.toFixed(2)}x · {riven.rerolls} roll{riven.rerolls !== 1 ? "s" : ""}{riven.polarity && POLARITY_DISPLAY[riven.polarity] ? <> · <img src={POLARITY_DISPLAY[riven.polarity].icon} className={RIV_POLARITY_ICON} alt={POLARITY_DISPLAY[riven.polarity].name} /> {POLARITY_DISPLAY[riven.polarity].name}</> : ""}</div>
         </div>
 
-        <div className="riven-modal-stats">
+        <div className={RIV_M_STATS}>
           {riven.buffs.map((b, i) => (
-            <span key={i} className="riven-stat riven-buff">{rivenStatLabel(b, true, disposition, category, riven.buffs.length, riven.curses.length, riven.mod_rank)}</span>
+            <span key={i} className={`${RIV_STAT} ${RIV_BUFF}`}>{rivenStatLabel(b, true, disposition, category, riven.buffs.length, riven.curses.length, riven.mod_rank)}</span>
           ))}
           {riven.curses.map((c, i) => (
-            <span key={i} className="riven-stat riven-curse">{rivenStatLabel(c, false, disposition, category, riven.buffs.length, riven.curses.length, riven.mod_rank)}</span>
+            <span key={i} className={`${RIV_STAT} ${RIV_CURSE}`}>{rivenStatLabel(c, false, disposition, category, riven.buffs.length, riven.curses.length, riven.mod_rank)}</span>
           ))}
         </div>
 
         {unmapped.length > 0 && (
-          <div className="riven-modal-warn">
+          <div className={RIV_M_WARN}>
             {unmapped.length} stat{unmapped.length > 1 ? "s" : ""} have no WFM attribute mapping and will be omitted from the listing.
           </div>
         )}
 
-        <hr className="riven-modal-divider" />
+        <hr className={RIV_M_DIV} />
 
-        <div className="riven-modal-row">
-          <span className="riven-modal-label">Type</span>
-          <div className="riven-sale-type">
-            <button className={`riven-sale-type-btn${saleType === "auction" ? " active" : ""}`}
+        <div className={RIV_M_ROW}>
+          <span className={RIV_M_LABEL}>Type</span>
+          <div className={RIV_SALE_TYPE}>
+            <button className={saleType === "auction" ? RIV_SALE_ON : RIV_SALE_OFF}
               onClick={() => setSaleType("auction")}>Auction</button>
-            <button className={`riven-sale-type-btn${saleType === "direct" ? " active" : ""}`}
+            <button className={saleType === "direct" ? RIV_SALE_ON : RIV_SALE_OFF}
               onClick={() => setSaleType("direct")}>Direct Sale</button>
           </div>
         </div>
 
         {saleType === "direct" ? (
-          <div className="riven-modal-row">
-            <span className="riven-modal-label">Selling price (plat)</span>
-            <input className="riven-modal-input" type="number" min={1} value={directPrice}
+          <div className={RIV_M_ROW}>
+            <span className={RIV_M_LABEL}>Selling price (plat)</span>
+            <input className={RIV_M_INPUT} type="number" min={1} value={directPrice}
               onChange={e => setDirectPrice(e.target.value)} />
           </div>
         ) : (<>
-          <div className="riven-modal-row">
-            <span className="riven-modal-label">Starting price (plat)</span>
-            <input className="riven-modal-input" type="number" min={1} value={startPrice}
+          <div className={RIV_M_ROW}>
+            <span className={RIV_M_LABEL}>Starting price (plat)</span>
+            <input className={RIV_M_INPUT} type="number" min={1} value={startPrice}
               onChange={e => setStartPrice(e.target.value)} />
           </div>
-          <div className="riven-modal-row">
-            <span className="riven-modal-label">Buyout price (opt.)</span>
-            <input className="riven-modal-input" type="number" min={1} placeholder="—"
+          <div className={RIV_M_ROW}>
+            <span className={RIV_M_LABEL}>Buyout price (opt.)</span>
+            <input className={RIV_M_INPUT} type="number" min={1} placeholder="—"
               value={buyoutPrice} onChange={e => setBuyoutPrice(e.target.value)} />
           </div>
-          <div className="riven-modal-row">
-            <span className="riven-modal-label">Min. reputation</span>
-            <input className="riven-modal-input" type="number" min={0} max={5} value={minRep}
+          <div className={RIV_M_ROW}>
+            <span className={RIV_M_LABEL}>Min. reputation</span>
+            <input className={RIV_M_INPUT} type="number" min={0} max={5} value={minRep}
               onChange={e => setMinRep(e.target.value)} />
           </div>
         </>)}
 
-        <div className="riven-modal-row">
-          <span className="riven-modal-label">Note (optional)</span>
-          <textarea className="riven-modal-input riven-modal-note" value={note}
+        <div className={RIV_M_ROW}>
+          <span className={RIV_M_LABEL}>Note (optional)</span>
+          <textarea className={`${RIV_M_INPUT} ${RIV_M_NOTE}`} value={note}
             onChange={e => setNote(e.target.value)} />
         </div>
-        <div className="riven-modal-row riven-modal-row-toggle">
-          <span className="riven-modal-label">Visible on WFM</span>
-          <label className="riven-toggle">
-            <input type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />
-            <span className="riven-toggle-track"><span className="riven-toggle-thumb" /></span>
-            <span className="riven-toggle-label">{visible ? "Visible" : "Hidden"}</span>
+        <div className={`${RIV_M_ROW} ${RIV_M_TOGROW}`}>
+          <span className={RIV_M_LABEL}>Visible on WFM</span>
+          <label className={RIV_TOG}>
+            <input className="peer sr-only" type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />
+            <span className={RIV_TOG_TRACK}><span className={RIV_TOG_THUMB} /></span>
+            <span className={RIV_TOG_LABEL}>{visible ? "Visible" : "Hidden"}</span>
           </label>
         </div>
 
-        {error && <div className="riven-modal-error">{error}</div>}
+        {error && <div className={RIV_M_ERR}>{error}</div>}
 
-        <button className="riven-modal-submit" onClick={handleSubmit} disabled={busy}>
+        <button className={RIV_SUBMIT} onClick={handleSubmit} disabled={busy}>
           {busy ? "Posting…" : saleType === "direct" ? "Post Direct Sale on warframe.market" : "Post Auction on warframe.market"}
         </button>
       </div>
@@ -1369,45 +1481,45 @@ function VeiledSellModal({ category, count, onClose, onSuccess }: VeiledSellModa
   }
 
   return (
-    <div className="riven-modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="riven-modal">
-        <div className="riven-modal-title">
+    <div className={RIV_OVERLAY} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={RIV_MODAL}>
+        <div className={RIV_M_TITLE}>
           Sell Unrevealed Riven
-          <button className="riven-modal-close" onClick={onClose}>×</button>
+          <button className={RIV_M_CLOSE} onClick={onClose}>×</button>
         </div>
 
         <div>
-          <div className="riven-modal-weapon">{category} Riven Mod (Unrevealed)</div>
-          <div className="riven-modal-meta">{count} in inventory</div>
+          <div className={RIV_M_WEAPON}>{category} Riven Mod (Unrevealed)</div>
+          <div className={RIV_M_META}>{count} in inventory</div>
         </div>
 
-        <hr className="riven-modal-divider" />
+        <hr className={RIV_M_DIV} />
 
-        <div className="riven-modal-row">
-          <span className="riven-modal-label">Price per riven (plat)</span>
-          <input className="riven-modal-input" type="number" min={1} value={price}
+        <div className={RIV_M_ROW}>
+          <span className={RIV_M_LABEL}>Price per riven (plat)</span>
+          <input className={RIV_M_INPUT} type="number" min={1} value={price}
             onChange={e => setPrice(e.target.value)} />
         </div>
-        <div className="riven-modal-row">
-          <span className="riven-modal-label">Quantity to list</span>
-          <input className="riven-modal-input" type="number" min={1} max={count} value={quantity}
+        <div className={RIV_M_ROW}>
+          <span className={RIV_M_LABEL}>Quantity to list</span>
+          <input className={RIV_M_INPUT} type="number" min={1} max={count} value={quantity}
             onChange={e => setQuantity(e.target.value)} />
         </div>
-        <div className="riven-modal-row riven-modal-row-toggle">
-          <span className="riven-modal-label">Visible on WFM</span>
-          <label className="riven-toggle">
-            <input type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />
-            <span className="riven-toggle-track"><span className="riven-toggle-thumb" /></span>
-            <span className="riven-toggle-label">{visible ? "Visible" : "Hidden"}</span>
+        <div className={`${RIV_M_ROW} ${RIV_M_TOGROW}`}>
+          <span className={RIV_M_LABEL}>Visible on WFM</span>
+          <label className={RIV_TOG}>
+            <input className="peer sr-only" type="checkbox" checked={visible} onChange={e => setVisible(e.target.checked)} />
+            <span className={RIV_TOG_TRACK}><span className={RIV_TOG_THUMB} /></span>
+            <span className={RIV_TOG_LABEL}>{visible ? "Visible" : "Hidden"}</span>
           </label>
         </div>
 
         {!slug && (
-          <div className="riven-modal-warn">This riven type may not be individually listable on warframe.market.</div>
+          <div className={RIV_M_WARN}>This riven type may not be individually listable on warframe.market.</div>
         )}
-        {error && <div className="riven-modal-error">{error}</div>}
+        {error && <div className={RIV_M_ERR}>{error}</div>}
 
-        <button className="riven-modal-submit" onClick={handleSubmit} disabled={busy || !slug}>
+        <button className={RIV_SUBMIT} onClick={handleSubmit} disabled={busy || !slug}>
           {busy ? "Listing…" : "Create Sell Order on warframe.market"}
         </button>
       </div>
@@ -1440,7 +1552,7 @@ const RivensTab = memo(function RivensTab({ rivens, catalog, wfmUsername, onAuct
 
   if (rivens.length === 0) {
     return (
-      <div className="market-placeholder">
+      <div className={MK_PLACEHOLDER}>
         <p>No rivens found. Inventory blob must be captured at least once while Warframe is running.</p>
       </div>
     );
@@ -1457,42 +1569,42 @@ const RivensTab = memo(function RivensTab({ rivens, catalog, wfmUsername, onAuct
   const sellTargetCat  = sellTarget ? rivenCategory(sellTarget.item_type) : "";
 
   return (
-    <div className="rivens-tab">
+    <div className={RIV_TAB}>
 
 
       {unlocked.length > 0 && (
         <section>
-          <div className="rivens-section-header">Riven ({unlocked.length})</div>
-          <div className="rivens-list">
+          <div className={RIV_SEC_HDR}>Riven ({unlocked.length})</div>
+          <div className={RIV_LIST}>
             {unlocked.map((r, i) => {
               const weaponName = r.compat ? (pathToName[r.compat] ?? r.compat.split("/").pop() ?? r.compat) : "Unknown";
               const disp = r.compat ? (dispositions[r.compat] ?? 1.0) : 1.0;
               const cat  = rivenCategory(r.item_type);
               return (
-                <div key={r.item_id || i} className="riven-card">
-                  <div className="riven-card-header">
-                    <span className="riven-weapon">{weaponName}{(() => { const mn = (r.mod_name || rivenModName(r)); return mn ? <> <span className="riven-mod-name">{mn.replace(/^./, c => c.toUpperCase())}</span></> : null; })()}</span>
-                    <button className="riven-sell-btn" title={wfmUsername ? "Post auction on warframe.market" : "Login to WFM to sell"}
+                <div key={r.item_id || i} className={`${RIV_CARD} border-border`}>
+                  <div className={RIV_CARD_HDR}>
+                    <span className={RIV_WEAPON}>{weaponName}{(() => { const mn = (r.mod_name || rivenModName(r)); return mn ? <> <span className={RIV_MOD_NAME}>{mn.replace(/^./, c => c.toUpperCase())}</span></> : null; })()}</span>
+                    <button className={RIV_SELL} title={wfmUsername ? "Post auction on warframe.market" : "Login to WFM to sell"}
                       onClick={() => { if (wfmUsername) setSellTarget(r); else alert("Log in to warframe.market first (Market → Trading tab)."); }}>
                       Sell ↗
                     </button>
                   </div>
-                  <div className="riven-card-meta">
+                  <div className={RIV_CARD_META}>
                     <span>{cat}</span>
                     <span>MR {r.lvl_req ?? "?"}</span>
                     <span>Rank {r.mod_rank}</span>
                     <span>{disp.toFixed(2)}x</span>
                     <span>{r.rerolls} roll{r.rerolls !== 1 ? "s" : ""}</span>
                     {r.polarity && POLARITY_DISPLAY[r.polarity] && (
-                      <span className="riven-polarity"><img src={POLARITY_DISPLAY[r.polarity].icon} className="polarity-icon" alt={POLARITY_DISPLAY[r.polarity].name} /> {POLARITY_DISPLAY[r.polarity].name}</span>
+                      <span className={RIV_POLARITY}><img src={POLARITY_DISPLAY[r.polarity].icon} className={RIV_POLARITY_ICON} alt={POLARITY_DISPLAY[r.polarity].name} /> {POLARITY_DISPLAY[r.polarity].name}</span>
                     )}
                   </div>
-                  <div className="riven-stats">
+                  <div className={RIV_STATS}>
                     {r.buffs.map((b, j) => (
-                      <span key={j} className="riven-stat riven-buff">{rivenStatLabel(b, true, disp, cat, r.buffs.length, r.curses.length, r.mod_rank)}</span>
+                      <span key={j} className={`${RIV_STAT} ${RIV_BUFF}`}>{rivenStatLabel(b, true, disp, cat, r.buffs.length, r.curses.length, r.mod_rank)}</span>
                     ))}
                     {r.curses.map((c, j) => (
-                      <span key={j} className="riven-stat riven-curse">{rivenStatLabel(c, false, disp, cat, r.buffs.length, r.curses.length, r.mod_rank)}</span>
+                      <span key={j} className={`${RIV_STAT} ${RIV_CURSE}`}>{rivenStatLabel(c, false, disp, cat, r.buffs.length, r.curses.length, r.mod_rank)}</span>
                     ))}
                   </div>
                 </div>
@@ -1504,16 +1616,16 @@ const RivensTab = memo(function RivensTab({ rivens, catalog, wfmUsername, onAuct
 
       {revealed.length > 0 && (
         <section>
-          <div className="rivens-section-header">Revealed Riven ({revealed.length})</div>
-          <div className="rivens-list">
+          <div className={RIV_SEC_HDR}>Revealed Riven ({revealed.length})</div>
+          <div className={RIV_LIST}>
             {revealed.map((r, i) => {
               const cat = rivenCategory(r.item_type);
               const challenge = formatChallengeName(r.challenge_type, r.challenge_complication);
               return (
-                <div key={r.item_id || i} className="riven-card riven-revealed">
-                  <div className="riven-card-header">
-                    <span className="riven-weapon">{cat} Riven Mod</span>
-                    <span className="riven-meta riven-challenge">{challenge}</span>
+                <div key={r.item_id || i} className={`${RIV_CARD} border-riven-card/40`}>
+                  <div className={RIV_CARD_HDR}>
+                    <span className={RIV_WEAPON}>{cat} Riven Mod</span>
+                    <span className={`${RIV_META} italic`}>{challenge}</span>
                   </div>
                 </div>
               );
@@ -1524,14 +1636,14 @@ const RivensTab = memo(function RivensTab({ rivens, catalog, wfmUsername, onAuct
 
       {unrevealed.length > 0 && (
         <section>
-          <div className="rivens-section-header">Unrevealed Riven ({unrevealed.reduce((s, r) => s + r.count, 0)})</div>
-          <div className="rivens-list">
+          <div className={RIV_SEC_HDR}>Unrevealed Riven ({unrevealed.reduce((s, r) => s + r.count, 0)})</div>
+          <div className={RIV_LIST}>
             {unrevealed.map((r, i) => (
-              <div key={i} className="riven-card riven-veiled">
-                <div className="riven-card-header">
-                  <span className="riven-weapon">{rivenCategory(r.item_type)} Riven Mod</span>
-                  {r.count > 1 && <span className="riven-meta">×{r.count}</span>}
-                  <button className="riven-sell-btn" title={wfmUsername ? "List sell order on warframe.market" : "Login to WFM to sell"}
+              <div key={i} className={`${RIV_CARD} border-border opacity-70`}>
+                <div className={RIV_CARD_HDR}>
+                  <span className={RIV_WEAPON}>{rivenCategory(r.item_type)} Riven Mod</span>
+                  {r.count > 1 && <span className={RIV_META}>×{r.count}</span>}
+                  <button className={RIV_SELL} title={wfmUsername ? "List sell order on warframe.market" : "Login to WFM to sell"}
                     onClick={() => { if (wfmUsername) setSellVeiled(r); else alert("Log in to warframe.market first (Market → Trading tab)."); }}>
                     Sell ↗
                   </button>

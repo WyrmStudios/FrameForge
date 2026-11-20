@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
@@ -10,6 +10,7 @@ import { openWiki, copyWikiLink } from "./lib/wiki";
 import { useModularWindow } from "./hooks/useModularWindow";
 import { useSettings } from "./hooks/useSettings";
 import { useInventoryData } from "./hooks/useInventoryData";
+import { useBulkPrices } from "./hooks/useBulkPrices";
 import { useOverlays } from "./hooks/useOverlays";
 import { useTimerPreferences } from "./hooks/useTimerPreferences";
 import { useFissureNotifications } from "./hooks/useFissureNotifications";
@@ -43,6 +44,7 @@ import HeaderActions from "./header/HeaderActions";
 import ErrorBoundary from "./shared/ErrorBoundary";
 import HeaderStatusBadges from "./header/HeaderStatusBadges";
 import ConnectionStatusChip from "./header/ConnectionStatusChip";
+import { CONN_CHIP, CONN_DOT, CONN_STATUS } from "./header/connStatus";
 import KeepMountedWhenHidden from "./KeepMountedWhenHidden";
 import { FOUNDRY_FILTERS_DEFAULT, INVENTORY_FILTERS_DEFAULT, MARKET_FILTERS_DEFAULT, RELIC_FILTERS_DEFAULT } from "./constants/filters";
 import { PREFERENCE_KEYS } from "./constants/preferences";
@@ -54,8 +56,7 @@ import { formatUnixTime } from "./lib/formatters";
 import type { CatalogItem, CraftingJob, InventoryItem } from "./types/items";
 import type { ChangeLogEntry, ModCopy } from "./types/inventory";
 import type { BlobStatusPayload, SettingsFile, SettingsPatch, WarframeCredentials, WarframeInventoryRequest, WfmCredentials, WfmSession } from "./types/tauri";
-import "./App.css";
-import "./images.css";
+
 
 const _winLabel = getCurrentWindow().label;
 // Support all URL formats: query string (?overlay), hash (#overlay), or window label.
@@ -66,7 +67,6 @@ const IS_OVERLAY       = _params.has("overlay")      || _hash === "#overlay"    
 const IS_MODULAR       = _params.has("modular")      || _hash === "#modular"      || _winLabel === "modular-popout";
 const IS_RIVEN_OVERLAY      = _params.has("rivenoverlay")      || _hash === "#rivenoverlay"      || _winLabel === "riven-overlay";
 const IS_RELIC_PICK_OVERLAY = _params.has("relicpickoverlay") || _hash === "#relicpickoverlay" || _winLabel === "relic-pick-overlay";
-const IS_OVERLAY_TEST       = _params.has("overlaytest")       || _hash === "#overlaytest"       || _winLabel === "overlay-test";
 const IS_ANY_OVERLAY = IS_OVERLAY || IS_MODULAR || IS_RIVEN_OVERLAY || IS_RELIC_PICK_OVERLAY;
 
 // Overlay windows return from the router before any hook can run, which rules
@@ -78,41 +78,7 @@ listen(TAURI_EVENTS.SETTINGS_UPDATED, () => applyScale(IS_ANY_OVERLAY));
 
 // RelicAndRivenTab is kept but now just shows RelicHelper — Rivens moved to own tab
 
-// ── Isolated overlay test page ────────────────────────────────────────────────
-// Rendered when window URL contains ?overlaytest.
-// No data loading, no events — pure window-creation smoke test.
-function OverlayTestPage() {
-  useEffect(() => {
-    [document.documentElement, document.body, document.getElementById('root')]
-      .forEach(el => el?.style.setProperty('background', 'transparent', 'important'));
-  }, []);
-
-  return (
-    <div style={{
-      width: '100vw', height: '100vh', boxSizing: 'border-box',
-      background: '#00cc55',
-      border: '4px solid #00ff88',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: 12, fontFamily: 'sans-serif', color: '#fff',
-    }}>
-      <div style={{ fontSize: 22, fontWeight: 700, textShadow: '0 2px 6px #000' }}>
-        FrameForge Overlay Test
-      </div>
-      <div style={{ fontSize: 13, opacity: 0.85 }}>If you see green: window + React are working</div>
-      <button
-        onClick={() => getCurrentWindow().close().catch(() => {})}
-        style={{ marginTop: 8, padding: '8px 24px', cursor: 'pointer', fontSize: 14,
-          background: '#00ff88', color: '#000', border: 'none', borderRadius: 6, fontWeight: 700 }}
-      >
-        Close
-      </button>
-    </div>
-  );
-}
-
 export default function App() {
-  // Isolated overlay test — no data, no events, just proves the window appears.
-  if (IS_OVERLAY_TEST) return <OverlayTestPage />;
   // If we're the overlay window, render only the overlay UI
   if (IS_OVERLAY) return <Overlay />;
   if (IS_RIVEN_OVERLAY) return <RivenOverlayWindow />;
@@ -139,15 +105,17 @@ export default function App() {
     blobLogEnabled, setBlobLogEnabled,
     apiLogEnabled, setApiLogEnabled,
     autoDiagEnabled, setAutoDiagEnabled,
+    overlaysEnabled, setOverlaysEnabled,
     overlayEnabled, setOverlayEnabled,
     overlayPriority, setOverlayPriority,
+    overlayOffsets, setOverlayOffsets,
+    rivenEnabled, setRivenEnabled,
     textScale, setTextScale,
     colorblindMode, setColorblindMode,
     clockFormat, setClockFormat,
     systemLocale,
     foundryPageSize, setFoundryPageSize,
     relicPickEnabled, setRelicPickEnabled,
-    memTriggerEnabled, setMemTriggerEnabled,
     relicPickPriority, setRelicPickPriority,
     relicPickRefinement,
     relicPickLines, setRelicPickLines,
@@ -156,7 +124,7 @@ export default function App() {
     wfmAutoInvisible, setWfmAutoInvisible,
     wfmAutoInvisibleMins, setWfmAutoInvisibleMins,
     wfmRecordSales, setWfmRecordSales,
-    companionApiEnabled,
+    companionApiEnabled, setCompanionApiEnabled,
     filterPresets, setFilterPresets,
     settingsLoadedRef, settingsRef,
     wfmInvisibleOnStartRef, wfmInvisibleOnCloseRef,
@@ -208,13 +176,26 @@ export default function App() {
   const [foundryFilters, setFoundryFilters] = useState<FoundryFilters>(FOUNDRY_FILTERS_DEFAULT);
   const [marketFilters, setMarketFilters] = useState<MarketFilters>(MARKET_FILTERS_DEFAULT);
   const [relicFilters, setRelicFilters] = useState<RelicFilters>(RELIC_FILTERS_DEFAULT);
-  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterRank, sortMode } = inventoryFilters;
-  const prevSortRef = useRef(sortMode);
-  useEffect(() => { if (sortMode !== "recent") prevSortRef.current = sortMode; }, [sortMode]);
-  const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => {
-    const filterRecent = !previous.filterRecent;
-    return { ...previous, filterRecent, sortMode: filterRecent ? "recent" : prevSortRef.current };
-  }), []);
+  const { category, search, filterOwned, filterRecent, filterPrime, filterVaulted, filterUnvaulted, filterTradeable, filterRank, sortMode } = inventoryFilters;
+  const { bulkPrices, loaded: bulkPricesLoaded, error: bulkPricesError, refresh: refreshBulkPrices } = useBulkPrices();
+  const platinumPriceStatus = bulkPricesError || (bulkPricesLoaded && bulkPrices.size === 0)
+    ? "unavailable" as const
+    : bulkPricesLoaded ? "ready" as const : "loading" as const;
+  const isPlatinumSort = sortMode === "plat-desc" || sortMode === "plat-asc";
+  const isDucatSort = sortMode === "ducat-desc" || sortMode === "ducat-asc";
+  const isDucatRatioSort = sortMode === "ducat-ratio-desc" || sortMode === "ducat-ratio-asc";
+  const needsPlatinumPrices = isPlatinumSort || isDucatRatioSort;
+  const lastPriceIndependentSortRef = useRef<InventoryFilters["sortMode"]>("qty-desc");
+  // Bulk prices refresh hourly in the background — re-fetch on each Inventory
+  // activation so the chips reflect the current map.
+  useEffect(() => { if (activeModule === "inventory") refreshBulkPrices(); }, [activeModule, refreshBulkPrices]);
+  useEffect(() => {
+    if (!needsPlatinumPrices) lastPriceIndependentSortRef.current = sortMode;
+  }, [needsPlatinumPrices, sortMode]);
+  const toggleInventoryRecent = useCallback(() => setInventoryFilters(previous => ({
+    ...previous,
+    filterRecent: !previous.filterRecent,
+  })), []);
   const [inventoryView, setInventoryView] = useState<ViewMode>(() =>
     (localStorage.getItem(PREFERENCE_KEYS.INVENTORY_VIEW) as ViewMode | null) ?? "cards"
   );
@@ -222,8 +203,26 @@ export default function App() {
     setInventoryView(view);
     localStorage.setItem(PREFERENCE_KEYS.INVENTORY_VIEW, view);
   }, []);
+  const [inventoryCardColumns, setInventoryCardColumns] = useState(() => {
+    const saved = Number(localStorage.getItem(PREFERENCE_KEYS.INVENTORY_CARD_COLUMNS));
+    return Number.isInteger(saved) && saved >= 5 && saved <= 24 ? saved : 9;
+  });
+  const setInventoryCardColumnsPreference = useCallback((columns: number) => {
+    const next = Math.max(5, Math.min(24, columns));
+    setInventoryCardColumns(next);
+    localStorage.setItem(PREFERENCE_KEYS.INVENTORY_CARD_COLUMNS, String(next));
+  }, []);
+  const [inventoryListTextScale, setInventoryListTextScale] = useState(() => {
+    const saved = Number(localStorage.getItem(PREFERENCE_KEYS.INVENTORY_LIST_TEXT_SCALE));
+    return Number.isInteger(saved) && saved >= 80 && saved <= 150 && saved % 10 === 0 ? saved : 100;
+  });
+  const setInventoryListTextScalePreference = useCallback((scale: number) => {
+    const next = Math.max(80, Math.min(150, Math.round(scale / 10) * 10));
+    setInventoryListTextScale(next);
+    localStorage.setItem(PREFERENCE_KEYS.INVENTORY_LIST_TEXT_SCALE, String(next));
+  }, []);
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'general' | 'overlays' | 'market' | 'filters' | 'accessibility' | 'data' | 'debugging'>('general');
+  const [settingsTab, setSettingsTab] = useState<'general' | 'overlays' | 'market' | 'filters' | 'accessibility' | 'notifications' | 'data' | 'debugging'>('general');
   const [settingsFilterModule, setSettingsFilterModule] = useState<FilterPresetModule>("inventory");
   const openFilterSettings = useCallback((module: FilterPresetModule) => {
     setSettingsFilterModule(module);
@@ -247,7 +246,7 @@ export default function App() {
     wfmLoggedInRef.current = loggedIn;
   }, []);
 
-  settingsRef.current = { overlayEnabled, overlayPriority, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, wfmRecordSales, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, memTriggerEnabled, filterPresets };
+  settingsRef.current = { overlaysEnabled, overlayEnabled, overlayPriority, overlayOffsets, rivenEnabled, textScale, colorblindMode, clockFormat, companionApiEnabled, memoryScannerEnabled, blobLogEnabled, apiLogEnabled, autoDiagEnabled, tracked, favorites, timerFavorites, fissureWatches, fissureNotifications, modularWidth, modularSectionOrder, modularPopout, wfmInvisibleOnStart, wfmInvisibleOnClose, wfmAutoInvisible, wfmAutoInvisibleMins, wfmRecordSales, relicPickEnabled, relicPickPriority, relicPickRefinement, relicPickLines, foundryPageSize, filterPresets };
 
   // ── Debug data sizes — reload when the Debugging settings tab opens ─────────
   const reloadDebugSizes = useCallback(() => {
@@ -430,9 +429,17 @@ export default function App() {
     for (const path of allPaths) {
       const cat = pathToCatalog.get(path);
       const name = cat?.name ?? path;
-      let qty = quantities[path] ?? 0;
-      if (scannerMods[path]) qty = Math.max(qty, scannerMods[path].total);
-      if (companionApiEnabled) qty = Math.max(qty, apiQuantities[path] ?? 0);
+      // When the Companion API is on, its number is authoritative for any item it
+      // reports — the memory scanner only fills items the API doesn't cover (resources,
+      // mods, relics, blueprints), since the scanner occasionally misreads a quantity
+      // and Math.max'ing it against the API would let a bad scanner read win.
+      let qty: number;
+      if (companionApiEnabled && path in apiQuantities) {
+        qty = apiQuantities[path];
+      } else {
+        qty = quantities[path] ?? 0;
+        if (scannerMods[path]) qty = Math.max(qty, scannerMods[path].total);
+      }
       if (subsummedWarframes.has(path)) qty = 0;
 
       const entry: InventoryItem = {
@@ -528,10 +535,7 @@ export default function App() {
 
   const visibleItems = useMemo(() => {
     const searchTerms = splitSearchTerms(search);
-    // Changelog order map: lower index = more recent position in changelog
-    const changeOrder = new Map<string, number>();
-    changeLog.forEach((c, i) => { if (!changeOrder.has(c.unique_name)) changeOrder.set(c.unique_name, i); });
-    const out: (CatalogItem & { qty: number })[] = [];
+    const out: (CatalogItem & { qty: number; plat: number | null })[] = [];
     for (const i of catalog) {
       if (i.name === "Blueprint") continue;
       if (category !== "all" && i.category !== category) continue;
@@ -542,6 +546,19 @@ export default function App() {
       if (filterPrime    && !i.name.includes("Prime") && i.vaulted == null) continue;
       if (filterVaulted  && i.vaulted !== true) continue;
       if (filterUnvaulted && i.vaulted !== false) continue;
+      const plat = bulkPrices.get(i.name.toLowerCase()) ?? null;
+      // Explicit corrections are authoritative; otherwise match the production
+      // heuristic from get_item_price: has a price, ducats, or a mod/arcane category.
+      const isTradeable = i.tradeable_wfm ?? (
+        plat != null || (i.ducats != null && i.ducats > 0) || i.category === "Mods" || i.category === "Arcanes"
+      );
+      if (filterTradeable && !isTradeable) continue;
+      if (isDucatRatioSort) {
+        if (platinumPriceStatus === "ready" && (!(plat != null && plat > 0) || !(i.ducats != null && i.ducats > 0))) continue;
+      } else {
+        if (isPlatinumSort && platinumPriceStatus === "ready" && !(plat != null && plat > 0)) continue;
+        if (isDucatSort && !(i.ducats != null && i.ducats > 0)) continue;
+      }
       if (filterRank !== null) {
         if (i.category === "Mods" || i.category === "Arcanes") {
           const copies = modCopiesMap[i.unique_name];
@@ -553,28 +570,26 @@ export default function App() {
           }
         }
       }
-      out.push({ ...i, qty });
+      out.push({ ...i, qty, plat });
     }
+    const activeSortMode = needsPlatinumPrices && platinumPriceStatus !== "ready" ? lastPriceIndependentSortRef.current : sortMode;
     out.sort((a, b) => {
-      if (sortMode === "recent" || filterRecent) {
-        const at = lastChanged[a.unique_name] ?? 0;
-        const bt = lastChanged[b.unique_name] ?? 0;
-        if (bt !== at) return bt - at;
-        // Tiebreak by changelog arrival order (lower index = more recent)
-        const ai = changeOrder.get(a.unique_name) ?? Infinity;
-        const bi = changeOrder.get(b.unique_name) ?? Infinity;
-        return ai - bi || a.name.localeCompare(b.name);
-      }
+      if (activeSortMode === "plat-asc") return (a.plat ?? 0) - (b.plat ?? 0) || a.name.localeCompare(b.name);
+      if (activeSortMode === "plat-desc") return (b.plat ?? 0) - (a.plat ?? 0) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-asc") return (a.ducats ?? 0) - (b.ducats ?? 0) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-desc") return (b.ducats ?? 0) - (a.ducats ?? 0) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-ratio-asc") return (a.ducats! / a.plat!) - (b.ducats! / b.plat!) || a.name.localeCompare(b.name);
+      if (activeSortMode === "ducat-ratio-desc") return (b.ducats! / b.plat!) - (a.ducats! / a.plat!) || a.name.localeCompare(b.name);
       const aOwned = a.qty > 0 ? 1 : 0;
       const bOwned = b.qty > 0 ? 1 : 0;
       if (bOwned !== aOwned) return bOwned - aOwned;
-      if (sortMode === "name-asc")  return a.name.localeCompare(b.name);
-      if (sortMode === "name-desc") return b.name.localeCompare(a.name);
-      if (sortMode === "qty-asc")   return a.qty - b.qty || a.name.localeCompare(b.name);
+      if (activeSortMode === "name-asc")  return a.name.localeCompare(b.name);
+      if (activeSortMode === "name-desc") return b.name.localeCompare(a.name);
+      if (activeSortMode === "qty-asc")   return a.qty - b.qty || a.name.localeCompare(b.name);
       return b.qty - a.qty || a.name.localeCompare(b.name);
     });
     return out.slice(0, 1000);
-  }, [catalog, inventory, inventoryFilters, lastChanged, modCopiesMap, changeLog]);
+  }, [catalog, inventory, inventoryFilters, bulkPrices, isDucatRatioSort, isDucatSort, isPlatinumSort, needsPlatinumPrices, platinumPriceStatus, lastChanged, modCopiesMap]);
 
   const resetInventoryFilters = ({
     recent,
@@ -591,7 +606,7 @@ export default function App() {
       category: categoryId,
       search: searchTerm,
       filterRecent: recent,
-      sortMode: recent ? "recent" : previous.sortMode,
+      sortMode: previous.sortMode,
     }));
   };
 
@@ -621,11 +636,11 @@ export default function App() {
 
   return (
     <ImgCacheDirContext.Provider value={imgCacheDir}>
-    <div className="shell">
+    <div className="flex h-full flex-col overflow-hidden">
 
       {/* ── Header ── */}
-      <header className="header">
-        <span className="header-title">{APP_TITLE}</span>
+      <header className="flex h-(--header-h) shrink-0 items-center gap-3 border-b border-border bg-surface px-4">
+        <span className="text-15 font-semibold text-foreground">{APP_TITLE}</span>
         <HeaderStatusBadges
           masteryRank={masteryRank}
           playerName={playerName}
@@ -639,7 +654,7 @@ export default function App() {
           }}
           onDismissUpdate={() => setPendingUpdate(null)}
         />
-        <div className="header-right">
+        <div className="ml-auto flex items-center gap-1.5">
           {/* ── Connection status chips ── */}
           {(() => {
             // Memory chip
@@ -717,9 +732,9 @@ export default function App() {
                   onClick={!wfmLoggedIn ? () => activateModule("market") : undefined}
                 />
                 {overlayStatus && (
-                  <span className="conn-chip conn-overlay">
-                    <span className="conn-dot" />
-                    <span className="conn-detail">{overlayStatus}</span>
+                  <span className={`${CONN_CHIP} ${CONN_STATUS.overlay.chip}`}>
+                    <span className={`${CONN_DOT} ${CONN_STATUS.overlay.dot}`} />
+                    <span className={CONN_STATUS.overlay.detail}>{overlayStatus}</span>
                   </span>
                 )}
                 <CacheStatusChip />
@@ -737,16 +752,16 @@ export default function App() {
         </div>
       </header>
 
-      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} {...{ settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, memTriggerEnabled, setMemTriggerEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion }} />
+      <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} {...{ settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange: setFissureNotifications, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, setCompanionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion }} />
 
       {showInventoryBatchPreview && <InventoryBatchPreview onClose={closeInventoryBatchPreview} />}
 
-      <div className="body">
+      <div className="flex flex-1 overflow-hidden min-h-0">
 
         <AppNavigation activeModule={activeModule} onModuleChange={activateModule} />
 
-        <div className="app-content">
-        <div className="module-content">
+        <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 min-h-0 flex-1">
         {/* ── Inventory module ── */}
         {visitedModules.has("inventory") && (
         <KeepMountedWhenHidden active={activeModule === "inventory"}>
@@ -763,9 +778,9 @@ export default function App() {
               fetchMsg={fetchMsg}
             />
 
-            <div className="main">
+            <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
               {monitoring && warframeRunning && !inventorySynced && (
-                <div className="sync-banner">
+                <div className="shrink-0 border-b border-caution/20 bg-caution/8 px-4 py-2 text-xs text-caution">
                   Inventory not synced yet — complete a mission or visit a relay to load your inventory
                 </div>
               )}
@@ -774,11 +789,16 @@ export default function App() {
                 filters={inventoryFilters}
                 onFiltersChange={setInventoryFilters}
                 onToggleRecent={toggleInventoryRecent}
+                platinumPriceStatus={platinumPriceStatus}
                 availableRanks={availableRanks}
                 showRankFilters={apiModCopies.length > 0}
                 itemCount={visibleItems.length}
                 view={inventoryView}
                 onViewChange={setInventoryViewPreference}
+                cardColumns={inventoryCardColumns}
+                onCardColumnsChange={setInventoryCardColumnsPreference}
+                listTextScale={inventoryListTextScale}
+                onListTextScaleChange={setInventoryListTextScalePreference}
                 filterPresets={filterPresets}
                 onFilterPresetsChange={setFilterPresets}
                 onOpenSettings={openFilterSettings}
@@ -789,6 +809,8 @@ export default function App() {
                 loading={!inventoryReady}
                 monitoring={monitoring}
                 view={inventoryView}
+                cardColumns={inventoryCardColumns}
+                listTextScale={inventoryListTextScale}
                 inventory={inventory}
                 modCopies={modCopiesMap}
                 favorites={favoritesSet}
@@ -836,7 +858,7 @@ export default function App() {
         {visitedModules.has("rivens") && (
         <KeepMountedWhenHidden active={activeModule === "rivens"}>
           <ErrorBoundary>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <RivenAnalyzer />
             </div>
           </ErrorBoundary>

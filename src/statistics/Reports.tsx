@@ -5,7 +5,7 @@ import ItemImg from "../ItemImg";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import type { WfmTopItem } from "../types/market";
 import type { Trade, TradeSession } from "../types/trades";
-import "./Reports.css";
+
 
 interface CategoryStat {
   category: string;
@@ -110,8 +110,76 @@ function groupBySessions(trades: Trade[]): TradeSession[] {
 
 const BADGE: Record<string, string> = { sale: "Sale", purchase: "Purchase", trade: "Trade" };
 const BADGE_CLASS: Record<string, string> = {
-  sale: "rpt-badge-sale", purchase: "rpt-badge-purchase", trade: "rpt-badge-trade",
+  sale:     "border border-txn-sale/35 bg-txn-sale/20 text-txn-sale",
+  purchase: "border border-txn-purchase/35 bg-txn-purchase/20 text-txn-purchase",
+  trade:    "border border-txn-trade/35 bg-txn-trade/20 text-txn-trade",
 };
+
+// ── Presentation ──────────────────────────────────────────────────────────────
+
+const RPT_ROOT_CLASS = "flex min-h-0 flex-1 flex-col overflow-hidden bg-background";
+const RPT_SCROLL_CLASS = "flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto p-4";
+const RPT_CARD_CLASS = "min-w-0 flex-1 rounded-6 border border-border bg-surface p-3.5";
+const RPT_CARD_FLEX_CLASS = "flex flex-col gap-2.5";
+const RPT_CARD_TITLE_CLASS = "mb-1 text-13 font-semibold text-foreground";
+const RPT_TOP_LOADING_CLASS = "flex items-center gap-2.5 py-2.5 text-12 text-muted";
+const RPT_TOP_SOURCE_CLASS = "mt-0.75 text-11 text-muted";
+const RPT_TOP_PROGRESS_CLASS = "relative mt-2 h-1.5 w-[min(340px,60vw)] overflow-hidden rounded-3 bg-white/12";
+const RPT_TOP_PROGRESS_FILL_CLASS = "block h-full rounded-[inherit] bg-accent transition-[width] duration-200 ease-out";
+const RPT_TOP_PROGRESS_EM_CLASS = "absolute left-0 top-2.25 text-10 not-italic text-muted";
+const RPT_TOP_REFRESHING_CLASS = "mb-2.5 text-11 text-muted";
+const RPT_TOP_SPINNER_CLASS = "inline-block size-3.5 shrink-0 animate-report-spin rounded-full border-2 border-white/15 border-t-accent";
+const RPT_TOP_WRAP_CLASS = "flex items-start gap-4";
+const RPT_RANGE_ROW_CLASS = "flex items-center gap-1.5";
+const RPT_VIEW_TOGGLE_CLASS = "mr-2 flex gap-1 border-r border-border pr-2";
+const RPT_RANGE_LABEL_CLASS = "mr-0.5 text-12 text-muted";
+const RPT_RANGE_BTN_CLASS = "cursor-pointer rounded-4 border px-2.5 py-0.75 text-12 transition-[background] duration-150";
+const RPT_RANGE_IDLE_CLASS = "border-border bg-surface text-foreground hover:bg-white/6";
+const RPT_RANGE_ACTIVE_CLASS = "border-accent bg-accent/15 text-accent";
+const RPT_TRADE_COUNT_CLASS = "ml-1.5 text-11 text-muted";
+const RPT_LOG_CLASS = "flex flex-col gap-2.5";
+const RPT_SESSION_CARD_CLASS = "overflow-hidden rounded-8 border border-border bg-surface";
+const RPT_SESSION_HEADER_CLASS = "flex items-center gap-2 border-b border-border bg-white/3 px-3 py-2";
+const RPT_SESSION_BADGE_CLASS = "shrink-0 rounded-3 px-1.75 py-0.5 text-10 font-bold uppercase tracking-0.04";
+const RPT_SESSION_PLAYER_CLASS = "text-13 font-semibold text-foreground";
+const RPT_SESSION_DATE_CLASS = "ml-auto text-11 text-muted";
+const RPT_SESSION_BODY_CLASS = "flex items-start gap-3 px-3 py-2.5";
+const RPT_SESSION_SIDE_CLASS = "flex min-w-0 flex-1 flex-col gap-1";
+const RPT_SESSION_GAVE_CLASS = "items-end";
+const RPT_SESSION_RECEIVED_CLASS = "items-start";
+const RPT_SESSION_SIDE_LABEL_CLASS = "mb-0.5 text-10 uppercase tracking-wider text-muted";
+const RPT_SESSION_ITEM_CLASS = "flex items-center gap-1 text-12 text-foreground";
+const RPT_SESSION_QTY_CLASS = "text-11 text-muted";
+const RPT_SESSION_PLAT_CLASS = "font-semibold text-foreground";
+const RPT_SESSION_EMPTY_CLASS = "text-12 text-muted";
+const RPT_SESSION_ARROW_CLASS = "shrink-0 pt-5 text-18 text-muted";
+const RPT_SUMMARY_CLASS = "flex gap-3";
+const RPT_STAT_CARD_CLASS = "flex flex-1 flex-col gap-1 rounded-6 border border-border bg-surface px-3.5 py-2.5";
+const RPT_STAT_HIGHLIGHT_CLASS = "border-accent bg-accent/15";
+const RPT_STAT_LABEL_CLASS = "text-11 uppercase tracking-0.04 text-muted";
+const RPT_STAT_VALUE_CLASS = "flex items-center gap-1.25 text-22 font-bold";
+const RPT_GREEN_CLASS = "text-success";
+const RPT_RED_CLASS = "text-danger";
+const RPT_MUTED_CLASS = "text-muted";
+const RPT_ROW_CLASS = "flex items-start gap-3.5";
+const RPT_CHART_WRAP_CLASS = "flex items-center gap-3";
+const RPT_LEGEND_CLASS = "flex min-w-0 flex-1 flex-col gap-1.25 text-12";
+const RPT_LEGEND_ROW_CLASS = "flex items-center gap-1.5";
+const RPT_LEGEND_DOT_CLASS = "size-2.5 shrink-0 rounded-2";
+const RPT_LEGEND_LABEL_CLASS = "flex-1 truncate text-foreground";
+const RPT_LEGEND_PCT_CLASS = "shrink-0 text-11 text-muted";
+const RPT_TABLE_CLASS = "w-full table-auto border-collapse text-12";
+const RPT_TH_CLASS = "whitespace-nowrap border-b border-border px-2 py-1 font-semibold text-muted";
+const RPT_TD_CLASS = "align-middle whitespace-nowrap border-b border-border/50 px-2 py-1.25 text-foreground group-hover:bg-white/6";
+const RPT_TD_NUM_CLASS = "text-right tabular-nums";
+const RPT_EMPTY_ROW_CLASS = "whitespace-nowrap border-b border-border/50 p-3 text-center align-middle text-muted group-hover:bg-white/6";
+const RPT_TBODY_ROW_CLASS = "group [&:last-child>td]:border-b-0";
+const RPT_DOT_CLASS = "mr-1.5 inline-block size-2 shrink-0 rounded-2";
+const RPT_EMPTY_CLASS = "flex flex-1 flex-col items-center justify-center gap-2.5 p-10 text-center";
+const RPT_EMPTY_ICON_CLASS = "text-48";
+const RPT_EMPTY_TITLE_CLASS = "text-16 font-semibold text-foreground";
+const RPT_EMPTY_DESC_CLASS = "text-13 leading-1.6 text-muted";
+const RPT_LOADING_CLASS = "flex flex-1 items-center justify-center text-14 text-muted";
 
 function TradeCard({ session, clockFormat, systemLocale }: { session: TradeSession; clockFormat: "auto" | "12h" | "24h"; systemLocale: string }) {
   const date = new Date(session.timestamp);
@@ -122,52 +190,52 @@ function TradeCard({ session, clockFormat, systemLocale }: { session: TradeSessi
   const timeStr = date.toLocaleTimeString(systemLocale, timeOpts);
 
   return (
-    <div className="rpt-session-card">
-      <div className="rpt-session-header">
-        <span className={`rpt-session-badge ${BADGE_CLASS[session.tradeType]}`}>
+    <div className={RPT_SESSION_CARD_CLASS}>
+      <div className={RPT_SESSION_HEADER_CLASS}>
+        <span className={`${RPT_SESSION_BADGE_CLASS} ${BADGE_CLASS[session.tradeType]}`}>
           {BADGE[session.tradeType]}
         </span>
         {session.withPlayer && (
-          <span className="rpt-session-player">{session.withPlayer}</span>
+          <span className={RPT_SESSION_PLAYER_CLASS}>{session.withPlayer}</span>
         )}
-        <span className="rpt-session-date">{dateStr} {timeStr}</span>
+        <span className={RPT_SESSION_DATE_CLASS}>{dateStr} {timeStr}</span>
       </div>
-      <div className="rpt-session-body">
-        <div className="rpt-session-side rpt-session-gave">
-          <span className="rpt-session-side-label">Gave</span>
+      <div className={RPT_SESSION_BODY_CLASS}>
+        <div className={`${RPT_SESSION_SIDE_CLASS} ${RPT_SESSION_GAVE_CLASS}`}>
+          <span className={RPT_SESSION_SIDE_LABEL_CLASS}>Gave</span>
           {session.givenPlat > 0 && (
-            <div className="rpt-session-item">
-              <span className="rpt-session-plat">{session.givenPlat.toLocaleString()}</span>
+            <div className={RPT_SESSION_ITEM_CLASS}>
+              <span className={RPT_SESSION_PLAT_CLASS}>{session.givenPlat.toLocaleString()}</span>
               <PlatIcon size={12} />
             </div>
           )}
           {session.givenItems.map((item, i) => (
-            <div key={i} className="rpt-session-item">
-              {item.qty > 1 && <span className="rpt-session-qty">{item.qty}×</span>}
+            <div key={i} className={RPT_SESSION_ITEM_CLASS}>
+              {item.qty > 1 && <span className={RPT_SESSION_QTY_CLASS}>{item.qty}×</span>}
               <span>{item.name}</span>
             </div>
           ))}
           {session.givenPlat === 0 && session.givenItems.length === 0 && (
-            <span className="rpt-session-empty">—</span>
+            <span className={RPT_SESSION_EMPTY_CLASS}>—</span>
           )}
         </div>
-        <div className="rpt-session-arrow">→</div>
-        <div className="rpt-session-side rpt-session-received">
-          <span className="rpt-session-side-label">Received</span>
+        <div className={RPT_SESSION_ARROW_CLASS}>→</div>
+        <div className={`${RPT_SESSION_SIDE_CLASS} ${RPT_SESSION_RECEIVED_CLASS}`}>
+          <span className={RPT_SESSION_SIDE_LABEL_CLASS}>Received</span>
           {session.receivedPlat > 0 && (
-            <div className="rpt-session-item">
-              <span className="rpt-session-plat">{session.receivedPlat.toLocaleString()}</span>
+            <div className={RPT_SESSION_ITEM_CLASS}>
+              <span className={RPT_SESSION_PLAT_CLASS}>{session.receivedPlat.toLocaleString()}</span>
               <PlatIcon size={12} />
             </div>
           )}
           {session.receivedItems.map((item, i) => (
-            <div key={i} className="rpt-session-item">
-              {item.qty > 1 && <span className="rpt-session-qty">{item.qty}×</span>}
+            <div key={i} className={RPT_SESSION_ITEM_CLASS}>
+              {item.qty > 1 && <span className={RPT_SESSION_QTY_CLASS}>{item.qty}×</span>}
               <span>{item.name}</span>
             </div>
           ))}
           {session.receivedPlat === 0 && session.receivedItems.length === 0 && (
-            <span className="rpt-session-empty">—</span>
+            <span className={RPT_SESSION_EMPTY_CLASS}>—</span>
           )}
         </div>
       </div>
@@ -181,7 +249,7 @@ function fmtK(n: number): string {
 }
 
 function PlatIcon({ size = 14 }: { size?: number }) {
-  return <img src="/platinum.webp" alt="" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, verticalAlign: "middle" }} />;
+  return <img src="/platinum.webp" alt="" width={size} height={size} className="inline-block shrink-0 object-contain align-middle" />;
 }
 
 // ── SVG Donut Chart ─────────────────────────────────────────────────────────
@@ -220,9 +288,9 @@ function DonutChart({ data }: { data: { label: string; value: number; color: str
   });
 
   return (
-    <svg viewBox="0 0 180 180" width={180} height={180} className="rpt-donut">
+    <svg viewBox="0 0 180 180" width={180} height={180} className="shrink-0">
       {slices.map((s, i) => (
-        <path key={i} d={s.path} fill={s.color} stroke="#0d1117" strokeWidth={1.5} />
+        <path key={i} d={s.path} fill={s.color} strokeWidth={1.5} style={{ stroke: "var(--color-background)" }} />
       ))}
       {slices.filter(s => s.pct >= 7).map((s, i) => (
         <text key={i} x={s.lx} y={s.ly} textAnchor="middle" dominantBaseline="middle"
@@ -237,12 +305,12 @@ function DonutChart({ data }: { data: { label: string; value: number; color: str
 function Legend({ items }: { items: { label: string; color: string; value: number }[] }) {
   const total = items.reduce((s, d) => s + d.value, 0);
   return (
-    <div className="rpt-legend">
+    <div className={RPT_LEGEND_CLASS}>
       {items.map(item => (
-        <div key={item.label} className="rpt-legend-row">
-          <span className="rpt-legend-dot" style={{ background: item.color }} />
-          <span className="rpt-legend-label">{item.label}</span>
-          <span className="rpt-legend-pct">{total > 0 ? Math.round((item.value / total) * 100) : 0}%</span>
+        <div key={item.label} className={RPT_LEGEND_ROW_CLASS}>
+          <span className={RPT_LEGEND_DOT_CLASS} style={{ background: item.color }} />
+          <span className={RPT_LEGEND_LABEL_CLASS}>{item.label}</span>
+          <span className={RPT_LEGEND_PCT_CLASS}>{total > 0 ? Math.round((item.value / total) * 100) : 0}%</span>
         </div>
       ))}
     </div>
@@ -388,66 +456,71 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
     ? Math.round((topProgress.completed / topProgress.total) * 100)
     : 0;
 
-  if (loading) return <div className="rpt-root"><div className="rpt-loading">Loading…</div></div>;
+  if (loading) return <div className={RPT_ROOT_CLASS}><div className={RPT_LOADING_CLASS}>Loading…</div></div>;
 
   return (
-    <div className="rpt-root">
-      <div className="rpt-scroll">
+    <div className={RPT_ROOT_CLASS}>
+      <div className={RPT_SCROLL_CLASS}>
 
         {/* ── Top WFM items ── always visible, independent of trade history */}
-        <div className="rpt-card">
-          <div className="rpt-card-title">Top Warframe.Market items (last 7 days)</div>
+        <div className={RPT_CARD_CLASS}>
+          <div className={RPT_CARD_TITLE_CLASS}>Top Warframe.Market items (last 7 days)</div>
           {topLoading ? (
-            <div className="rpt-top-loading">
-              <span className="rpt-top-spinner" />
+            <div className={RPT_TOP_LOADING_CLASS}>
+              <span className={RPT_TOP_SPINNER_CLASS} />
               <div>
                 <div>Downloading 7-day statistics from Warframe.Market…</div>
-                <div className="rpt-top-source">The first complete ranking can take a few minutes; it refreshes automatically every 3 hours.</div>
+                <div className={RPT_TOP_SOURCE_CLASS}>The first complete ranking can take a few minutes; it refreshes automatically every 3 hours.</div>
                 {topProgress && (
-                  <div className="rpt-top-progress" aria-label="Market ranking progress">
-                    <span style={{ width: `${topProgressPercent}%` }} />
-                    <em>{topProgress.completed}/{topProgress.total} items</em>
+                  <div className={RPT_TOP_PROGRESS_CLASS} aria-label="Market ranking progress">
+                    <span className={RPT_TOP_PROGRESS_FILL_CLASS} style={{ width: `${topProgressPercent}%` }} />
+                    <em className={RPT_TOP_PROGRESS_EM_CLASS}>{topProgress.completed}/{topProgress.total} items</em>
                   </div>
                 )}
               </div>
             </div>
           ) : topError ? (
-            <div className="rpt-top-loading" style={{ color: "var(--red)" }}>
+            <div className={`${RPT_TOP_LOADING_CLASS} text-red`}>
               Failed to load market data<br />
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>{topError}</span>
+              <span className="text-11 text-muted">{topError}</span>
             </div>
           ) : topItems.length === 0 ? (
-            <div className="rpt-top-loading" style={{ color: "var(--muted)" }}>No market data available</div>
+            <div className={`${RPT_TOP_LOADING_CLASS} text-muted`}>No market data available</div>
           ) : (
             <>
             {topProgress?.refreshing && (
-              <div className="rpt-top-refreshing">
+              <div className={RPT_TOP_REFRESHING_CLASS}>
                 Updating from Warframe.Market: {topProgress.completed}/{topProgress.total} items ({topProgressPercent}%). Showing the previous ranking until the scan finishes.
               </div>
             )}
-            <div className="rpt-top-wrap">
-              <table className="rpt-table">
+            <div className={RPT_TOP_WRAP_CLASS}>
+              <table className={`${RPT_TABLE_CLASS} min-w-0 flex-1`}>
                 <thead>
-                  <tr><th>Item</th><th>Unit price</th><th>Volume (day)</th><th>Total value</th></tr>
+                  <tr>
+                    <th className={`${RPT_TH_CLASS} text-left`}>Item</th>
+                    <th className={`${RPT_TH_CLASS} text-right`}>Unit price</th>
+                    <th className={`${RPT_TH_CLASS} text-right`}>Volume (day)</th>
+                    <th className={`${RPT_TH_CLASS} text-right`}>Total value</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {topItems.map((item, i) => (
-                    <tr key={item.url_name}>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <tr key={item.url_name} className={RPT_TBODY_ROW_CLASS}>
+                      <td className={RPT_TD_CLASS}>
+                        <div className="flex items-center gap-2">
                           <ItemImg imageName={item.image_name} size={24} fallbackText="" />
-                          <span className="rpt-dot" style={{ background: topItemsChartForWfm[i]?.color }} />
+                          <span className={RPT_DOT_CLASS} style={{ background: topItemsChartForWfm[i]?.color }} />
                           {item.name}
                         </div>
                       </td>
-                      <td className="rpt-num">{item.unit_price.toLocaleString()} <PlatIcon /></td>
-                      <td className="rpt-num">{Math.round(item.daily_volume).toLocaleString()}</td>
-                      <td className="rpt-num rpt-green">{fmtK(item.total_value_7d)} <PlatIcon /></td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{item.unit_price.toLocaleString()} <PlatIcon /></td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{Math.round(item.daily_volume).toLocaleString()}</td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS} ${RPT_GREEN_CLASS}`}>{fmtK(item.total_value_7d)} <PlatIcon /></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <div style={{ flexShrink: 0 }}>
+              <div className="shrink-0">
                 <DonutChart data={topItemsChartForWfm} />
                 <Legend items={topItemsChartForWfm} />
               </div>
@@ -457,90 +530,93 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
         </div>
 
         {/* ── Controls row (view toggle + date range) ── */}
-        <div className="rpt-range-row">
-          <div className="rpt-view-toggle">
+        <div className={RPT_RANGE_ROW_CLASS}>
+          <div className={RPT_VIEW_TOGGLE_CLASS}>
             <button
-              className={`rpt-range-btn ${view === "analytics" ? "rpt-range-active" : ""}`}
+              className={`${RPT_RANGE_BTN_CLASS} ${view === "analytics" ? RPT_RANGE_ACTIVE_CLASS : RPT_RANGE_IDLE_CLASS}`}
               onClick={() => setView("analytics")}>Analytics</button>
             <button
-              className={`rpt-range-btn ${view === "log" ? "rpt-range-active" : ""}`}
+              className={`${RPT_RANGE_BTN_CLASS} ${view === "log" ? RPT_RANGE_ACTIVE_CLASS : RPT_RANGE_IDLE_CLASS}`}
               onClick={() => setView("log")}>Log</button>
           </div>
-          <span className="rpt-range-label">Period:</span>
+          <span className={RPT_RANGE_LABEL_CLASS}>Period:</span>
           {RANGES.map(r => (
             <button key={String(r.value)}
-              className={`rpt-range-btn ${dateRange === r.value ? "rpt-range-active" : ""}`}
+              className={`${RPT_RANGE_BTN_CLASS} ${dateRange === r.value ? RPT_RANGE_ACTIVE_CLASS : RPT_RANGE_IDLE_CLASS}`}
               onClick={() => onDateRangeChange(r.value)}>
               {r.label}
             </button>
           ))}
-          <span className="rpt-trade-count">{filtered.length} trade{filtered.length !== 1 ? "s" : ""}</span>
+          <span className={RPT_TRADE_COUNT_CLASS}>{filtered.length} trade{filtered.length !== 1 ? "s" : ""}</span>
         </div>
 
         {tradesError ? (
-          <div className="rpt-empty">
-            <div className="rpt-empty-title" style={{ color: "var(--red)" }}>Failed to load trades</div>
-            <div className="rpt-empty-desc">{tradesError}</div>
+            <div className={RPT_EMPTY_CLASS}>
+            <div className={`${RPT_EMPTY_TITLE_CLASS} text-red`}>Failed to load trades</div>
+            <div className={RPT_EMPTY_DESC_CLASS}>{tradesError}</div>
           </div>
         ) : trades.length === 0 ? (
-          <div className="rpt-empty">
-            <div className="rpt-empty-icon">📊</div>
-            <div className="rpt-empty-title">No trade history yet</div>
-            <div className="rpt-empty-desc">
+          <div className={RPT_EMPTY_CLASS}>
+            <div className={RPT_EMPTY_ICON_CLASS}>📊</div>
+            <div className={RPT_EMPTY_TITLE_CLASS}>No trade history yet</div>
+            <div className={RPT_EMPTY_DESC_CLASS}>
               Trades are automatically recorded from in-game trade sessions.<br />
               Complete a trade in-game and it will appear here.
             </div>
           </div>
         ) : view === "log" ? (
-          <div className="rpt-log">
+          <div className={RPT_LOG_CLASS}>
             {sessions.length === 0 ? (
-              <div className="rpt-empty">
-                <div className="rpt-empty-title">No trades in this period</div>
+              <div className={RPT_EMPTY_CLASS}>
+                <div className={RPT_EMPTY_TITLE_CLASS}>No trades in this period</div>
               </div>
             ) : sessions.map(s => <TradeCard key={s.sessionId} session={s} clockFormat={clockFormat} systemLocale={systemLocale} />)}
           </div>
         ) : <>
 
         {/* ── Summary stats ── */}
-        <div className="rpt-summary">
-          <div className="rpt-stat-card">
-            <span className="rpt-stat-label">Total revenue</span>
-            <span className="rpt-stat-value rpt-green">{fmtK(totalRevenue)} <PlatIcon /></span>
+        <div className={RPT_SUMMARY_CLASS}>
+          <div className={RPT_STAT_CARD_CLASS}>
+            <span className={RPT_STAT_LABEL_CLASS}>Total revenue</span>
+            <span className={`${RPT_STAT_VALUE_CLASS} ${RPT_GREEN_CLASS}`}>{fmtK(totalRevenue)} <PlatIcon /></span>
           </div>
-          <div className="rpt-stat-card">
-            <span className="rpt-stat-label">Total expenses</span>
-            <span className="rpt-stat-value rpt-red">{fmtK(totalExpenses)} <PlatIcon /></span>
+          <div className={RPT_STAT_CARD_CLASS}>
+            <span className={RPT_STAT_LABEL_CLASS}>Total expenses</span>
+            <span className={`${RPT_STAT_VALUE_CLASS} ${RPT_RED_CLASS}`}>{fmtK(totalExpenses)} <PlatIcon /></span>
           </div>
-          <div className="rpt-stat-card rpt-stat-highlight">
-            <span className="rpt-stat-label">Profit</span>
-            <span className={`rpt-stat-value ${profit >= 0 ? "rpt-green" : "rpt-red"}`}>
+          <div className={`${RPT_STAT_CARD_CLASS} ${RPT_STAT_HIGHLIGHT_CLASS}`}>
+            <span className={RPT_STAT_LABEL_CLASS}>Profit</span>
+            <span className={`${RPT_STAT_VALUE_CLASS} ${profit >= 0 ? RPT_GREEN_CLASS : RPT_RED_CLASS}`}>
               {profit >= 0 ? "+" : ""}{fmtK(profit)} <PlatIcon />
             </span>
           </div>
         </div>
 
         {/* ── Top items + category breakdown ── */}
-        <div className="rpt-row">
+        <div className={RPT_ROW_CLASS}>
 
           {/* Top traded items */}
-          <div className="rpt-card rpt-card-flex">
-            <div className="rpt-card-title">Top traded items</div>
-            <div className="rpt-chart-wrap">
+          <div className={`${RPT_CARD_CLASS} ${RPT_CARD_FLEX_CLASS}`}>
+            <div className={RPT_CARD_TITLE_CLASS}>Top traded items</div>
+            <div className={RPT_CHART_WRAP_CLASS}>
               <DonutChart data={topItemsChartData} />
               <Legend items={topItemsChartData.map(d => ({ label: d.label, color: d.color, value: d.value }))} />
             </div>
-            <table className="rpt-table">
+            <table className={RPT_TABLE_CLASS}>
               <thead>
-                <tr><th>Item</th><th>Total value</th></tr>
+                <tr>
+                  <th className={`${RPT_TH_CLASS} text-left`}>Item</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Total value</th>
+                </tr>
               </thead>
               <tbody>
                 {topTradedItems.map((item, i) => (
-                  <tr key={item.item_name}>
-                    <td>
-                      <span className="rpt-dot" style={{ background: topItemsChartData[i]?.color }} />
+                  <tr key={item.item_name} className={RPT_TBODY_ROW_CLASS}>
+                    <td className={RPT_TD_CLASS}>
+                      <span className={RPT_DOT_CLASS} style={{ background: topItemsChartData[i]?.color }} />
                       {item.item_name}
                     </td>
-                    <td className="rpt-num">{item.total_plat > 0 ? <>{fmtK(item.total_plat)} <PlatIcon /></> : <>{item.quantity.toLocaleString()}×</>}</td>
+                    <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{item.total_plat > 0 ? <>{fmtK(item.total_plat)} <PlatIcon /></> : <>{item.quantity.toLocaleString()}×</>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -548,26 +624,31 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
           </div>
 
           {/* Category breakdown */}
-          <div className="rpt-card rpt-card-flex">
-            <div className="rpt-card-title">Your trade history stats</div>
-            <div className="rpt-chart-wrap">
+          <div className={`${RPT_CARD_CLASS} ${RPT_CARD_FLEX_CLASS}`}>
+            <div className={RPT_CARD_TITLE_CLASS}>Your trade history stats</div>
+            <div className={RPT_CHART_WRAP_CLASS}>
               <DonutChart data={profitChartData} />
               <Legend items={profitChartData} />
             </div>
-            <table className="rpt-table">
+            <table className={RPT_TABLE_CLASS}>
               <thead>
-                <tr><th>Type</th><th>Revenue</th><th>Expenses</th><th>Profit</th></tr>
+                <tr>
+                  <th className={`${RPT_TH_CLASS} text-left`}>Type</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Revenue</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Expenses</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Profit</th>
+                </tr>
               </thead>
               <tbody>
                 {byCategory.map(cat => (
-                  <tr key={cat.category}>
-                    <td>
-                      <span className="rpt-dot" style={{ background: cat.color }} />
+                  <tr key={cat.category} className={RPT_TBODY_ROW_CLASS}>
+                    <td className={RPT_TD_CLASS}>
+                      <span className={RPT_DOT_CLASS} style={{ background: cat.color }} />
                       {cat.category}
                     </td>
-                    <td className="rpt-num">{cat.revenue > 0 ? <>{fmtK(cat.revenue)} <PlatIcon /></> : <span className="rpt-muted">–</span>}</td>
-                    <td className="rpt-num">{cat.expenses > 0 ? <>{fmtK(cat.expenses)} <PlatIcon /></> : <span className="rpt-muted">–</span>}</td>
-                    <td className={`rpt-num ${cat.profit >= 0 ? "rpt-green" : "rpt-red"}`}>
+                    <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{cat.revenue > 0 ? <>{fmtK(cat.revenue)} <PlatIcon /></> : <span className={RPT_MUTED_CLASS}>–</span>}</td>
+                    <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{cat.expenses > 0 ? <>{fmtK(cat.expenses)} <PlatIcon /></> : <span className={RPT_MUTED_CLASS}>–</span>}</td>
+                    <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS} ${cat.profit >= 0 ? RPT_GREEN_CLASS : RPT_RED_CLASS}`}>
                       {cat.profit >= 0 ? "+" : ""}{fmtK(cat.profit)} <PlatIcon />
                     </td>
                   </tr>
@@ -579,22 +660,26 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
         </div>
 
         {/* ── Sales / Purchases ── */}
-        <div className="rpt-row">
+        <div className={RPT_ROW_CLASS}>
 
-          <div className="rpt-card">
-            <div className="rpt-card-title">Sales</div>
-            <table className="rpt-table">
+          <div className={RPT_CARD_CLASS}>
+            <div className={RPT_CARD_TITLE_CLASS}>Sales</div>
+            <table className={RPT_TABLE_CLASS}>
               <thead>
-                <tr><th>Item</th><th>Amount</th><th>Total value</th></tr>
+                <tr>
+                  <th className={`${RPT_TH_CLASS} text-left`}>Item</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Amount</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Total value</th>
+                </tr>
               </thead>
               <tbody>
                 {topSold.length === 0
-                  ? <tr><td colSpan={3} className="rpt-empty-row">No sales recorded</td></tr>
+                  ? <tr className={RPT_TBODY_ROW_CLASS}><td colSpan={3} className={RPT_EMPTY_ROW_CLASS}>No sales recorded</td></tr>
                   : topSold.map(item => (
-                    <tr key={item.item_name}>
-                      <td>{item.item_name}</td>
-                      <td className="rpt-num">{item.quantity.toLocaleString()}</td>
-                      <td className="rpt-num rpt-green">{fmtK(item.total_plat)} <PlatIcon /></td>
+                    <tr key={item.item_name} className={RPT_TBODY_ROW_CLASS}>
+                      <td className={RPT_TD_CLASS}>{item.item_name}</td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{item.quantity.toLocaleString()}</td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS} ${RPT_GREEN_CLASS}`}>{fmtK(item.total_plat)} <PlatIcon /></td>
                     </tr>
                   ))
                 }
@@ -602,20 +687,24 @@ export default function Reports({ dateRange, onDateRangeChange, clockFormat, sys
             </table>
           </div>
 
-          <div className="rpt-card">
-            <div className="rpt-card-title">Purchases</div>
-            <table className="rpt-table">
+          <div className={RPT_CARD_CLASS}>
+            <div className={RPT_CARD_TITLE_CLASS}>Purchases</div>
+            <table className={RPT_TABLE_CLASS}>
               <thead>
-                <tr><th>Item</th><th>Amount</th><th>Total value</th></tr>
+                <tr>
+                  <th className={`${RPT_TH_CLASS} text-left`}>Item</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Amount</th>
+                  <th className={`${RPT_TH_CLASS} text-right`}>Total value</th>
+                </tr>
               </thead>
               <tbody>
                 {topBought.length === 0
-                  ? <tr><td colSpan={3} className="rpt-empty-row">No purchases recorded</td></tr>
+                  ? <tr className={RPT_TBODY_ROW_CLASS}><td colSpan={3} className={RPT_EMPTY_ROW_CLASS}>No purchases recorded</td></tr>
                   : topBought.map(item => (
-                    <tr key={item.item_name}>
-                      <td>{item.item_name}</td>
-                      <td className="rpt-num">{item.quantity.toLocaleString()}</td>
-                      <td className="rpt-num rpt-red">{fmtK(item.total_plat)} <PlatIcon /></td>
+                    <tr key={item.item_name} className={RPT_TBODY_ROW_CLASS}>
+                      <td className={RPT_TD_CLASS}>{item.item_name}</td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS}`}>{item.quantity.toLocaleString()}</td>
+                      <td className={`${RPT_TD_CLASS} ${RPT_TD_NUM_CLASS} ${RPT_RED_CLASS}`}>{fmtK(item.total_plat)} <PlatIcon /></td>
                     </tr>
                   ))
                 }

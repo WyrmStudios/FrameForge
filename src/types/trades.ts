@@ -31,6 +31,22 @@ export interface TradeCompletedEvent {
   timestamp: string;
 }
 
+export interface TradeSplitItem {
+  id: number | null;
+  name: string;
+  qty: number;
+  platinum: number;
+}
+
+/** Emitted when a multi-item trade's platinum was split evenly across items
+ * as a default — lets the UI offer the user a chance to correct the split. */
+export interface TradeSplitPendingEvent {
+  withPlayer: string;
+  direction: "sold" | "bought";
+  totalPlatinum: number;
+  items: TradeSplitItem[];
+}
+
 export interface TradeSession {
   sessionId: string;
   withPlayer: string;

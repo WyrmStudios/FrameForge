@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import InventoryGrid from "./InventoryGrid";
 import { ViewToggle } from "../shared/ViewToggle";
+import { ModalCloseButton } from "../shared/ui/ModalCloseButton";
+import { FilterChip } from "../shared/ui/FilterControls";
 import type { ViewMode } from "../types/ui";
-import "./InventoryBatchPreview.css";
 
 interface InventoryBatchPreviewProps {
   onClose: () => void;
@@ -75,23 +76,23 @@ export default function InventoryBatchPreview({ onClose }: InventoryBatchPreview
   }, [onClose]);
 
   return (
-    <div className="inventory-preview-overlay" onClick={onClose}>
-      <section ref={dialogRef} className="inventory-preview" onClick={event => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Inventory change preview">
-        <header className="inventory-preview-header">
-          <div>
-            <strong>Incoming inventory batch preview</strong>
-            <span>{expired ? "Recent indicators have expired." : "This does not change inventory data."}</span>
+    <div className="fixed inset-0 z-350 flex items-center justify-center bg-black/70 p-5 max-[600px]:p-2" onClick={onClose}>
+      <section ref={dialogRef} className="flex max-h-[min(620px,90vh)] w-[min(760px,95vw)] flex-col overflow-hidden rounded-12 border border-border bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.6)] [&_.item-grid]:min-h-0" onClick={event => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Inventory change preview">
+        <header className="flex items-center gap-2.5 border-b border-border px-4 py-3 max-[600px]:p-2.5">
+          <div className="min-w-0 flex-1">
+            <strong className="block text-13">Incoming inventory batch preview</strong>
+            <span className="mt-0.5 block text-11 text-muted">{expired ? "Recent indicators have expired." : "This does not change inventory data."}</span>
           </div>
           <ViewToggle view={view} onChange={setView} />
-          <button ref={closeButtonRef} className="craft-detail-close" onClick={onClose} aria-label="Close preview">x</button>
+          <ModalCloseButton ref={closeButtonRef} onClick={onClose} aria-label="Close preview">x</ModalCloseButton>
         </header>
-        <div className="inventory-preview-states" aria-label="Preview state">
+        <div className="flex flex-wrap gap-1 border-b border-border px-3 py-2" aria-label="Preview state">
           {PREVIEW_STATES.map(([state, label]) => (
-            <button
+            <FilterChip
               key={state}
-              className={`fchip${previewState === state ? " fchip-on" : ""}`}
+              active={previewState === state}
               onClick={() => setPreviewState(state)}
-            >{label}</button>
+            >{label}</FilterChip>
           ))}
         </div>
         <InventoryGrid
@@ -99,6 +100,8 @@ export default function InventoryBatchPreview({ onClose }: InventoryBatchPreview
           loading={false}
           monitoring
           view={view}
+          cardColumns={9}
+          listTextScale={100}
           inventory={{
             "preview-gained": { mastery_rank: 30 },
             "preview-crafting": { mastery_rank: 14 },

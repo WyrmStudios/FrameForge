@@ -46,4 +46,5 @@ export interface RivenAnalysisUpdate {
   rolledStats?: RivenStat[];
   originalStats?: RivenStat[];
   isComparison?: boolean;
+  dummy?: boolean;
 }

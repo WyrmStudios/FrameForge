@@ -1,0 +1,217 @@
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  /* FrameForge uses a 13px root font, so spacing must not inherit rem scaling. */
+  --spacing: 4px;
+
+  /* App palette — single source of truth. Utilities resolve to
+     var(--color-*), and inline styles / SVG attributes read the same names. */
+  --color-background: #0d1117;
+  --color-surface: #161b22;
+  --color-border: #30363d;
+  --color-foreground: #e6edf3;
+  --color-muted: #8b949e;
+  --color-accent: #388bfd;
+  --color-success: #3fb950;
+  --color-danger: #f85149;
+  --color-ducat: #f0c040;
+  --color-info: #58a6ff;
+  --color-warning: #d29922;
+  --color-inactive: #6e7681;
+  --color-connected: #9ecaed;
+  --color-rarity-bronze: #cd7f32;
+  --color-rarity-silver: #c0c0c0;
+  --color-rarity-gold: #f0c040;
+  --color-experimental: #ffb400;
+  --color-caution: #e3b341;
+  --color-complete: #50c878;
+  --color-wiki-link: #6ea8fe;
+  --color-wiki-link-hover: #a8c8ff;
+  --color-mastered: #4ecdc4;
+  --color-foundry-status: #e07b00;
+  --color-owned: #5dbf7a;
+  --color-refinement-exceptional: #79c0ff;
+  --color-refinement-flawless: #a371f7;
+  --color-refinement-radiant: #d4a847;
+  --color-overlay-outline: #79b8ff;
+  --color-price-platinum-overlay: #c7b3ff;
+  --color-price-platinum: #b39ddb;
+  --color-state-cool: #6eb6ff;
+  --color-state-void: #c084fc;
+  --color-direct-trade: #a371f7;
+  --color-vaulted: #ff6b6b;
+  --color-discord: #5865f2;
+  --color-discord-ink: #8b9ff4;
+  --color-discord-ink-hover: #c0c8ff;
+  --color-kofi: #ff5e5b;
+  --color-kofi-ink: #ff7a77;
+  --color-kofi-ink-hover: #ffb0ae;
+  --color-report-ink-hover: #cdd9e5;
+  --color-mastery: #c0a060;
+  --color-player-name: #e0e0e0;
+  --color-confirm: #50c850;
+  --color-subsumed: #5ab450;
+  --color-foundry-subsumed: #c82828;
+  --color-kuva: #9d6cff;
+  --color-archon: #b48cff;
+  --color-archon-bg: #190c32;
+  --color-state-warm: #ff8c5a;
+  --color-state-fass: #ff6b4a;
+  --color-state-anger: #f87171;
+  --color-state-envy: #4ade80;
+  --color-state-sorrow: #60a5fa;
+  --color-news-prime: #e6af32;
+  --color-news-stream: #a47bff;
+  --color-news-update: #4ea8f0;
+  --color-txn-sale: #27ae60;
+  --color-txn-purchase: #e74c3c;
+  --color-txn-trade: #3498db;
+  --color-set-price: #c8a8ff;
+  --color-mod-arcane: #bc8cff;
+  --color-mod-chip: #d4a843;
+  --color-riven-card: #b49650;
+  --color-riven-buff: #2ea043;
+  --color-relic-bronze: #e8923a;
+  --color-relic-highlight: #88b8ff;
+  --color-reward-name: #f0e0a0;
+  --color-reward-bronze: #c47d3a;
+  --color-reward-silver: #9ba8b5;
+  --color-tooltip-bg: #1a1f2a;
+  --color-field-error: #e05252;
+  --color-notice-error: #ff6464;
+  --color-notice-error-ink: #ff8080;
+  --color-notice-info: #64b4ff;
+  --color-accent-ink: #1e1e2e;
+  --color-inv-mixed: #e0973e;
+  --color-copy-hover: #646464;
+  --color-overlay-chip: #64a0dc;
+  --color-blueprint: #6eb4ff;
+  --color-rank-none: #b4b4b4;
+  --color-unknown-card-bg: #1e180e;
+  --color-unknown-card-border: #b48c3c;
+
+  /* Layout tokens consumed by utilities: h-(--header-h), w-[var(--sidebar-w)] */
+  --header-h: 46px;
+  --sidebar-w: 190px;
+
+  --text-6: 6px;
+  --text-8: 8px;
+  --text-9: 9px;
+  --text-10: 10px;
+  --text-10\.5: 10.5px;
+  --text-11: 11px;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-14: 14px;
+  --text-15: 15px;
+  --text-16: 16px;
+  --text-17: 17px;
+  --text-18: 18px;
+  --text-20: 20px;
+  --text-22: 22px;
+  --text-48: 48px;
+  --radius-1: 1px;
+  --radius-2: 2px;
+  --radius-3: 3px;
+  --radius-4: 4px;
+  --radius-5: 5px;
+  --radius-6: 6px;
+  --radius-7: 7px;
+  --radius-8: 8px;
+  --radius-9: 9px;
+  --radius-10: 10px;
+  --radius-12: 12px;
+  --duration-120: 120ms;
+  --duration-250: 250ms;
+  --duration-400: 400ms;
+  --leading-1\.25: 1.25;
+  --leading-1\.3: 1.3;
+  --leading-1\.35: 1.35;
+  --leading-1\.4: 1.4;
+  --leading-1\.6: 1.6;
+  --tracking-0\.01: 0.01em;
+  --tracking-0\.02: 0.02em;
+  --tracking-0\.03: 0.03em;
+  --tracking-0\.04: 0.04em;
+  --tracking-0\.06: 0.06em;
+  --tracking-0\.07: 0.07em;
+  --blur-10: 10px;
+
+  /* Animations — keyframes live with their --animate-* token so the per-feature
+     CSS files that only held @keyframes could go away. */
+  --animate-pulse-ocr: pulse-ocr 1.2s ease-in-out infinite;
+  @keyframes pulse-ocr {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .4; }
+  }
+
+  --animate-log-arrival: log-arrival-enter 0.18s ease-out both;
+  @keyframes log-arrival-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  --animate-log-feed: log-feed-cycle 4.5s ease both;
+  @keyframes log-feed-cycle {
+    from { opacity: 0; }
+    4% { opacity: 1; }
+    96% { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  --animate-log-row: log-row-arrive 0.16s ease-out both;
+  @keyframes log-row-arrive {
+    from { grid-template-rows: minmax(0, 0fr); opacity: 0; }
+    to { grid-template-rows: minmax(0, 1fr); opacity: 1; }
+  }
+
+  --animate-skeleton-shimmer: skeleton-shimmer 1.5s ease-in-out infinite;
+  @keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  --animate-report-spin: rpt-spin 0.8s linear infinite;
+  @keyframes rpt-spin {
+    to { transform: rotate(360deg); }
+  }
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-size: 13px;
+  }
+
+  /* Text scaling — transform on #root avoids the WebView2 scrollbar hit-test bug
+     that css zoom on html causes (scrollbar renders correctly but can't be dragged
+     to the bottom when zoom > 1). */
+  #root {
+    transform: scale(var(--ff-scale, 1));
+    transform-origin: top left;
+    width: calc(100% / var(--ff-scale, 1));
+    height: calc(100% / var(--ff-scale, 1));
+    overflow: hidden;
+  }
+
+  /* Scrollbars: no utility covers the webkit thumb hover state. */
+  ::-webkit-scrollbar       { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+}
+
+/* Document context for the transparent Tauri overlay windows. Every window loads
+   index.html, so Vite puts all CSS in one bundle: html and #root keep the app
+   background (Overlay.tsx clears them per window) while body stays transparent. */
+body {
+  background: transparent !important;
+  overflow: hidden;
+}

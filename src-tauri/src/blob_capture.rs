@@ -58,7 +58,7 @@ pub(crate) fn spawn_blob_capture_thread(
 
     let monitor::MonitorCatalog {
         path_to_name, path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable, path_to_category,
+        path_to_tradable, path_to_masterable, path_to_max_level_cap, path_to_category,
         path_to_item_type, path_to_product_category, path_to_wfcd_cat,
         alias_excluded, ignored_paths, stackable_paths, path_aliases,
         unique_names, display_names, relic_drops_snapshot,
@@ -180,7 +180,7 @@ pub(crate) fn spawn_blob_capture_thread(
                 if process_blob(
                     &blob, &app, &conn, &inventory_state_cache_path,
                     &path_to_name, &path_to_category, &path_to_ducat, &path_to_vaulted,
-                    &path_to_tradable, &path_to_masterable, &relic_drops_snapshot,
+                    &path_to_tradable, &path_to_masterable, &path_to_max_level_cap, &relic_drops_snapshot,
                     &alias_excluded, &stackable_paths, &path_aliases,
                     &path_to_item_type, &path_to_product_category, &path_to_wfcd_cat,
                     &ignored_paths, &unmatched_paths_dir, &debug_cat_enabled,
@@ -339,6 +339,7 @@ fn process_blob(
     path_to_vaulted: &HashMap<String, bool>,
     path_to_tradable: &HashMap<String, bool>,
     path_to_masterable: &HashMap<String, bool>,
+    path_to_max_level_cap: &HashMap<String, u32>,
     relic_drops_snapshot: &HashMap<String, Vec<String>>,
     alias_excluded: &std::collections::HashSet<String>,
     stackable_paths: &std::collections::HashSet<String>,
@@ -376,7 +377,7 @@ fn process_blob(
         blob,
         path_to_name, path_to_category,
         path_to_ducat, path_to_vaulted,
-        path_to_tradable, path_to_masterable,
+        path_to_tradable, path_to_masterable, path_to_max_level_cap,
         relic_drops: relic_drops_snapshot, existing_wfm_prices: &existing_wfm,
         excluded_paths: alias_excluded, stackable_paths,
     });

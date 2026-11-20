@@ -18,20 +18,13 @@ export default function CompletionistTabs({ inventory }: CompletionistTabsProps)
   const [syndicateFilters, setSyndicateFilters] = useState<SyndicateFilters>(SYNDICATE_FILTERS_DEFAULT);
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <div style={{ display: "flex", gap: 2, padding: "8px 12px 0", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 gap-0.5 border-b border-border px-3 pt-2">
         {(["syndicates", "weapons"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setView(tab)}
-            style={{
-              padding: "5px 16px", border: "none", borderRadius: "6px 6px 0 0",
-              borderBottom: `3px solid ${view === tab ? "var(--accent, #888)" : "transparent"}`,
-              background: view === tab ? "var(--bg-card)" : "transparent",
-              color: view === tab ? "var(--text)" : "var(--text-dim)", cursor: "pointer",
-              fontSize: 13, fontWeight: 500, marginBottom: -1,
-              transition: "background 0.15s, color 0.15s", textTransform: "capitalize",
-            }}
+            className={`-mb-px cursor-pointer rounded-t-6 border-0 border-b-3 px-4 py-1.25 text-13 font-medium capitalize transition-[background,color] duration-150 ${view === tab ? "border-accent bg-surface text-foreground" : "border-transparent bg-transparent text-muted"}`}
           >
             {tab === "syndicates" ? "Syndicates" : "Weapons"}
           </button>

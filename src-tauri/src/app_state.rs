@@ -152,7 +152,6 @@ pub struct AppState {
     pub force_pid_check: Arc<AtomicBool>,
     /// When false, the Relic Pick Overlay is suppressed even when EE.log triggers it.
     pub relic_pick_overlay_enabled: Arc<AtomicBool>,
-    /// When true, a parallel memory-scan thread polls Warframe's process memory for the
-    /// relic reward screen open/close events instead of relying solely on EE.log.
-    pub mem_trigger_enabled: Arc<AtomicBool>,
+    /// When false, all automatically-triggered overlays are suppressed.
+    pub overlays_enabled: Arc<AtomicBool>,
 }

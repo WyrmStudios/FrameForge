@@ -23,7 +23,9 @@ export interface WsInvasion { id: string; node: string; attacker: string; defend
 export interface WsDarvo { expiry: string; item: string; discount: number; originalPrice: number; salePrice: number; amountTotal: number; amountSold: number; }
 export interface WsCircuit { expiry: string; normalFrames: string[]; hardWeapons: string[]; }
 export interface WsSimple { expiry: string; }
-export interface WsBounty { expiry: string; jobCount: number; }
+// jobCount is null when DE doesn't publish a job list for this syndicate at
+// all (e.g. Zariman/Hex) — distinct from a genuine empty rotation.
+export interface WsBounty { expiry: string; jobCount: number | null; }
 export interface WsEvent { expiry: string; label: string; }
 export interface WsNews { message: string; link: string; date: string | number; stream: boolean; primeAccess: boolean; update: boolean; }
 

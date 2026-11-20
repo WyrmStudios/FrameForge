@@ -9,7 +9,62 @@ import type { CraftingJob, QuantityMap, ShallowRecipeComponent } from "../types/
 import type { RelicOverlayPriority } from "../types/settings";
 import type { PendingRelicRewards, RelicRewardsPayload } from "../types/tauri";
 import type { InventoryUpdate } from "../types/inventory";
-import "./Overlay.css";
+
+
+// ── Tailwind class constants (formerly Overlay.css) ───────────────────────────
+// Note: theme vars + body transparency stay in the Tailwind entry (document context).
+
+const OV_ROOT = "relative w-full h-full";
+const OV_ARROW =
+  "absolute top-0.5 w-9 h-7 pointer-events-none opacity-65 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]";
+
+const OV_CARD =
+  "absolute top-8.5 bg-surface/82 border border-[var(--color-border)] rounded-8 pt-1.75 pb-1.5 px-2 flex flex-col gap-1 shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
+const OV_CARD_UNKNOWN =
+  "absolute top-8.5 bg-unknown-card-bg/82 border border-unknown-card-border/60 rounded-8 pt-1.75 pb-1.5 px-2 flex flex-col gap-1 shadow-[0_4px_16px_rgba(0,0,0,0.55)]";
+
+const OV_NAME =
+  "text-14 font-bold text-reward-name leading-1.25 text-center overflow-hidden text-ellipsis line-clamp-2";
+
+const OV_PRICE_ROW = "flex items-center justify-between gap-1";
+const OV_PRICE_SHARED =
+  "flex items-center gap-0.5 text-13 font-bold whitespace-nowrap";
+const OV_PRICE_PLAT = OV_PRICE_SHARED + " text-price-platinum-overlay";
+const OV_PRICE_DUCAT = OV_PRICE_SHARED + " text-ducat";
+const OV_PRICE_NA = "text-muted font-normal";
+const OV_LOCK =
+  "text-13 leading-none bg-danger/15 border border-danger/35 rounded-4 px-1 py-0.25 shrink-0";
+
+const OV_OWN_BAR =
+  "text-center text-11 font-bold uppercase tracking-wider px-1 py-0.75 rounded-4";
+const OV_OWN_YES =
+  OV_OWN_BAR +
+   " bg-ducat/15 border border-ducat/35 text-ducat";
+const OV_OWN_NO =
+  OV_OWN_BAR +
+  " bg-danger/10 border border-danger/28 text-danger";
+
+const OV_SET_PRICE =
+  "flex items-center justify-center gap-0.5 text-13 font-bold text-price-platinum-overlay";
+
+const OV_COMP_GRID = "grid grid-cols-2 gap-0.75";
+const OV_GRID_CELL =
+  "flex flex-col items-center justify-center px-1 py-0.75 rounded-4 border border-transparent min-w-0 text-center";
+const OV_GRID_CELL_OWNED =
+   OV_GRID_CELL + " bg-ducat/12 border-ducat/30";
+const OV_GRID_CELL_MISS =
+  OV_GRID_CELL + " bg-white/2 border-white/6";
+const OV_GRID_NAME =
+  "text-11 font-semibold whitespace-nowrap overflow-hidden text-ellipsis max-w-full leading-1.3";
+const OV_GRID_NAME_OWNED = OV_GRID_NAME + " text-ducat";
+const OV_GRID_NAME_MISS = OV_GRID_NAME + " text-muted";
+const OV_GRID_QTY =
+  "text-10 font-bold leading-none tabular-nums";
+const OV_GRID_QTY_OWNED = OV_GRID_QTY + " text-ducat/65";
+const OV_GRID_QTY_MISS = OV_GRID_QTY + " text-muted/60";
+
+const OV_CAT =
+  "text-10 font-bold uppercase text-muted/50 tracking-wider text-center";
 
 interface ComponentRow {
   unique_name: string;
@@ -146,10 +201,10 @@ function bestPickIndex(items: RewardItem[], priority: RelicOverlayPriority): num
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 function PlatIcon({ size = 14 }: { size?: number }) {
-  return <img src="/platinum.webp" alt="p" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, verticalAlign: "middle" }} />;
+  return <img src="/platinum.webp" alt="p" width={size} height={size} className="inline-block shrink-0 object-contain align-middle" />;
 }
 function DucatIcon({ size = 14 }: { size?: number }) {
-  return <img src="/ducats.webp" alt="d" width={size} height={size} style={{ objectFit: "contain", flexShrink: 0, verticalAlign: "middle" }} />;
+  return <img src="/ducats.webp" alt="d" width={size} height={size} className="inline-block shrink-0 object-contain align-middle" />;
 }
 
 // ─── Column layout ────────────────────────────────────────────────────────────
@@ -172,7 +227,7 @@ export function columnCenters(layoutW: number, n: number): number[] {
 function PickArrow({ slotX, winW }: { slotX: number; winW: number }) {
   const cx = Math.round(winW * slotX);
   return (
-    <svg className="ov-arrow" style={{ left: cx - 18 }} viewBox="0 0 36 28" fill="none">
+    <svg className={OV_ARROW} style={{ left: cx - 18 }} viewBox="0 0 36 28" fill="none">
       <polygon points="18,2 34,26 2,26" fill="#f0d060" />
     </svg>
   );
@@ -185,41 +240,41 @@ function RewardCard({ item, left, width }: { item: RewardItem; left: number; wid
   const isUnknown   = item.category === "Unrecognized";
 
   return (
-    <div className={`ov-card${isUnknown ? " ov-card-unknown" : ""}`} style={{ left, width }}>
+    <div className={isUnknown ? OV_CARD_UNKNOWN : OV_CARD} style={{ left, width }}>
 
       {/* Item name */}
-      <div className="ov-name">{isUnknown ? "? " : ""}{item.name}</div>
+      <div className={OV_NAME}>{isUnknown ? "? " : ""}{item.name}</div>
 
       {/* Plat price | vaulted lock | ducat value */}
-      <div className="ov-price-row">
-        <span className="ov-price-plat">
+      <div className={OV_PRICE_ROW}>
+        <span className={OV_PRICE_PLAT}>
           {item.plat != null
             ? <><PlatIcon size={14} />&nbsp;{item.plat}</>
-            : <span className="ov-price-na">—</span>}
+            : <span className={OV_PRICE_NA}>—</span>}
         </span>
-        {item.vaulted && <span className="ov-lock">🔒</span>}
-        <span className="ov-price-ducat">
+        {item.vaulted && <span className={OV_LOCK}>🔒</span>}
+        <span className={OV_PRICE_DUCAT}>
           {item.ducats != null && item.ducats > 0
             ? <><DucatIcon size={14} />&nbsp;{item.ducats}</>
-            : <span className="ov-price-na">—</span>}
+            : <span className={OV_PRICE_NA}>—</span>}
         </span>
       </div>
 
       {/* Set section — only when recipe data is available */}
       {hasSet && <>
         {/* Ownership status bar */}
-        <div className={`ov-own-bar ${ownedFull ? 'ov-own-yes' : 'ov-own-no'}`}>
+        <div className={ownedFull ? OV_OWN_YES : OV_OWN_NO}>
           {ownedFull ? 'Full Item Owned' : 'Full Item Not Owned'}
         </div>
 
         {/* Total set value */}
-        <div className="ov-set-price">
+        <div className={OV_SET_PRICE}>
           <PlatIcon size={14} />
           &nbsp;{(item.total_plat ?? 0) > 0 ? item.total_plat : '—'}
         </div>
 
         {/* 2×2 component grid */}
-        <div className="ov-comp-grid">
+        <div className={OV_COMP_GRID}>
           {(item.components ?? []).slice(0, 4).map(c => {
             const raw  = shortName(c.name, item.set_name ?? '');
             // Strip trailing " Blueprint" from the cell label (keep "Blueprint" alone as-is)
@@ -228,9 +283,9 @@ function RewardCard({ item, left, width }: { item: RewardItem; left: number; wid
               : raw;
             const owned = c.owned >= c.needed;
             return (
-              <div key={c.unique_name} className={`ov-grid-cell ${owned ? 'ov-grid-owned' : 'ov-grid-miss'}`}>
-                <span className="ov-grid-name">{stripped}</span>
-                <span className="ov-grid-qty">{c.owned}</span>
+              <div key={c.unique_name} className={owned ? OV_GRID_CELL_OWNED : OV_GRID_CELL_MISS}>
+                <span className={owned ? OV_GRID_NAME_OWNED : OV_GRID_NAME_MISS}>{stripped}</span>
+                <span className={owned ? OV_GRID_QTY_OWNED : OV_GRID_QTY_MISS}>{c.owned}</span>
               </div>
             );
           })}
@@ -238,14 +293,48 @@ function RewardCard({ item, left, width }: { item: RewardItem; left: number; wid
       </>}
 
       {/* Category */}
-      {item.category && <div className="ov-cat">{item.category}</div>}
+      {item.category && <div className={OV_CAT}>{item.category}</div>}
     </div>
   );
 }
 
 // ─── Main overlay ─────────────────────────────────────────────────────────────
+const DUMMY_REWARDS: RewardItem[] = [
+  {
+    unique_name: "dummy-0", raw_unique: "", slot_x: 0.29,
+    name: "Rhino Prime Blueprint", category: "Blueprints", vaulted: true, plat: 20, ducats: 100, owned_qty: 0,
+    set_name: "Rhino Prime", complete_sets: 0, total_plat: 48, missing_plat: 32,
+    components: [
+      { unique_name: "rp-bp",  name: "Rhino Prime Blueprint", needed: 1, owned: 0, plat: 20, ducats: 15 },
+      { unique_name: "rp-ch",  name: "Rhino Prime Chassis Blueprint", needed: 1, owned: 1, plat: 9, ducats: 45 },
+      { unique_name: "rp-ne",  name: "Rhino Prime Neuroptics Blueprint", needed: 1, owned: 0, plat: 12, ducats: 90 },
+      { unique_name: "rp-sy",  name: "Rhino Prime Systems Blueprint", needed: 1, owned: 1, plat: 7, ducats: 45 },
+    ],
+  },
+  {
+    unique_name: "dummy-1", raw_unique: "", slot_x: 0.43,
+    name: "Nyx Prime Neuroptics Blueprint", category: "Blueprints", vaulted: true, plat: 30, ducats: 100, owned_qty: 1,
+    set_name: "Nyx Prime", complete_sets: 1, total_plat: 56, missing_plat: 0,
+    components: [
+      { unique_name: "nx-bp",  name: "Nyx Prime Blueprint", needed: 1, owned: 1, plat: 9, ducats: 15 },
+      { unique_name: "nx-ch",  name: "Nyx Prime Chassis Blueprint", needed: 1, owned: 1, plat: 9, ducats: 45 },
+      { unique_name: "nx-ne",  name: "Nyx Prime Neuroptics Blueprint", needed: 1, owned: 1, plat: 30, ducats: 100 },
+      { unique_name: "nx-sy",  name: "Nyx Prime Systems Blueprint", needed: 1, owned: 1, plat: 8, ducats: 45 },
+    ],
+  },
+  {
+    unique_name: "dummy-2", raw_unique: "", slot_x: 0.57,
+    name: "Glaive Prime Disc", category: "Parts", vaulted: true, plat: 9, ducats: 45, owned_qty: 1,
+  },
+  {
+    unique_name: "dummy-3", raw_unique: "", slot_x: 0.71,
+    name: "Spira Prime Pouch", category: "Parts", vaulted: true, plat: 35, ducats: 100, owned_qty: 0,
+  },
+];
+
 export default function Overlay() {
   const [rewards, setRewards] = useState<RewardItem[]>([]);
+  const [source, setSource] = useState<"idle" | "preview" | "live">("idle");
   // winW = the overlay window's own pixel width, which equals the Warframe client
   // width (App.tsx creates the window with width: ww). No URL param needed.
   //
@@ -260,10 +349,19 @@ export default function Overlay() {
   const sessionCatalogRef = useRef<Record<string, any>>({}); // populated per-session by get_items_by_paths
   const quantRef     = useRef<QuantityMap>({});
   const craftingRef  = useRef<QuantityMap>({});  // normalized unique_name → crafting count
+  const sourceRef = useRef<"idle" | "preview" | "live">("idle");
+  const sessionRef = useRef(0);
+
+  const startSource = (next: "idle" | "preview" | "live") => {
+    sessionRef.current += 1;
+    sourceRef.current = next;
+    setSource(next);
+    return sessionRef.current;
+  };
 
   // Force document-level transparency — only runs when this overlay window mounts,
-  // never in the main app. App.css sets background on html/#root which overrides
-  // the body-only rule in Overlay.css, so we clear it via JS here.
+  // never in the main app. The Tailwind entry sets background on html/#root which
+  // overrides the body-only rule, so we clear it via JS here.
   useEffect(() => {
     const important = (el: HTMLElement | null) => {
       if (el) el.style.setProperty('background', 'transparent', 'important');
@@ -278,6 +376,7 @@ export default function Overlay() {
     let dataReady = false;
 
     const processPayload = (paths: string[], positions: number[]) => {
+      const session = sessionRef.current;
       invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] processPayload(${paths.length} items)` }).catch(() => {});
       const key = paths.join(",");
       if (key === prevKey.current) { invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: "[OV] processPayload: duplicate key, skipping" }).catch(() => {}); return; }
@@ -292,11 +391,15 @@ export default function Overlay() {
       invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] building ${paths.length} base items` }).catch(() => {});
       const base: RewardItem[] = paths.map((path, i) => {
         if (path.startsWith("?:")) {
+          // Low-confidence OCR read that never cleared the match threshold —
+          // show a neutral placeholder rather than the raw garbled OCR text
+          // (e.g. "Saryn Prime B uepqint"), which just confused players into
+          // thinking that garbage string was the actual reward name.
           return {
             unique_name: path + "-" + i,
             raw_unique:  "",
             slot_x:      positions[i] ?? 0.5,
-            name:        path.slice(2),
+            name:        "Unknown Reward",
             category:    "Unrecognized",
           };
         }
@@ -314,6 +417,7 @@ export default function Overlay() {
         };
       });
       invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] setRewards(${base.length} items)` }).catch(() => {});
+      if (session !== sessionRef.current) return;
       setRewards(base);
 
       paths.forEach(async (path, i) => {
@@ -325,7 +429,7 @@ export default function Overlay() {
         const name = meta?.name ?? path.split("/").pop() ?? path;
 
         invoke<number | null>("get_item_price", { itemName: name })
-          .then(plat => { if (plat != null) setRewards(prev => prev.map((r, idx) => idx === i ? { ...r, plat } : r)); })
+          .then(plat => { if (plat != null && session === sessionRef.current) setRewards(prev => prev.map((r, idx) => idx === i ? { ...r, plat } : r)); })
           .catch(() => {});
 
         const setName = getSetName(name);
@@ -407,6 +511,7 @@ export default function Overlay() {
           : 0;
         const completeSets = builtQty > 0 ? Math.max(compSets, 1) : compSets;
 
+        if (session !== sessionRef.current) return;
         setRewards(prev => prev.map((r, idx) => idx === i
           ? { ...r, set_name: setName, components: components!, complete_sets: completeSets, missing_plat: 0, total_plat: 0 }
           : r
@@ -415,6 +520,7 @@ export default function Overlay() {
         await Promise.all(components.map(async comp => {
           const plat = await invoke<number | null>("get_item_price", { itemName: comp.name }).catch(() => null);
           if (plat == null) return;
+          if (session !== sessionRef.current) return;
           setRewards(prev => prev.map((r, idx) => {
             if (idx !== i || !r.components) return r;
             const comps = r.components.map(c =>
@@ -433,10 +539,31 @@ export default function Overlay() {
       });
     };
 
-    // Clear stale rewards when a new fissure starts so the diagnostic div shows
-    // while OCR is running instead of the previous fissure's stale cards.
+    const unsubPreview = listen(TAURI_EVENTS.RELIC_REWARD_PREVIEW, () => {
+      if (sourceRef.current === "live") return;
+      startSource("preview");
+      setRewards([]);
+      prevKey.current = "";
+    });
+    const unsubPreviewClose = listen(TAURI_EVENTS.RELIC_REWARD_PREVIEW_CLOSE, () => {
+      if (sourceRef.current === "live") return;
+      startSource("idle");
+      setRewards([]);
+      prevKey.current = "";
+      invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
+    });
+    const unsubOverlaysDisabled = listen(TAURI_EVENTS.OVERLAYS_DISABLED, () => {
+      startSource("idle");
+      setRewards([]);
+      prevKey.current = "";
+      invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
+    });
+
+    // Clear stale rewards when a new fissure starts. The window stays transparent
+    // until live OCR data arrives; only an explicit preview may render dummy data.
     const unsubTrigger = listen<null>(TAURI_EVENTS.RELIC_TRIGGER, () => {
       invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: "[OV] relic-trigger → clearing rewards" }).catch(() => {});
+      startSource("live");
       setRewards([]);
       prevKey.current = "";
     });
@@ -449,11 +576,14 @@ export default function Overlay() {
         invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] relic-rewards event: items=${payload?.items?.length ?? "null"} dataReady=${dataReady} catalogSize=${Object.keys(sessionCatalogRef.current).length}` }).catch(() => {});
         if (!payload || payload.items.length === 0) {
           invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: "[OV] null/empty payload → moving off-screen" }).catch(() => {});
+          startSource("idle");
           setRewards([]);
           prevKey.current = "";
           invoke(TAURI_COMMANDS.MOVE_OVERLAY_OFFSCREEN).catch(() => {});
           return;
         }
+
+        if (sourceRef.current !== "live") startSource("live");
 
         if (dataReady) {
           // Fetch only the items relevant to this relic session (the reward items +
@@ -485,6 +615,7 @@ export default function Overlay() {
       .then(pending => {
         invoke(TAURI_COMMANDS.LOG_RELIC_FE, { msg: `[OV] pull result: ${pending ? pending.items.length + " items" : "null"}` }).catch(() => {});
         if (pending && pending.items.length > 0) {
+          if (sourceRef.current !== "live") startSource("live");
           if (dataReady) {
             processPayload(pending.items, pending.positions);
           } else {
@@ -572,23 +703,23 @@ export default function Overlay() {
       }));
     });
 
-    return () => { unsub.then(fn => fn()); unsubInv.then(fn => fn()); unsubTrigger.then(fn => fn()); };
+    return () => { unsub.then(fn => fn()); unsubInv.then(fn => fn()); unsubTrigger.then(fn => fn()); unsubPreview.then(fn => fn()); unsubPreviewClose.then(fn => fn()); unsubOverlaysDisabled.then(fn => fn()); };
   }, []);
 
-  if (rewards.length === 0) return null;
+  const shown = source === "preview" ? DUMMY_REWARDS : rewards;
+  if (shown.length === 0) return null;
+  const bestIdx = bestPickIndex(shown, priority);
 
-  const bestIdx = bestPickIndex(rewards, priority);
-
-  const n  = rewards.length;
+  const n  = shown.length;
   const screenCenter = winW / 2;
   const colCenters   = columnCenters(winW, n);
   const cardW = Math.max(80, Math.round(winW * COL_SPACING_FRAC - 10));
   const cardLeft = (idx: number) => Math.round((colCenters[idx] ?? screenCenter) - cardW / 2);
 
   return (
-    <div className="ov-root">
+    <div className={OV_ROOT}>
       {bestIdx >= 0 && <PickArrow slotX={(colCenters[bestIdx] ?? screenCenter) / winW} winW={winW} />}
-      {rewards.map((item, idx) => (
+      {shown.map((item, idx) => (
         <RewardCard key={item.unique_name} item={item} left={cardLeft(idx)} width={cardW} />
       ))}
     </div>

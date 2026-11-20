@@ -1,11 +1,24 @@
 use std::collections::HashMap;
 use tauri::{Emitter, Manager, State};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::app_state::AppState;
 use crate::events;
 
 // ── Relic pick overlay ────────────────────────────────────────────────────────
+
+/// One overlay's saved x/y offset (logical pixels) from settings.json.
+/// Missing settings or missing axes mean 0, which keeps the built-in placement.
+fn saved_offset(app: &tauri::AppHandle, prefix: &str) -> (f64, f64) {
+    use tauri::Manager;
+    let Some(state) = app.try_state::<AppState>() else { return (0.0, 0.0) };
+    let Ok(map) = crate::settings::read_settings_map(&state.settings_path) else { return (0.0, 0.0) };
+    let Some(obj) = map.get("overlayOffsets").and_then(|v| v.as_object()) else { return (0.0, 0.0) };
+    let axis = |suffix: &str| -> f64 {
+        obj.get(&format!("{prefix}{suffix}")).and_then(|v| v.as_f64()).unwrap_or(0.0)
+    };
+    (axis("X"), axis("Y"))
+}
 
 pub(crate) fn relic_pick_show(app: &tauri::AppHandle) {
     use tauri::Manager;
@@ -20,7 +33,9 @@ pub(crate) fn relic_pick_show(app: &tauri::AppHandle) {
             (w - 440.0, dpi)
         })
         .unwrap_or((1920.0 - 440.0, 1.0));
-    let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y: 20.0 }));
+    // User offset on top of that default (issue #73).
+    let (off_x, off_y) = saved_offset(app, "relicPick");
+    let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition { x: x + off_x, y: 20.0 + off_y }));
     let _ = win.show();
 }
 
@@ -47,6 +62,19 @@ pub(crate) fn test_relic_pick_overlay(era: String, app: tauri::AppHandle) -> Str
     relic_pick_show(&app);
     let _ = app.emit(events::RELIC_PICK_OPEN, &payload);
     format!("Emitted relic-pick-open: era={}, {} relics in inventory", era, relic_count)
+}
+
+/// Debug/preview: hide the relic pick overlay again (pairs with test_relic_pick_overlay).
+#[tauri::command]
+pub(crate) fn hide_relic_pick_overlay(app: tauri::AppHandle) {
+    relic_pick_hide(&app);
+}
+
+/// Position and show the pick window without emitting a payload — used by the
+/// outline toggle and by live offset changes, which only need the placement.
+#[tauri::command]
+pub(crate) fn show_relic_pick_window(app: tauri::AppHandle) {
+    relic_pick_show(&app);
 }
 
 /// Debug: return the last ~4 KB of EE.log so we can see what strings appear when
@@ -258,8 +286,15 @@ pub(crate) fn show_overlay_window(
     let _ = win.set_size(tauri::Size::Physical(
         tauri::PhysicalSize { width: w, height: h }
     ));
+    // Caller passes physical pixels, offsets are stored as logical — scale them
+    // with the window's own monitor so the shift reads the same at any DPI.
+    let (off_x, off_y) = saved_offset(&app, "relic");
+    let scale = win.scale_factor().unwrap_or(1.0);
     let _ = win.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition { x, y }
+        tauri::PhysicalPosition {
+            x: x + (off_x * scale).round() as i32,
+            y: y + (off_y * scale).round() as i32,
+        }
     ));
     let _ = win.show();
     let _ = win.set_always_on_top(true);
@@ -293,53 +328,6 @@ pub(crate) fn move_overlay_offscreen(app: tauri::AppHandle) -> Result<(), String
             tauri::PhysicalPosition { x: 0, y: -3000 }
         ));
     }
-    Ok(())
-}
-
-/// Show the pre-declared overlay-test window.
-/// Pre-declared in tauri.conf.json so WebView2 initialises during app startup
-/// (dynamic build() deadlocks because the Win32 event loop can't process messages while
-/// the calling closure is running).
-#[tauri::command]
-pub(crate) fn show_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let win = app.get_webview_window("overlay-test")
-        .ok_or_else(|| "overlay-test window not found".to_string())?;
-    // Move to a visible position using logical coords (DPI-safe)
-    let _ = win.set_position(tauri::Position::Logical(
-        tauri::LogicalPosition { x: 400.0, y: 300.0 }
-    ));
-    let _ = win.set_always_on_top(true);
-    let _ = win.set_focus();
-    // Log current URL and force navigation in case WebView2 deferred loading while off-screen
-    match win.url() {
-        Ok(url) => {
-            debug!(%url, "current url");
-            // Only re-navigate if we're on blank (WebView2 never loaded the app URL)
-            if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
-                debug!("was on about:blank, navigating to app URL");
-                if let Ok(nav_url) = tauri::Url::parse("http://localhost:1420/index.html?overlaytest") {
-                    let _ = win.navigate(nav_url);
-                }
-            }
-        }
-        Err(e) => warn!(error = %e, "url() error"),
-    }
-    debug!("show_test_overlay_window: moved to logical(400,300), alwaysOnTop=true");
-    Ok(())
-}
-
-/// Move the overlay-test window back off-screen and remove always-on-top.
-#[tauri::command]
-pub(crate) fn hide_test_overlay_window(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let win = app.get_webview_window("overlay-test")
-        .ok_or_else(|| "overlay-test window not found".to_string())?;
-    let _ = win.set_always_on_top(false);
-    let _ = win.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition { x: 0, y: -3000 }
-    ));
-    debug!("hide_test_overlay_window: moved offscreen");
     Ok(())
 }
 

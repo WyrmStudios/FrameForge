@@ -4,9 +4,59 @@ import { useCatalog } from "../hooks/useCatalog";
 import type { CatalogItem } from "../types/items";
 import type { SnapshotPoint, TrackedItem } from "../types/inventory";
 import { PREFERENCE_KEYS } from "../constants/preferences";
-import "./ItemReport.css";
 
 type Timeframe = "7" | "30" | "90" | "all";
+
+// ── Presentatie (ItemReport.css) ───────────────────────────────────────────────
+
+const IR_ROOT = "flex min-h-0 flex-1 flex-col overflow-hidden";
+const IR_ADD_BAR = "flex shrink-0 items-center border-b border-border px-3.5 py-2";
+const IR_SEARCH_WRAP = "relative w-75";
+const IR_SEARCH_INPUT =
+  "w-full rounded-4 border border-border/80 bg-black/20 px-2.5 py-1.25 text-12 text-foreground outline-none focus:border-accent";
+const IR_DROPDOWN =
+  "absolute inset-x-0 top-[calc(100%_+_4px)] z-50 max-h-60 overflow-y-auto rounded-6 border border-border/80 bg-surface shadow-[0_4px_16px_rgba(0,0,0,0.5)]";
+const IR_DROPDOWN_EMPTY = "px-3 py-2.5 text-center text-12 text-muted";
+const IR_DROPDOWN_ROW =
+  "flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-1.5 text-left transition-[background] duration-100 hover:bg-white/6";
+const IR_DROPDOWN_NAME = "min-w-0 flex-1 truncate text-12 text-foreground";
+const IR_DROPDOWN_CAT = "shrink-0 text-10 text-muted";
+const IR_SCROLL = "min-h-0 flex-1 overflow-y-auto px-3.5 py-3";
+const IR_GRID = "grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-2.5";
+const IR_CARD =
+  "flex cursor-default flex-col gap-2 rounded-8 border bg-surface px-3.5 py-3 transition-[border-color,opacity] duration-100";
+const IR_DRAG_HANDLE =
+  "shrink-0 select-none pr-0.5 text-16 leading-none text-muted opacity-40 transition-opacity duration-150 hover:opacity-100";
+const IR_CARD_HEADER = "flex min-w-0 items-center justify-between gap-2";
+const IR_CARD_NAME = "min-w-0 flex-1 truncate text-13 font-semibold text-foreground";
+const IR_CARD_RIGHT = "flex shrink-0 items-center gap-1";
+const IR_TF_BTNS = "flex";
+const IR_TF_BASE =
+  "cursor-pointer border-y border-l px-1.5 py-0.5 text-10 leading-1.4 transition-[background,color,border-color] duration-100";
+const IR_TF_IDLE =
+  "border-border/50 bg-transparent text-muted hover:bg-white/6 hover:text-foreground";
+const IR_TF_ACTIVE = "border-accent bg-accent/15 text-accent";
+const IR_TF_EDGES = "first:rounded-l-3 last:mr-1 last:rounded-r-3 last:border-r";
+const IR_REMOVE_BTN =
+  "cursor-pointer border-0 bg-transparent px-0.5 py-0 text-16 leading-none text-muted transition-colors duration-100 hover:text-danger";
+const IR_CONFIRM_ROW = "flex shrink-0 items-center gap-1.5";
+const IR_CONFIRM_MSG = "whitespace-nowrap text-11 text-danger";
+const IR_CONFIRM_YES =
+  "cursor-pointer rounded-3 border border-danger bg-danger/20 px-2 py-0.5 text-11 font-semibold text-danger transition-[background] duration-100 hover:bg-danger/35";
+const IR_CONFIRM_NO =
+  "cursor-pointer rounded-3 border border-border/60 bg-white/6 px-2 py-0.5 text-11 text-muted transition-[background] duration-100 hover:bg-white/12 hover:text-foreground";
+const IR_CHART_SVG = "block h-15 w-full rounded-4 bg-black/15";
+const IR_CHART_EMPTY =
+  "flex h-15 items-center justify-center rounded-4 bg-black/10 text-11 italic text-muted";
+const IR_CARD_STATS = "flex gap-4";
+const IR_STAT = "flex flex-col gap-px";
+const IR_STAT_LABEL = "text-10 uppercase tracking-0.04 text-muted";
+const IR_STAT_VALUE = "text-14 font-bold tabular-nums";
+const IR_LOADING = "flex flex-1 items-center justify-center text-14 text-muted";
+const IR_EMPTY = "flex flex-1 flex-col items-center justify-center gap-2.5 p-10 text-center";
+const IR_EMPTY_ICON = "text-48";
+const IR_EMPTY_TITLE = "text-16 font-semibold text-foreground";
+const IR_EMPTY_DESC = "text-13 leading-1.6 text-muted";
 
 // ── SVG line chart ─────────────────────────────────────────────────────────────
 
@@ -17,7 +67,7 @@ function ItemChart({ data }: { data: SnapshotPoint[] }) {
   const cH = H - pt - pb;
 
   if (data.length === 0) {
-    return <div className="ir-chart-empty">Awaiting first snapshot…</div>;
+    return <div className={IR_CHART_EMPTY}>Awaiting first snapshot…</div>;
   }
 
   const qtys = data.map(d => d.quantity);
@@ -31,12 +81,12 @@ function ItemChart({ data }: { data: SnapshotPoint[] }) {
 
   if (data.length === 1) {
     return (
-      <svg viewBox={`0 0 ${W} ${H}`} className="ir-chart-svg" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${W} ${H}`} className={IR_CHART_SVG} preserveAspectRatio="none">
         <line
           x1={pl} y1={H / 2} x2={pl + cW} y2={H / 2}
-          stroke="var(--accent)" strokeWidth="1" strokeOpacity="0.4" strokeDasharray="4 3"
+          stroke="var(--color-accent)" strokeWidth="1" strokeOpacity="0.4" strokeDasharray="4 3"
         />
-        <circle cx={xi(0)} cy={H / 2} r="3" fill="var(--accent)" />
+        <circle cx={xi(0)} cy={H / 2} r="3" fill="var(--color-accent)" />
       </svg>
     );
   }
@@ -45,12 +95,12 @@ function ItemChart({ data }: { data: SnapshotPoint[] }) {
   const fillPts = `${pl},${pt + cH} ${linePts} ${pl + cW},${pt + cH}`;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="ir-chart-svg" preserveAspectRatio="none">
-      <polygon points={fillPts} fill="var(--accent)" fillOpacity="0.12" />
+    <svg viewBox={`0 0 ${W} ${H}`} className={IR_CHART_SVG} preserveAspectRatio="none">
+      <polygon points={fillPts} fill="var(--color-accent)" fillOpacity="0.12" />
       <polyline
         points={linePts}
         fill="none"
-        stroke="var(--accent)"
+        stroke="var(--color-accent)"
         strokeWidth="1.5"
         strokeLinejoin="round"
         strokeLinecap="round"
@@ -69,11 +119,12 @@ interface CardProps {
   onRemove: () => void;
   onHandleMouseDown: (e: React.MouseEvent) => void;
   onCardMouseEnter: () => void;
+  isDragging: boolean;
   isDragSource: boolean;
   isDragOver: boolean;
 }
 
-function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onRemove, onHandleMouseDown, onCardMouseEnter, isDragSource, isDragOver }: CardProps) {
+function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onRemove, onHandleMouseDown, onCardMouseEnter, isDragging, isDragSource, isDragOver }: CardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const displayData = useMemo(() => {
@@ -95,57 +146,78 @@ function TrackedItemCard({ item, allSnapshots, timeframe, onTimeframeChange, onR
 
   return (
     <div
-      className={`ir-card${isDragSource ? " ir-card-dragsource" : ""}${isDragOver ? " ir-card-dragover" : ""}`}
+      className={[
+        IR_CARD,
+        isDragOver ? "border-accent shadow-[0_0_0_1px_var(--color-accent)]" : "border-border",
+        isDragSource ? "opacity-45" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onMouseEnter={onCardMouseEnter}
     >
-      <div className="ir-card-header">
-        <span className="ir-drag-handle" title="Drag to reorder" onMouseDown={onHandleMouseDown}>⠿</span>
-        <span className="ir-card-name">{item.display_name}</span>
+      <div className={IR_CARD_HEADER}>
+        <span className={`${IR_DRAG_HANDLE} ${isDragging ? "cursor-grabbing" : "cursor-grab"}`} title="Drag to reorder" onMouseDown={onHandleMouseDown}>⠿</span>
+        <span className={IR_CARD_NAME}>{item.display_name}</span>
         {confirmDelete ? (
-          <div className="ir-confirm-row">
-            <span className="ir-confirm-msg">Delete all history?</span>
-            <button className="ir-confirm-yes" onClick={onRemove}>Delete</button>
-            <button className="ir-confirm-no" onClick={() => setConfirmDelete(false)}>Cancel</button>
+          <div className={IR_CONFIRM_ROW}>
+            <span className={IR_CONFIRM_MSG}>Delete all history?</span>
+            <button className={IR_CONFIRM_YES} onClick={onRemove}>Delete</button>
+            <button className={IR_CONFIRM_NO} onClick={() => setConfirmDelete(false)}>Cancel</button>
           </div>
         ) : (
-          <div className="ir-card-right">
-            <div className="ir-tf-btns">
+          <div className={IR_CARD_RIGHT}>
+            <div className={IR_TF_BTNS}>
               {(["7", "30", "90", "all"] as Timeframe[]).map(tf => (
                 <button
                   key={tf}
-                  className={`ir-tf-btn${timeframe === tf ? " active" : ""}`}
+                  className={[
+                    IR_TF_BASE,
+                    timeframe === tf ? IR_TF_ACTIVE : IR_TF_IDLE,
+                    timeframe === tf ? "border-r" : "",
+                    IR_TF_EDGES,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   onClick={() => onTimeframeChange(tf)}
                 >
                   {tf === "all" ? "All" : `${tf}d`}
                 </button>
               ))}
             </div>
-            <button className="ir-remove-btn" onClick={() => setConfirmDelete(true)} title="Remove tracking">×</button>
+            <button className={IR_REMOVE_BTN} onClick={() => setConfirmDelete(true)} title="Remove tracking">×</button>
           </div>
         )}
       </div>
 
       <ItemChart data={displayData} />
 
-      <div className="ir-card-stats">
-        <div className="ir-stat">
-          <span className="ir-stat-label">Current</span>
-          <span className="ir-stat-value">
+      <div className={IR_CARD_STATS}>
+        <div className={IR_STAT}>
+          <span className={IR_STAT_LABEL}>Current</span>
+          <span className={`${IR_STAT_VALUE} text-foreground`}>
             {latest !== null ? latest.toLocaleString() : "—"}
           </span>
         </div>
         {avgPerDay !== null && (
-          <div className="ir-stat">
-            <span className="ir-stat-label">Avg/day</span>
-            <span className={`ir-stat-value ${avgPerDay > 0 ? "ir-pos" : avgPerDay < 0 ? "ir-neg" : ""}`}>
+          <div className={IR_STAT}>
+            <span className={IR_STAT_LABEL}>Avg/day</span>
+            <span
+              className={`${IR_STAT_VALUE} ${
+                avgPerDay > 0 ? "text-success" : avgPerDay < 0 ? "text-danger" : "text-foreground"
+              }`}
+            >
               {fmtChange(avgPerDay)}
             </span>
           </div>
         )}
         {displayData.length > 1 && (
-          <div className="ir-stat">
-            <span className="ir-stat-label">{timeframe === "all" ? "Total" : `${timeframe}d total`}</span>
-            <span className={`ir-stat-value ${totalGain > 0 ? "ir-pos" : totalGain < 0 ? "ir-neg" : ""}`}>
+          <div className={IR_STAT}>
+            <span className={IR_STAT_LABEL}>{timeframe === "all" ? "Total" : `${timeframe}d total`}</span>
+            <span
+              className={`${IR_STAT_VALUE} ${
+                totalGain > 0 ? "text-success" : totalGain < 0 ? "text-danger" : "text-foreground"
+              }`}
+            >
               {fmtChange(totalGain)}
             </span>
           </div>
@@ -334,32 +406,32 @@ export default function ItemReport() {
     setTimeframes(prev => ({ ...prev, [uniqueName]: tf }));
   }, []);
 
-  if (loading) return <div className="ir-loading">Loading…</div>;
+  if (loading) return <div className={IR_LOADING}>Loading…</div>;
 
   return (
-    <div className="ir-root">
-      <div className="ir-add-bar">
-        <div className="ir-search-wrap" ref={searchRef}>
+    <div className={IR_ROOT}>
+      <div className={IR_ADD_BAR}>
+        <div className={IR_SEARCH_WRAP} ref={searchRef}>
           <input
-            className="ir-search-input"
+            className={IR_SEARCH_INPUT}
             placeholder="Search items to track…"
             value={searchQuery}
             onFocus={openSearch}
             onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); }}
           />
           {searchOpen && searchQuery.trim() !== "" && (
-            <div className="ir-dropdown">
+            <div className={IR_DROPDOWN}>
               {filteredCatalog.length === 0 && debouncedQuery.trim() && (
-                <div className="ir-dropdown-empty">No results</div>
+                <div className={IR_DROPDOWN_EMPTY}>No results</div>
               )}
               {filteredCatalog.map(item => (
                 <button
                   key={item.unique_name}
-                  className="ir-dropdown-row"
+                  className={IR_DROPDOWN_ROW}
                   onMouseDown={e => { e.preventDefault(); handleAddItem(item); }}
                 >
-                  <span className="ir-dropdown-name">{item.name}</span>
-                  <span className="ir-dropdown-cat">{item.category}</span>
+                  <span className={IR_DROPDOWN_NAME}>{item.name}</span>
+                  <span className={IR_DROPDOWN_CAT}>{item.category}</span>
                 </button>
               ))}
             </div>
@@ -368,18 +440,20 @@ export default function ItemReport() {
       </div>
 
       {tracked.length === 0 ? (
-        <div className="ir-empty">
-          <div className="ir-empty-icon">📊</div>
-          <div className="ir-empty-title">No items tracked yet</div>
-          <div className="ir-empty-desc">
+        <div className={IR_EMPTY}>
+          <div className={IR_EMPTY_ICON}>📊</div>
+          <div className={IR_EMPTY_TITLE}>No items tracked yet</div>
+          <div className={IR_EMPTY_DESC}>
             Search for an item above to start tracking its daily quantity.
             <br />
             Snapshots are recorded once per day when FrameForge is running.
           </div>
         </div>
       ) : (
-        <div className="ir-scroll">
-          <div className={`ir-grid${draggingFrom ? " ir-grid-dragging" : ""}`}>
+        <div className={IR_SCROLL}>
+          <div
+            className={`${IR_GRID}${draggingFrom ? " select-none cursor-grabbing" : ""}`}
+          >
             {orderedTracked.map(item => (
               <TrackedItemCard
                 key={item.unique_name}
@@ -394,6 +468,7 @@ export default function ItemReport() {
                   dragTargetRef.current = item.unique_name;
                   setDragTarget(item.unique_name);
                 }}
+                isDragging={draggingFrom !== null}
                 isDragSource={draggingFrom === item.unique_name}
                 isDragOver={dragTarget === item.unique_name && draggingFrom !== item.unique_name}
               />

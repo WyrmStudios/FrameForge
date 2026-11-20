@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use tauri::{Emitter, Manager, State};
 use tracing::{info, warn};
 
 use crate::app_state::AppState;
 use crate::events;
 use crate::wfm::{sanitize_display_name, to_wfm_slug, WfmTopItem};
+use crate::wfcd::WfcdItem;
 
 // ── Top WFM items by 7-day trade volume ───────────────────────────────────────
 
@@ -27,6 +30,10 @@ struct WfmTopProgress {
 static WFM_SCAN_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Display name, warframe.market slug, image file — the three facts the scan
+/// needs about each arcane candidate.
+type ArcaneCandidate = (String, String, Option<String>);
+
 pub(crate) fn start_wfm_top_scan(app: tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     if WFM_SCAN_RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
@@ -38,17 +45,23 @@ pub(crate) fn start_wfm_top_scan(app: tauri::AppHandle) {
         let previous = state.wfm.top_items();
         let refreshing = previous.is_some();
         let disk_cache_path = state.wfm_top_cache_path.clone();
-        let arcane_candidates: Vec<(String, String, Option<String>)> = match state.wfcd_items.lock() {
-            Ok(items) => items.iter()
-                .filter(|i| i.category == "Arcanes")
-                .map(|i| (sanitize_display_name(&i.name), to_wfm_slug(&i.name), i.image_name.clone()))
-                .collect(),
-            Err(e) => {
-                WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
-                warn!("WFM top-items scan could not read the catalog: {e}");
-                return;
-            }
-        };
+        // One lock for both lookups: the scan needs the arcane list and the
+        // name → image index, and a second lock here would deadlock.
+        let (arcane_candidates, image_index): (Vec<ArcaneCandidate>, HashMap<String, String>) =
+            match state.wfcd_items.lock() {
+                Ok(items) => (
+                    items.iter()
+                        .filter(|i| i.category == "Arcanes")
+                        .map(|i| (sanitize_display_name(&i.name), to_wfm_slug(&i.name), i.image_name.clone()))
+                        .collect(),
+                    index_images(&items),
+                ),
+                Err(e) => {
+                    WFM_SCAN_RUNNING.store(false, Ordering::SeqCst);
+                    warn!("WFM top-items scan could not read the catalog: {e}");
+                    return;
+                }
+            };
         let wfm = state.wfm.clone();
         let progress_app = app.clone();
         let scan_result = tokio::task::spawn_blocking(move || {
@@ -86,6 +99,7 @@ pub(crate) fn start_wfm_top_scan(app: tauri::AppHandle) {
             }
             out.sort_by_key(|b| std::cmp::Reverse(b.total_value_7d));
             out.truncate(10);
+            backfill_images(&mut out, &image_index);
             out
         }).await;
 
@@ -116,6 +130,37 @@ pub(crate) fn start_wfm_top_scan(app: tauri::AppHandle) {
     });
 }
 
+/// Catalogue display name (lower-cased) → image file, for the items that have one.
+fn index_images(items: &[WfcdItem]) -> HashMap<String, String> {
+    items.iter()
+        .filter_map(|i| Some((i.name.to_lowercase(), i.image_name.clone()?)))
+        .collect()
+}
+
+/// The same index, taken straight from the already-loaded catalogue.
+fn image_index(state: &AppState) -> HashMap<String, String> {
+    match state.wfcd_items.lock() {
+        Ok(items) => index_images(&items),
+        Err(e) => {
+            warn!("WFM top-items image lookup could not read the catalog: {e}");
+            HashMap::new()
+        }
+    }
+}
+
+/// Prime sets are not catalogue entries of their own, so a set's picture is its
+/// parent item's — "Citrine Prime Set" → "Citrine Prime". That's the same
+/// catalogue entry the market's set cards use, so the file is already covered
+/// by the image cache prewarm and served from the local image server.
+fn backfill_images(items: &mut [WfmTopItem], index: &HashMap<String, String>) {
+    for item in items.iter_mut() {
+        if item.image_name.is_some() { continue; }
+        let lower = item.name.to_lowercase();
+        let Some(base) = lower.strip_suffix(" set") else { continue };
+        item.image_name = index.get(base).cloned();
+    }
+}
+
 /// Return the top 10 most-traded items on warframe.market by 7-day total value.
 /// Queries Prime Sets and Arcanes from the local WFCD catalog (already loaded).
 /// Results are cached for 3 hours so repeated tab opens are instant.
@@ -133,6 +178,10 @@ pub(crate) async fn get_wfm_top_items(app: tauri::AppHandle, state: State<'_, Ap
     if let Ok(s) = std::fs::read_to_string(&disk_cache_path) {
         if let Ok(dc) = serde_json::from_str::<WfmTopDiskCache>(&s) {
             if !dc.items.is_empty() {
+                // A cache written before the image lookup existed still serves
+                // the old rows; fill them in rather than waiting out the TTL.
+                let mut dc = dc;
+                backfill_images(&mut dc.items, &image_index(&state));
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
                 let fresh = now_secs.saturating_sub(dc.saved_at) < TOP_TTL.as_secs();

@@ -8,6 +8,7 @@ import type { CatalogItem, CraftingJob, QuantityMap } from "../types/items";
 import type { ModCopy } from "../types/inventory";
 import type { ChangeLogEntry, InventoryUpdate } from "../types/inventory";
 import type { ItemListStatus, SaveApiInventoryArgs, SavedApiInventory, WarframeCredentials, WarframeInventoryRequest } from "../types/tauri";
+import type { BlobRivenEntry, BlobRivenStat } from "../types/market";
 
 interface UseInventoryDataReturn {
   // State
@@ -74,6 +75,7 @@ export function useInventoryData(): UseInventoryDataReturn {
   const [quantities, setQuantities] = useState<QuantityMap>({});
   const [apiQuantities, setApiQuantities] = useState<QuantityMap>({});
   const [apiModCopies, setApiModCopies] = useState<ModCopy[]>([]);
+  const [apiRivens, setApiRivens] = useState<BlobRivenEntry[]>([]);
   const [scannerMods, setScannerMods] = useState<Record<string, { total: number; by_rank: Record<string, number> }>>({});
   const [crafting, setCrafting] = useState<CraftingJob[]>([]);
   const [masteryRank, setMasteryRank] = useState<number | null>(null);
@@ -170,6 +172,80 @@ export function useInventoryData(): UseInventoryDataReturn {
       }
     }
     setApiModCopies(copies);
+
+    // Riven fingerprint detail (buffs/curses/compat/challenge/polarity/rerolls) —
+    // mirrors memory_scanner.rs's parse_full_account_blob RawUpgrades/Upgrades
+    // handling field-for-field so the Companion API path can populate the same
+    // owned-rivens detail the memory scanner provides. mod_name is left blank;
+    // MarketHelper already falls back to a client-computed name (rivenModName)
+    // when mod_name is empty, same as it does for scanner-sourced unlocked rivens.
+    const newRivens: BlobRivenEntry[] = [];
+    for (const r of (Array.isArray(data.RawUpgrades) ? data.RawUpgrades : [])) {
+      const t: string = r.ItemType;
+      if (!t || !t.startsWith("/Lotus/") || !t.includes("RandomMod")) continue;
+      const count = r.ItemCount ?? 0;
+      if (count <= 0) continue;
+      newRivens.push({
+        item_id: "", item_type: t, mod_name: "",
+        riven_state: "unrevealed",
+        compat: null, challenge_type: null, challenge_complication: null,
+        lvl_req: null, polarity: null, buffs: [], curses: [],
+        mod_rank: 0, count, rerolls: 0,
+      });
+    }
+    const toStats = (arr: unknown): BlobRivenStat[] =>
+      Array.isArray(arr) ? arr.map((s: any) => ({ tag: s.Tag ?? "", value: s.Value ?? 0 })) : [];
+    for (const u of (Array.isArray(data.Upgrades) ? data.Upgrades : [])) {
+      const t: string = u.ItemType;
+      if (!t || !t.startsWith("/Lotus/") || !t.includes("RandomMod")) continue;
+      let fp: any;
+      try { fp = u.UpgradeFingerprint ? JSON.parse(u.UpgradeFingerprint) : null; } catch { continue; }
+      if (!fp) continue;
+      const itemId: string = u.ItemId?.$oid ?? "";
+      if (typeof fp.compat === "string") {
+        newRivens.push({
+          item_id: itemId, item_type: t, mod_name: "",
+          riven_state: "unlocked",
+          compat: fp.compat, challenge_type: null, challenge_complication: null,
+          lvl_req: fp.lvlReq ?? null, polarity: fp.pol ?? null,
+          buffs: toStats(fp.buffs), curses: toStats(fp.curses),
+          mod_rank: fp.lvl ?? 0, count: 1, rerolls: fp.rerolls ?? 0,
+        });
+      } else if (fp.challenge && typeof fp.challenge === "object") {
+        newRivens.push({
+          item_id: itemId, item_type: t, mod_name: "",
+          riven_state: "revealed",
+          compat: null, challenge_type: fp.challenge.Type ?? null, challenge_complication: fp.challenge.Complication ?? null,
+          lvl_req: null, polarity: null, buffs: [], curses: [],
+          mod_rank: 0, count: 1, rerolls: 0,
+        });
+      }
+    }
+    if (newRivens.length > 0) setApiRivens(newRivens);
+
+    // Currency (virtual paths not in the WFCD catalog) — mirrors monitor.rs's
+    // apply_blob_to_state so Companion API users see the same Credits/Endo/
+    // Platinum readouts in the Inventory grid that scanner users already get.
+    if (data.RegularCredits != null) apiQty["/_currency/Credits"] = data.RegularCredits;
+    if (data.FusionPoints != null) apiQty["/_currency/Endo"] = data.FusionPoints;
+    if (data.PremiumCredits != null) {
+      const free = data.PremiumCreditsFree ?? 0;
+      apiQty["/_currency/Platinum"] = data.PremiumCredits - free;
+      apiQty["/_currency/PlatinumGift"] = free;
+    }
+
+    // Cosmetics (FlavourItems + WeaponSkins) — occurrence-counted, mirrors
+    // monitor.rs/memory_scanner.rs so glyphs/sigils/skins show up generically
+    // in the Inventory grid for Companion API users too.
+    for (const c of [
+      ...(Array.isArray(data.FlavourItems) ? data.FlavourItems : []),
+      ...(Array.isArray(data.WeaponSkins) ? data.WeaponSkins : []),
+    ]) {
+      const t: string = c.ItemType;
+      if (!t || !t.startsWith("/Lotus/")) continue;
+      apiQty[t] = (apiQty[t] ?? 0) + 1;
+    }
+
     setApiQuantities(prev => {
       const changes = Object.entries(apiQty)
         .filter(([k, v]) => (prev[k] ?? 0) !== v)
@@ -484,8 +560,7 @@ export function useInventoryData(): UseInventoryDataReturn {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // ── Auto-refresh API: 8 s while connecting, 30 s once connected ────────────
-  // Note: companionApiEnabled is always false (feature suspended pending DE clarification)
+  // ── Auto-refresh API: 60 s while connecting, 300 s once connected ──────────
   useEffect(() => {
     if (COMPANION_API_SUSPENDED) {
       setWfConnected(false);
@@ -545,6 +620,13 @@ export function useInventoryData(): UseInventoryDataReturn {
     };
     invoke(TAURI_COMMANDS.SAVE_API_INVENTORY, args).catch(() => {});
   }, [apiQuantities, apiModCopies, subsummedWarframes]);
+
+  // ── Persist API riven fingerprint detail to inventory_state_cache.json ─────
+  useEffect(() => {
+    if (!inventoryRestoredRef.current) return;
+    if (apiRivens.length === 0) return;
+    invoke(TAURI_COMMANDS.SAVE_API_RIVENS, { rivens: apiRivens }).catch(() => {});
+  }, [apiRivens]);
 
   return {
     // State

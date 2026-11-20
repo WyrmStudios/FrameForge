@@ -205,7 +205,8 @@ pub(crate) fn handle_riven_events(
     let cooldown_ok = last_riven_fire
         .is_none_or(|t| t.elapsed().as_secs() >= 4);
 
-    if riven_trigger && cooldown_ok {
+    if riven_trigger && cooldown_ok
+        && app.state::<AppState>().overlays_enabled.load(Ordering::SeqCst) {
         *last_riven_fire = Some(std::time::Instant::now());
         let _ = app.emit(events::RIVEN_SCREEN_OPEN, ());
         let _ = app.emit(events::FF_STATUS, "🎲 Riven screen detected");
@@ -265,7 +266,9 @@ pub(crate) fn handle_relic_pick_events(
     if lower.contains("themedprojectionmanager.lua: populateinventorygrid") {
         info!("relic-pick: PopulateInventoryGrid detected — spawning OCR thread");
         let now = std::time::Instant::now();
-        let relic_pick_on = app.state::<AppState>().relic_pick_overlay_enabled.load(Ordering::SeqCst);
+        let state = app.state::<AppState>();
+        let relic_pick_on = state.overlays_enabled.load(Ordering::SeqCst)
+            && state.relic_pick_overlay_enabled.load(Ordering::SeqCst);
         let should_trigger = relic_pick_on && last_relic_pick_trigger
             .is_none_or(|t| now.duration_since(t).as_secs() >= 5);
         if should_trigger {
@@ -274,16 +277,45 @@ pub(crate) fn handle_relic_pick_events(
             std::thread::spawn(move || {
                 // Brief delay for the screen to finish rendering before capture.
                 std::thread::sleep(std::time::Duration::from_millis(400));
+                let state = app_clone.state::<AppState>();
+                if !state.overlays_enabled.load(Ordering::SeqCst)
+                    || !state.relic_pick_overlay_enabled.load(Ordering::SeqCst) {
+                    return;
+                }
                 let era = crate::ocr::detect_fissure_era();
                 info!("relic-pick: OCR result = {:?}", era);
                 if let Some(era) = era {
                     let payload = build_relic_pick_payload(&era, &app_clone);
+                    let state = app_clone.state::<AppState>();
+                    if !state.overlays_enabled.load(Ordering::SeqCst)
+                        || !state.relic_pick_overlay_enabled.load(Ordering::SeqCst) {
+                        return;
+                    }
                     let relic_count = payload["relics"].as_array().map_or(0, |a| a.len());
                     info!("relic-pick: emitting relic-pick-open era={} relics={}", era, relic_count);
                     // Show the overlay window from Rust — more reliable than
                     // calling win.show() from the WebView (avoids timing races).
                     relic_pick_show(&app_clone);
+                    let state = app_clone.state::<AppState>();
+                    if !state.overlays_enabled.load(Ordering::SeqCst)
+                        || !state.relic_pick_overlay_enabled.load(Ordering::SeqCst) {
+                        relic_pick_hide(&app_clone);
+                        let _ = app_clone.emit(events::RELIC_PICK_CLOSE, ());
+                        return;
+                    }
                     let _ = app_clone.emit(events::RELIC_PICK_OPEN, payload);
+                    // Safety net: the only dismiss triggers are mapredux regaining
+                    // focus or OnEntitlementServiceComplete — if neither EE.log
+                    // line fires for a given mission-launch path, the overlay would
+                    // otherwise stay stuck open until the next relic screen. Force
+                    // it closed after 20s regardless; closing an already-closed
+                    // overlay is a no-op.
+                    let app_safety = app_clone.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                        relic_pick_hide(&app_safety);
+                        let _ = app_safety.emit(events::RELIC_PICK_CLOSE, ());
+                    });
                 }
             });
         } else {
@@ -465,6 +497,38 @@ pub(crate) fn collect_session_relics(text: &str, session_relics: &mut Vec<String
     }
 }
 
+/// Catch up `session_relics` from EE.log history at thread startup, for when
+/// FrameForge is launched mid-mission — the live tailer only reads forward from
+/// the file's current end, so any relic loads that already happened this mission
+/// (before FrameForge attached) would otherwise never enter the OCR prefilter.
+///
+/// Reads the last `BACKFILL_BYTES` of EE.log and only considers text after the
+/// most recent dismiss marker in that window (mirroring the live clear-on-dismiss
+/// behavior), so relics from an already-closed earlier cycle aren't seeded in.
+pub(crate) fn seed_session_relics(log_path: &std::path::Path, session_relics: &mut Vec<String>) {
+    use std::io::{Read, Seek, SeekFrom};
+    const BACKFILL_BYTES: u64 = 4 * 1024 * 1024;
+
+    let Ok(mut f) = std::fs::File::open(log_path) else { return };
+    let file_len = f.seek(SeekFrom::End(0)).unwrap_or(0);
+    let read_from = file_len.saturating_sub(BACKFILL_BYTES);
+    if f.seek(SeekFrom::Start(read_from)).is_err() { return; }
+    let mut buf = Vec::with_capacity((file_len - read_from) as usize);
+    if f.read_to_end(&mut buf).is_err() { return; }
+    let Ok(text) = std::str::from_utf8(&buf) else { return };
+
+    // ASCII-only lowercasing keeps byte offsets aligned with `text` so the slice
+    // below can't land mid-character (unlike `to_lowercase()`, which can change
+    // byte length for some non-ASCII input such as accented player names).
+    let lower = text.to_ascii_lowercase();
+    let last_dismiss_pos = ["relic reward screen shut down", "closevoidprojectionrewardscreen", "matchingservice::endsession"]
+        .iter()
+        .filter_map(|marker| lower.rfind(marker))
+        .max();
+    let scan_from = last_dismiss_pos.unwrap_or(0);
+    collect_session_relics(&text[scan_from..], session_relics);
+}
+
 #[derive(Default)]
 pub(crate) struct VoidProjectionState {
     in_sequence: bool,
@@ -488,11 +552,19 @@ impl VoidProjectionState {
 }
 
 /// Update the VoidProjections reward-handshake state from newly appended EE.log lines.
+///
+/// `squad_size` is purely the squad's player count — DE's own client-side
+/// EE.log never reveals whether another squad member's reward was null
+/// ("Client got reward info from <id>" fires identically for a real item or
+/// nothing), so there is no way to detect that case from this log and this
+/// value must only be used as an upper bound on expected reward cards, never
+/// a floor (see `hint_squad_size` usage in ocr/mod.rs).
 pub(crate) fn collect_void_projection_state(
     text: &str,
     state: &mut VoidProjectionState,
     squad_size: &std::sync::Arc<std::sync::Mutex<Option<usize>>>,
     session_log_path: &std::path::Path,
+    own_item_shared: &std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) {
     for line in text.lines() {
         let lower = line.to_lowercase();
@@ -503,10 +575,21 @@ pub(crate) fn collect_void_projection_state(
             if let Ok(mut size) = squad_size.lock() {
                 *size = None;
             }
+            if let Ok(mut shared) = own_item_shared.lock() {
+                *shared = None;
+            }
         }
         if lower.contains("gets reward /lotus/") {
             if let Some(index) = line.find("/Lotus/") {
                 state.own_item = line[index..].trim().to_string();
+                // Published as soon as it's known, not only at sequence
+                // completion — the handshake usually finishes before the
+                // reward screen trigger fires, but not always, and the OCR
+                // loop (which reads this live, see capture_reward_items)
+                // should get it the instant it's available either way.
+                if let Ok(mut shared) = own_item_shared.lock() {
+                    *shared = Some(state.own_item.clone());
+                }
             }
         }
         if state.in_sequence {
@@ -515,9 +598,9 @@ pub(crate) fn collect_void_projection_state(
                     state.other_ids.insert(id.to_string());
                 }
             } else if lower.contains("has reward info for all players now") {
-                let squad = (1 + state.other_ids.len()).clamp(1, 4);
+                let squad_total = (1 + state.other_ids.len()).clamp(1, 4);
                 if let Ok(mut size) = squad_size.lock() {
-                    *size = Some(squad);
+                    *size = Some(squad_total);
                 }
                 state.in_sequence = false;
                 state.sequence_completed = true;
@@ -527,10 +610,10 @@ pub(crate) fn collect_void_projection_state(
                         "[EE.log] VoidProjections squad\n\\
                          ├─ Local item : {}\n\\
                          ├─ Other players (unique IDs) : {}\n\\
-                         └─ Squad size : {} total\n\n",
+                         └─ Squad size : {} total (upper bound on reward cards — some may be empty-handed)\n\n",
                         if state.own_item.is_empty() { "(not found)" } else { &state.own_item },
                         state.other_ids.len(),
-                        squad,
+                        squad_total,
                     ),
                 );
             }
@@ -588,6 +671,7 @@ pub(crate) fn dismiss_relic_rewards(
     diag_dir: &std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     reward_screen_active: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     rewards_emitted_ms: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    best_reward_payload: &std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
     state: DismissState<'_>,
 ) -> bool {
     let DismissState {
@@ -634,6 +718,13 @@ pub(crate) fn dismiss_relic_rewards(
     reward_screen_active.store(false, Ordering::SeqCst);
     *active_since = None;
     *last_dismiss_at = Some(std::time::Instant::now());
+    // Only clear on a true mission/session boundary. Endless missions (Survival,
+    // Excavation, etc.) pick relics once and reuse them across every reward
+    // rotation — the game never re-logs "Resource load completed" for a relic
+    // already in memory, so clearing on every rotation's dismiss (as opposed to
+    // just the final one) would empty session_relics for every rotation after
+    // the first, forcing OCR to fall back to the full ~700-item catalog instead
+    // of the narrowed one. That's what made 4.5.9 feel slow on infinite missions.
     if lower.contains("matchingservice::endsession") {
         session_relics.clear();
     }
@@ -647,7 +738,22 @@ pub(crate) fn dismiss_relic_rewards(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
-    let delay_ms = if emitted_at > 0 {
+
+    // Nothing was ever shown this session (OCR never reached complete/soft-complete)
+    // but a confirmed partial match may be sitting ready — publish it now instead of
+    // discarding it, so the user sees something rather than nothing. The full grace
+    // period applies from this moment since the overlay hasn't been visible yet.
+    let late_payload = if emitted_at == 0 {
+        best_reward_payload.lock().ok().and_then(|mut guard| guard.take())
+    } else {
+        None
+    };
+    let delay_ms = if let Some(payload) = &late_payload {
+        publish_relic_rewards(app, Some(payload));
+        append_to_diag(session_log_path,
+            "[STEP 3] OVERLAY OPENED (published on dismiss — partial result)\n\n");
+        MIN_DISPLAY_MS
+    } else if emitted_at > 0 {
         MIN_DISPLAY_MS.saturating_sub(now_ms.saturating_sub(emitted_at))
     } else {
         0
@@ -680,19 +786,45 @@ pub(crate) fn auto_dismiss_relic_rewards(
     reward_screen_active: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     active_since: &mut Option<std::time::Instant>,
     last_dismiss_at: &mut Option<std::time::Instant>,
+    rewards_emitted_ms: &std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     let Some(since) = *active_since else { return };
     if since.elapsed().as_secs() < 20 {
         return;
     }
+    close_reward_overlay(
+        app,
+        session_log_path,
+        diag_dir,
+        reward_screen_active,
+        active_since,
+        last_dismiss_at,
+        rewards_emitted_ms,
+        "AUTO-DISMISS (20s timeout)",
+    );
+}
+
+/// Hide the reward overlay now and clear its state. Used by the 20 s timeout and
+/// when the relic-pick grid opens (the reward screen has closed by then, even if
+/// its "shut down" line hasn't reached EE.log yet). Skips the 5 s minimum display.
+pub(crate) fn close_reward_overlay(
+    app: &tauri::AppHandle,
+    session_log_path: &std::path::Path,
+    diag_dir: &std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+    reward_screen_active: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    active_since: &mut Option<std::time::Instant>,
+    last_dismiss_at: &mut Option<std::time::Instant>,
+    rewards_emitted_ms: &std::sync::Arc<std::sync::atomic::AtomicU64>,
+    reason: &str,
+) {
+    let open_for = active_since.map(|since| since.elapsed().as_secs_f64());
     append_to_diag(
         session_log_path,
         &format!(
-            "[STEP 4] AUTO-DISMISS (20s timeout)\n\\
-             ├─ Time     : {}\n\\
-             └─ Open for : {:.1}s\n\n",
+            "[STEP 4] {}\n├─ Time     : {}\n└─ Open for : {}\n\n",
+            reason,
             chrono::Local::now().format("%H:%M:%S%.3f"),
-            since.elapsed().as_secs_f64(),
+            open_for.map(|seconds| format!("{seconds:.1}s")).unwrap_or_else(|| "(unknown)".to_string()),
         ),
     );
     if let Ok(mut guard) = diag_dir.lock() {
@@ -703,6 +835,7 @@ pub(crate) fn auto_dismiss_relic_rewards(
     reward_screen_active.store(false, Ordering::SeqCst);
     *active_since = None;
     *last_dismiss_at = Some(std::time::Instant::now());
+    rewards_emitted_ms.store(0, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("relic-overlay") {
         let _ = window.set_position(tauri::Position::Physical(
             tauri::PhysicalPosition { x: 0, y: -3000 },
@@ -896,6 +1029,7 @@ pub(crate) async fn capture_reward_items(
     catalog: std::sync::Arc<Vec<(String, String)>>,
     squad_size: std::sync::Arc<std::sync::Mutex<Option<usize>>>,
     squad_names: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    own_item: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 ) -> Option<RewardOcrResult> {
     let frame = std::sync::Arc::clone(&app.state::<AppState>().last_ocr_frame);
     tauri::async_runtime::spawn_blocking(move || {
@@ -907,6 +1041,7 @@ pub(crate) async fn capture_reward_items(
         }
         let hint_squad_size = squad_size.lock().ok().and_then(|hint| *hint);
         let player_names = squad_names.lock().map(|names| names.clone()).unwrap_or_default();
+        let own_item = own_item.lock().ok().and_then(|g| g.clone());
         Some(ocr::extract_reward_items_twophase(OcrParams {
             pixels: &pixels,
             pix_w: width,
@@ -916,11 +1051,37 @@ pub(crate) async fn capture_reward_items(
             capture_info: &capture_info,
             hint_squad_size,
             player_names: &player_names,
+            own_item: own_item.as_deref(),
         }))
     })
     .await
     .ok()
     .flatten()
+}
+
+/// Save a desktop screenshot the instant the EE.log trigger fires, before any
+/// OCR capture/matching work begins. Call only after `prepare_reward_session`
+/// has populated `diag_dir` with this trigger's folder.
+///
+/// This is the ground-truth anchor for "was the trigger seen on time": the
+/// reward screen (and any on-screen match/mission timer) is already visible
+/// in-game by the time EE.log writes the trigger line, so this BMP shows
+/// exactly what the player saw at the moment FrameForge detected it — letting
+/// a late-looking overlay be diagnosed as a late *detection* (compare this
+/// screenshot's timer against when the trigger fired) vs. slow *OCR
+/// processing* (compare this screenshot against the later `screenshot.bmp`
+/// and the per-attempt timestamps in the session log).
+pub(crate) fn schedule_trigger_moment_capture(
+    diag_dir: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+) {
+    let folder = diag_dir.lock().ok().and_then(|guard| guard.clone());
+    if let Some(folder) = folder {
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Some((pixels, width, height)) = crate::ocr::capture_desktop_for_diag() {
+                let _ = write_bmp(&folder.join("trigger_moment.bmp"), &pixels, width, height);
+            }
+        });
+    }
 }
 
 /// Save a delayed desktop screenshot after the relic overlay has animated in.
@@ -978,6 +1139,10 @@ pub(crate) fn publish_relic_rewards(
     app: &tauri::AppHandle,
     payload: Option<&serde_json::Value>,
 ) {
+    if payload.is_some_and(|payload| !payload.is_null())
+        && !app.state::<AppState>().overlays_enabled.load(Ordering::SeqCst) {
+        return;
+    }
     if let Some(payload) = payload.filter(|payload| !payload.is_null()) {
         if let Ok(mut pending) = app.state::<AppState>().pending_relic_rewards.lock() {
             *pending = Some(payload.clone());
@@ -1181,6 +1346,25 @@ pub(crate) fn log_reward_best_result(
     let _ = std::fs::write(last_path, format!("=== {} ===\nItems: {:?}\n{}\n", ts, items, dbg));
 }
 
+pub(crate) fn log_reward_partial_no_improvement(
+    attempt: u32,
+    ts: &str,
+    items: &[String],
+    dbg: &str,
+    session_log_path: &std::path::Path,
+) {
+    let _ = crate::append_to_file(
+        session_log_path,
+        &format!(
+            "[STEP 2] OCR ATTEMPT #{}\n\
+             \u{251c}\u{2500} Time     : {}\n\
+             {}\n\
+             \u{2514}\u{2500} RESULT   : {} items found (no improvement over best) \u{2192} retrying in 400ms\n\n",
+            attempt, ts, dbg, items.len()
+        ),
+    );
+}
+
 pub(crate) fn log_reward_confirm_no_improvement(
     attempt: u32,
     ts: &str,
@@ -1200,21 +1384,37 @@ pub(crate) fn log_reward_confirm_no_improvement(
 
 // ── WFM whisper parsing ──────────────────────────────────────────────────────
 
-pub(crate) fn parse_and_emit_wfm_whisper(
-    app: &tauri::AppHandle,
-    log_line: &str,
-) {
-    let raw = log_line;
-    let from = raw.find("@From ")
-        .map(|i| &raw[i+6..])
+pub(crate) struct ParsedWfmWhisper {
+    pub from: String,
+    pub item: Option<String>,
+    pub price: Option<u64>,
+    /// "buy" when the *local* player sent this whisper to buy the item (they
+    /// are the buyer, `from` is the seller); "sell" when the local player
+    /// sent it to sell (they are the seller, `from` is the buyer). This is
+    /// always the local player's own intent, since EE.log only logs whispers
+    /// the local client sends ("IRC out") — never ones it receives.
+    pub direction: &'static str,
+}
+
+/// Parse an outgoing WFM trade-whisper line from EE.log.
+/// Real format: "... IRC out: PRIVMSG <name> :Hi! I want to buy: \"<item>\" for N platinum. (warframe.market)"
+/// (or "...want to sell: ..." for the seller-side template.)
+/// ("@From " never appears for outgoing whispers — PRIVMSG's target *is* the trade partner.)
+fn parse_wfm_whisper(raw: &str) -> ParsedWfmWhisper {
+    let from = raw.find("PRIVMSG ")
+        .map(|i| &raw[i+8..])
         .and_then(|s| s.split(" :").next())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "Unknown".to_string());
+    let (direction, item_prefix) = if raw.contains("want to sell: \"") {
+        ("sell", "want to sell: \"")
+    } else {
+        ("buy", "want to buy: \"")
+    };
     let item = {
-        let prefix = "want to buy ";
-        let suffix = " for ";
-        raw.find(prefix).and_then(|i| {
-            let rest = &raw[i+prefix.len()..];
+        let suffix = "\" for ";
+        raw.find(item_prefix).and_then(|i| {
+            let rest = &raw[i+item_prefix.len()..];
             rest.find(suffix).map(|j| crate::sanitize_chat_item_name(&rest[..j]))
         })
     };
@@ -1222,13 +1422,85 @@ pub(crate) fn parse_and_emit_wfm_whisper(
         let rest = &raw[i+5..];
         rest.find(" platinum").and_then(|j| rest[..j].trim().parse().ok())
     });
+    ParsedWfmWhisper { from, item, price, direction }
+}
+
+pub(crate) fn parse_and_emit_wfm_whisper(
+    app: &tauri::AppHandle,
+    log_line: &str,
+) {
+    let raw = log_line;
+    let parsed = parse_wfm_whisper(raw);
     let _ = app.emit(events::WFM_WHISPER, serde_json::json!({
-        "from": from,
+        "from": parsed.from,
         "message": raw.trim(),
-        "item": item,
-        "price": price,
+        "item": parsed.item,
+        "price": parsed.price,
+        "direction": parsed.direction,
         "timestamp": chrono::Local::now().format("%H:%M:%S").to_string(),
     }));
+}
+
+#[cfg(test)]
+mod wfm_whisper_tests {
+    use super::*;
+
+    /// Real EE.log line (player name redacted) captured directly from a live
+    /// game session for the "trade partner shows as Unknown" report
+    /// (2026-11-08). The old extraction looked for an "@From " token that
+    /// never appears for outgoing whispers — the recipient is the PRIVMSG
+    /// target instead — and the item prefix was missing the colon that
+    /// actually precedes the opening quote, so `item` was always None.
+    #[test]
+    fn outgoing_whisper_extracts_recipient_item_and_price() {
+        let raw = "2602.089 Net [Info]: IRC out: PRIVMSG Mojhe1 :Hi! I want to buy: \"Mecha Recharge (rank 0)\" for 20 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Mojhe1");
+        assert_eq!(parsed.item, Some("Mecha Recharge (rank 0)".to_string()));
+        assert_eq!(parsed.price, Some(20));
+        assert_eq!(parsed.direction, "buy", "local player is buying, so `from` is the seller, not someone who 'wants' the item");
+    }
+
+    /// The seller-side WFM template ("want to sell") must be recognized too,
+    /// and must not be misclassified as "buy" just because the message also
+    /// contains the word "buy" nowhere relevant.
+    #[test]
+    fn outgoing_whisper_detects_sell_direction() {
+        let raw = "Net [Info]: IRC out: PRIVMSG Buyer99 :Hi! I want to sell: \"Primed Flow\" for 15 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Buyer99");
+        assert_eq!(parsed.item, Some("Primed Flow".to_string()));
+        assert_eq!(parsed.direction, "sell", "local player is selling, so `from` is the buyer");
+    }
+
+    /// Second real example, with a dotted player name and a multi-word item,
+    /// confirming the fix generalizes beyond the first captured line.
+    #[test]
+    fn outgoing_whisper_handles_dotted_names_and_multiword_items() {
+        let raw = "Net [Info]: IRC out: PRIVMSG Mr.FaHai :Hi! I want to buy: \"Momentous Bond (rank 0)\" for 18 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Mr.FaHai");
+        assert_eq!(parsed.item, Some("Momentous Bond (rank 0)".to_string()));
+        assert_eq!(parsed.price, Some(18));
+    }
+
+    /// A line with no PRIVMSG target at all should fall back to "Unknown"
+    /// rather than panicking or extracting garbage.
+    #[test]
+    fn whisper_without_privmsg_falls_back_to_unknown() {
+        let raw = "some unrelated line mentioning (warframe.market) with no PRIVMSG";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Unknown");
+        assert_eq!(parsed.item, None);
+    }
 }
 
 #[cfg(test)]

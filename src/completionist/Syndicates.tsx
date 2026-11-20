@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ItemImg from "../ItemImg";
-import "./Syndicates.css";
 import type { InventoryItem } from "../types/items";
 import type { SyndicateFilters } from "../types/filters";
 import type { SyndicateItem, SyndicateStore } from "../types/syndicates";
+import { FilterChip } from "../shared/ui/FilterControls";
 
 // ── Completion status ─────────────────────────────────────────────────────────
 // "complete"  = built/owned final item (or mod/sigil in inventory)
@@ -83,13 +83,57 @@ const GROUP_LABELS: Record<SynGroup, string> = {
   lab:       "Research Labs",
 };
 
+// ── Presentation ──────────────────────────────────────────────────────────────
+
+const SYN_ROOT_CLASS = "flex flex-1 min-h-0 flex-col overflow-hidden bg-background text-foreground";
+const SYN_GROUPS_CLASS = "flex shrink-0 gap-0.5 border-b border-border px-3 pt-2 pb-1";
+const SYN_GROUP_BTN_CLASS = "cursor-pointer rounded-4 border px-3.5 py-1 text-12 font-medium transition-all duration-150";
+const SYN_GROUP_IDLE_CLASS = "border-border bg-transparent text-muted hover:bg-white/6 hover:text-foreground";
+const SYN_GROUP_ACTIVE_CLASS = "border-accent bg-surface text-foreground";
+const SYN_TABS_CLASS = "flex shrink-0 flex-wrap gap-0.5 border-b border-border px-3 pt-1.5";
+const SYN_TAB_CLASS = "-mb-px cursor-pointer rounded-t-6 border-0 border-b-3 px-3.5 py-1.5 text-13 font-medium transition-[background,color] duration-150";
+const SYN_TAB_IDLE_CLASS = "border-transparent bg-transparent text-muted hover:bg-white/6 hover:text-foreground";
+const SYN_TAB_ACTIVE_CLASS = "border-[var(--syn-color,#888)] bg-surface text-foreground";
+const SYN_TOOLBAR_CLASS = "flex shrink-0 items-center gap-3 px-3.5 pb-1.5 pt-2.5";
+const SYN_SEARCH_CLASS = "w-40 shrink-0 rounded-5 border border-border bg-surface px-2 py-1 text-12 text-foreground placeholder:text-muted focus:border-accent focus:outline-none";
+const SYN_PROGRESS_WRAP_CLASS = "flex flex-1 items-center gap-2";
+const SYN_PROGRESS_BAR_CLASS = "h-1.5 max-w-50 flex-1 overflow-hidden rounded-3 bg-border";
+const SYN_PROGRESS_FILL_CLASS = "h-full rounded-3 bg-[var(--syn-color,#888)] transition-[width] duration-300";
+const SYN_PROGRESS_LABEL_CLASS = "whitespace-nowrap text-12 text-muted";
+const SYN_FILTER_CLASS = "cursor-pointer rounded-5 border px-2.5 py-1 text-12 transition-all duration-150";
+const SYN_FILTER_IDLE_CLASS = "border-border bg-transparent text-muted";
+const SYN_FILTER_ACTIVE_CLASS = "border-[var(--syn-color,#888)] bg-[var(--syn-color,#888)] text-white";
+const SYN_BODY_CLASS = "flex-1 overflow-y-auto px-3 pb-4 pt-2";
+const SYN_TIER_GROUP_CLASS = "mb-5";
+const SYN_TIER_HEADER_CLASS = "mb-1.5 border-b border-border pb-1.5 pt-1 text-11 font-semibold uppercase tracking-0.06 text-muted";
+const SYN_GRID_CLASS = "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-1";
+const SYN_ITEM_CLASS = "flex items-center gap-2.5 rounded-5 border px-2 py-1.5 transition-[background,border-color] duration-100 hover:bg-white/6";
+const SYN_ITEM_ROW_CLASS: Record<CompStatus, string> = {
+  complete:  "border-complete/20 hover:border-complete/20",
+  blueprint: "border-ducat/20 hover:border-ducat/20",
+  subsumed:  "border-subsumed/20 hover:border-subsumed/20",
+  none:      "border-transparent hover:border-border",
+};
+const SYN_ITEM_INFO_CLASS = "min-w-0 flex-1";
+const SYN_ITEM_NAME_CLASS = "truncate text-13";
+const SYN_ITEM_CAT_CLASS = "mt-px text-11 text-muted";
+const SYN_STATUS_BASE_CLASS = "min-w-7 shrink-0 rounded-4 px-1.75 py-0.5 text-center text-11 font-bold";
+const SYN_STATUS_CLASS: Record<CompStatus, string> = {
+  complete:  "bg-complete/15 text-complete",
+  blueprint: "bg-ducat/15 text-ducat",
+  subsumed:  "bg-subsumed/12 text-subsumed",
+  none:      "bg-rank-none/8 text-muted",
+};
+const SYN_EMPTY_CLASS = "py-10 text-center text-14 text-muted";
+const SYN_LOADING_CLASS = "py-15 text-center text-14 text-muted";
+
 // ── Status badge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: CompStatus }) {
-  if (status === "complete")  return <span className="syn-item-status status-complete">✓</span>;
-  if (status === "blueprint") return <span className="syn-item-status status-blueprint">BP</span>;
-  if (status === "subsumed")  return <span className="syn-item-status status-subsumed" title="Consumed by Helminth">H</span>;
-  return <span className="syn-item-status status-none">—</span>;
+  if (status === "complete")  return <span className={`${SYN_STATUS_BASE_CLASS} ${SYN_STATUS_CLASS.complete}`}>✓</span>;
+  if (status === "blueprint") return <span className={`${SYN_STATUS_BASE_CLASS} ${SYN_STATUS_CLASS.blueprint}`}>BP</span>;
+  if (status === "subsumed")  return <span className={`${SYN_STATUS_BASE_CLASS} ${SYN_STATUS_CLASS.subsumed}`} title="Consumed by Helminth">H</span>;
+  return <span className={`${SYN_STATUS_BASE_CLASS} ${SYN_STATUS_CLASS.none}`}>—</span>;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -184,13 +228,13 @@ export default function Syndicates({ inventory, filters, onFiltersChange }: Prop
   }, [activeStore, groupSyndicates, activeTab, missingOnly, meta, inventory, search]);
 
   return (
-    <div className="syn-root">
+    <div className={SYN_ROOT_CLASS}>
       {/* ── Group selector ── */}
-      <div className="syn-groups">
+      <div className={SYN_GROUPS_CLASS}>
         {(["main", "openworld", "other", "lab"] as SynGroup[]).map(g => (
           <button
             key={g}
-            className={`syn-group-btn ${activeGroup === g ? "active" : ""}`}
+            className={`${SYN_GROUP_BTN_CLASS} ${activeGroup === g ? SYN_GROUP_ACTIVE_CLASS : SYN_GROUP_IDLE_CLASS}`}
             onClick={() => handleGroupChange(g)}
           >
             {GROUP_LABELS[g]}
@@ -199,7 +243,7 @@ export default function Syndicates({ inventory, filters, onFiltersChange }: Prop
       </div>
 
       {/* ── Syndicate tabs ── */}
-      <div className="syn-tabs">
+      <div className={SYN_TABS_CLASS}>
         {groupSyndicates.map(store => {
           const m = SYNDICATE_META[store.name];
           const owned = store.items.filter(i => itemStatus({
@@ -210,7 +254,7 @@ export default function Syndicates({ inventory, filters, onFiltersChange }: Prop
           return (
             <button
               key={store.name}
-              className={`syn-tab ${activeTab === store.name ? "active" : ""}`}
+              className={`${SYN_TAB_CLASS} ${activeTab === store.name ? SYN_TAB_ACTIVE_CLASS : SYN_TAB_IDLE_CLASS}`}
               style={{ ["--syn-color" as string]: m?.color ?? "#888" } as React.CSSProperties}
               onClick={() => handleTabChange(store.name)}
               title={`${store.name} — ${owned}/${store.items.length}`}
@@ -222,69 +266,69 @@ export default function Syndicates({ inventory, filters, onFiltersChange }: Prop
       </div>
 
       {/* ── Toolbar ── */}
-      <div className="syn-toolbar" style={{ ["--syn-color" as string]: meta?.color } as React.CSSProperties}>
+      <div className={SYN_TOOLBAR_CLASS} style={{ ["--syn-color" as string]: meta?.color } as React.CSSProperties}>
         <input
-          className="syn-search"
+          className={SYN_SEARCH_CLASS}
           placeholder="Search items…"
           value={search}
           onChange={e => set("search", e.target.value)}
         />
-        <div className="syn-progress-wrap">
-          <div className="syn-progress-bar">
+        <div className={SYN_PROGRESS_WRAP_CLASS}>
+          <div className={SYN_PROGRESS_BAR_CLASS}>
             <div
-              className="syn-progress-fill"
+              className={SYN_PROGRESS_FILL_CLASS}
               style={{ width: totalCount > 0 ? `${(ownedCount / totalCount) * 100}%` : "0%" }}
             />
           </div>
-          <span className="syn-progress-label">{ownedCount} / {totalCount} complete</span>
+          <span className={SYN_PROGRESS_LABEL_CLASS}>{ownedCount} / {totalCount} complete</span>
         </div>
         <button
-          className={`syn-filter-btn ${missingOnly ? "active" : ""}`}
+          className={`${SYN_FILTER_CLASS} ${missingOnly ? SYN_FILTER_ACTIVE_CLASS : SYN_FILTER_IDLE_CLASS}`}
           style={missingOnly ? { ["--syn-color" as string]: meta?.color } as React.CSSProperties : undefined}
           onClick={() => set("missingOnly", !missingOnly)}
         >
           Missing only
         </button>
         {isFiltered && (
-          <button className="fchip fchip-reset" onClick={() => onFiltersChange({ ...filters, missingOnly: false, search: "" })}>
+          <FilterChip reset onClick={() => onFiltersChange({ ...filters, missingOnly: false, search: "" })}>
             Show All
-          </button>
+          </FilterChip>
         )}
       </div>
 
       {/* ── Item list ── */}
-      <div className="syn-body">
-        {loading && <div className="syn-loading">Loading syndicate data…</div>}
+      <div className={SYN_BODY_CLASS}>
+        {loading && <div className={SYN_LOADING_CLASS}>Loading syndicate data…</div>}
         {!loading && groupSyndicates.length === 0 && (
-          <div className="syn-empty">No data yet. Refresh the item database from Settings.</div>
+          <div className={SYN_EMPTY_CLASS}>No data yet. Refresh the item database from Settings.</div>
         )}
         {!loading && groupSyndicates.length > 0 && tierGroups.length === 0 && (
-          <div className="syn-empty">
+          <div className={SYN_EMPTY_CLASS}>
             {missingOnly ? "Nothing missing — all items complete!" : "No items for this syndicate."}
           </div>
         )}
         {tierGroups.map(({ tier, items }) => {
           const tierComplete = items.filter(i => itemStatus(i, inventory) === "complete").length;
           return (
-            <div key={tier} className="syn-tier-group">
-              <div className="syn-tier-header">
+            <div key={tier} className={SYN_TIER_GROUP_CLASS}>
+              <div className={SYN_TIER_HEADER_CLASS}>
                 {tier || "General"}
-                <span style={{ color: "var(--text-dim)", fontWeight: 400, marginLeft: 6 }}>
+                <span className="ml-1.5 font-normal text-muted">
                   — {tierComplete}/{items.length}
                 </span>
               </div>
-              <div className="syn-items-grid">
+              <div className={SYN_GRID_CLASS}>
                 {items.map(item => {
                   const status = itemStatus(item, inventory);
                   return (
                     <div
                       key={item.unique_name}
-                      className={`syn-item ${status === "none" ? "missing" : ""} status-row-${status}`.trim()}
+                      className={`${SYN_ITEM_CLASS} ${SYN_ITEM_ROW_CLASS[status]}${status === "none" ? " opacity-50" : ""}`}
                     >
                       <ItemImg imageName={item.image_name} category={item.category} />
-                      <div className="syn-item-info">
-                        <div className="syn-item-name">{item.name}</div>
-                        <div className="syn-item-cat">{item.category}</div>
+                      <div className={SYN_ITEM_INFO_CLASS}>
+                        <div className={SYN_ITEM_NAME_CLASS}>{item.name}</div>
+                        <div className={SYN_ITEM_CAT_CLASS}>{item.category}</div>
                       </div>
                       <StatusBadge status={status} />
                     </div>

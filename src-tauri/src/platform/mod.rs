@@ -82,7 +82,6 @@ pub struct MemoryRegionInfo {
     pub region_size: usize,
     pub is_committed: bool,
     pub is_readable: bool,
-    pub is_writable: bool,
     pub is_executable: bool,
     pub backing: RegionBacking,
 }

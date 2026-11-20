@@ -227,7 +227,7 @@ fn move_db(old: &Path, data: &Path) {
 /// Returns whether `dst` now holds the file. An existing destination is left
 /// untouched and reported as success: the new location wins, and the stale
 /// copy stays where it is for the user to inspect.
-fn move_file(src: &Path, dst: &Path) -> bool {
+pub(crate) fn move_file(src: &Path, dst: &Path) -> bool {
     if !src.exists() {
         return false;
     }

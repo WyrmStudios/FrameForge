@@ -160,7 +160,7 @@ export default function ModularWindowPage() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "var(--surface)", overflow: "hidden" }}>
+    <div className="flex h-screen overflow-hidden bg-surface">
       <ModularWindow
         tracked={tracked}
         onTrackedChange={handleTrackedChange}

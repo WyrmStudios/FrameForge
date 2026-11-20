@@ -8,6 +8,7 @@ export interface CatalogItem {
   mastery_req?: number | null;
   max_level_cap?: number | null;
   masterable?: boolean | null;
+  tradeable_wfm?: boolean | null;
   source_type?: string;
 }
 

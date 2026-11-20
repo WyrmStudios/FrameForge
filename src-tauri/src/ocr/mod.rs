@@ -91,6 +91,13 @@ pub struct MatchParams<'a> {
     pub capture_info: &'a str,
     pub hint_squad_size: Option<usize>,
     pub player_names: &'a [String],
+    /// EE.log's "gets reward /Lotus/..." path for the local player, when the
+    /// VoidProjections handshake has resolved it for this session. A 100%-
+    /// certain, non-OCR source for whichever card is the local player's own
+    /// reward — used as a trusted override for that one card, since it's
+    /// also the card most likely to carry an "Owned"/"Crafted" ribbon whose
+    /// pixels corrupt the title OCR (see Pattern B, Sikewyrm test case).
+    pub own_item: Option<&'a str>,
 }
 
 /// What the card icon looks like, used to constrain catalog matching.
@@ -206,26 +213,76 @@ pub fn normalise(s: &str) -> String {
 
 /// Scan the captured image for the coloured rarity bars below each reward card.
 /// Returns (card_x_centers, bar_y_frac) where centers are fractions of image width.
+/// Rarity-bar colour/brightness heuristic, shared by the full-width band
+/// scan in `find_rarity_bars` and the narrow fixed-window probe in
+/// `probe_card_count`.
+#[inline]
+fn is_bar_pixel(b: u32, g: u32, r: u32) -> bool {
+    let lum = (r + g + b) / 3;
+    if lum < 25 { return false; }
+    let is_orange = r > 80  && r > b + 20;
+    let is_teal   = b > 65  && g > 50  && b > r + 8;
+    let is_gold   = r > 100 && g > 80  && b < r.saturating_sub(10);
+    let max_ch = r.max(g).max(b);
+    let min_ch = r.min(g).min(b);
+    let is_bright = lum > 160 && max_ch - min_ch < 50;
+    is_orange || is_teal || is_gold || is_bright
+}
+
+// The bar band used by both the full-width scan and the fixed-window probe.
+const BAR_BAND_Y_LO_FRAC: f32 = 0.55;
+const BAR_BAND_Y_HI_FRAC: f32 = 0.97;
+
+/// Direct card-count check, tried before any dynamic column detection.
+///
+/// Instead of scanning the whole width for an unknown number of bars and
+/// clustering them (ambiguous when two cards' bars sit close together), this
+/// asks a yes/no question per candidate count: does the *outermost* card's
+/// known x-position for an N-card layout show a real rarity bar? Checked
+/// descending from 4 to 1 — a layout's outer slot only lights up when that
+/// many cards are actually present, so the first hit is the true count.
+/// Windows are centred on the leftmost `hardcoded_card_centers` position for
+/// each N (already-tuned values, not new unvalidated constants).
+fn probe_card_count(pixels: &[u8], pix_w: u32, pix_h: u32) -> Option<usize> {
+    const HALF_WIDTH: f32 = 0.03;
+    let y_lo = (pix_h as f32 * BAR_BAND_Y_LO_FRAC) as u32;
+    let y_hi = (pix_h as f32 * BAR_BAND_Y_HI_FRAC) as u32;
+    if y_hi <= y_lo { return None; }
+    let band_height = (y_hi - y_lo) as f32;
+
+    for n in (1..=4usize).rev() {
+        let center = hardcoded_card_centers(n)[0];
+        let x_lo = ((center - HALF_WIDTH) * pix_w as f32).max(0.0) as u32;
+        let x_hi = ((center + HALF_WIDTH) * pix_w as f32).min(pix_w as f32 - 1.0) as u32;
+        if x_hi <= x_lo { continue; }
+
+        let mut col_score = vec![0u32; (x_hi - x_lo) as usize];
+        for y in y_lo..y_hi {
+            for (xi, x) in (x_lo..x_hi).enumerate() {
+                let i = ((y * pix_w + x) * 4) as usize;
+                if i + 2 < pixels.len()
+                    && is_bar_pixel(pixels[i] as u32, pixels[i+1] as u32, pixels[i+2] as u32)
+                {
+                    col_score[xi] += 1;
+                }
+            }
+        }
+        let max_col = col_score.iter().max().copied().unwrap_or(0);
+        // A real bar lights most of the probe column's height, not a stray pixel.
+        if max_col as f32 >= band_height * 0.4 {
+            return Some(n);
+        }
+    }
+    None
+}
+
 pub fn find_rarity_bars(pixels: &[u8], pix_w: u32, pix_h: u32) -> (Option<(Vec<f32>, f32)>, String) {
     let x_lo = (pix_w as f32 * 0.05) as u32;
     let x_hi = (pix_w as f32 * 0.95) as u32;
-    let y_lo = (pix_h as f32 * 0.55) as u32;
-    let y_hi = (pix_h as f32 * 0.97) as u32;
+    let y_lo = (pix_h as f32 * BAR_BAND_Y_LO_FRAC) as u32;
+    let y_hi = (pix_h as f32 * BAR_BAND_Y_HI_FRAC) as u32;
 
     let scan_w = (x_hi - x_lo) as usize;
-
-    #[inline]
-    fn is_bar_pixel(b: u32, g: u32, r: u32) -> bool {
-        let lum = (r + g + b) / 3;
-        if lum < 25 { return false; }
-        let is_orange = r > 80  && r > b + 20;
-        let is_teal   = b > 65  && g > 50  && b > r + 8;
-        let is_gold   = r > 100 && g > 80  && b < r.saturating_sub(10);
-        let max_ch = r.max(g).max(b);
-        let min_ch = r.min(g).min(b);
-        let is_bright = lum > 160 && max_ch - min_ch < 50;
-        is_orange || is_teal || is_gold || is_bright
-    }
 
     let mut col_score = vec![0u32; scan_w];
     for y in y_lo..y_hi {
@@ -284,6 +341,15 @@ pub fn find_rarity_bars(pixels: &[u8], pix_w: u32, pix_h: u32) -> (Option<(Vec<f
         }
     }
     if in_band && scan_w - band_start >= min_band { bands.push((band_start, scan_w)); }
+
+    // Discard bands much narrower than the widest one. The `is_bright`
+    // brightness heuristic in `is_bar_pixel` also fires on bright HUD text
+    // (e.g. a stray UI label near the reward row), which can show up as a
+    // thin extra band alongside the real rarity bars and push the count
+    // past the real card count or break `bar_centers_are_valid`'s gap check.
+    if let Some(max_width) = bands.iter().map(|(s, e)| e - s).max() {
+        bands.retain(|(s, e)| (e - s) as f32 >= max_width as f32 * 0.35);
+    }
 
     let lit_count = lit.iter().filter(|&&b| b).count();
     if bands.is_empty() {
@@ -499,6 +565,81 @@ fn hardcoded_card_centers(n: usize) -> Vec<f32> {
     }
 }
 
+/// Groups OCR text entries into card candidates by 2D proximity: two entries
+/// join the same cluster when both their x-gap and y-gap are within
+/// tolerance. This is what lets a wrapped 2-line title ("Lavos Prime Chassis"
+/// / "Blueprint" — same x, one line-height apart) join one card, while two
+/// different cards sitting on the same visual row (same y, card-width x-gap)
+/// stay separate. Union-find over all pairs, since a title can in principle
+/// wrap to a middle line that bridges top and bottom fragments.
+/// Returns clusters sorted left-to-right by mean x.
+fn cluster_title_entries(
+    entries: &[(String, f32, f32)],
+    x_tol: f32,
+    y_tol: f32,
+) -> Vec<(Vec<String>, f32)> {
+    let n = entries.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        if parent[i] != i {
+            let root = find(parent, parent[i]);
+            parent[i] = root;
+        }
+        parent[i]
+    }
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (_, xi, yi) = &entries[i];
+            let (_, xj, yj) = &entries[j];
+            if (xi - xj).abs() <= x_tol && (yi - yj).abs() <= y_tol {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                if ri != rj { parent[ri] = rj; }
+            }
+        }
+    }
+    let mut groups: std::collections::HashMap<usize, (Vec<String>, Vec<f32>)> =
+        std::collections::HashMap::new();
+    for (i, (text, x, _y)) in entries.iter().enumerate() {
+        let root = find(&mut parent, i);
+        let entry = groups.entry(root).or_default();
+        entry.0.push(text.clone());
+        entry.1.push(*x);
+    }
+    let mut clusters: Vec<(Vec<String>, f32)> = groups.into_values()
+        .map(|(texts, xs)| {
+            let cx = xs.iter().sum::<f32>() / xs.len() as f32;
+            (texts, cx)
+        })
+        .collect();
+    clusters.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    clusters
+}
+
+/// A squad can never produce more reward cards than it has members — if
+/// clustering (run with no knowledge of squad size) finds more candidates
+/// than that hard cap, two of them are really one card whose title split
+/// across a wider gap than `cluster_title_entries`'s tolerance expected.
+/// Repeatedly merge whichever adjacent pair (clusters are x-sorted) has the
+/// smallest x-gap until the cap is met — the smallest gap is the one most
+/// likely to be a single over-split card rather than two real neighbours.
+fn merge_clusters_to_cap(mut clusters: Vec<(Vec<String>, f32)>, cap: usize) -> Vec<(Vec<String>, f32)> {
+    while clusters.len() > cap && clusters.len() > 1 {
+        let mut best_i = 0usize;
+        let mut best_gap = f32::MAX;
+        for i in 0..clusters.len() - 1 {
+            let gap = clusters[i + 1].1 - clusters[i].1;
+            if gap < best_gap { best_gap = gap; best_i = i; }
+        }
+        let (texts_b, cx_b) = clusters.remove(best_i + 1);
+        let (texts_a, cx_a) = &mut clusters[best_i];
+        let n_a = texts_a.len() as f32;
+        let n_b = texts_b.len() as f32;
+        *cx_a = (*cx_a * n_a + cx_b * n_b) / (n_a + n_b);
+        texts_a.extend(texts_b);
+    }
+    clusters
+}
+
 fn build_word_set(texts: &[String]) -> std::collections::HashSet<String> {
     let corrected = texts.join(" ")
         .replace('@', "bl").replace(')', "d").replace('&', " p");
@@ -524,8 +665,16 @@ fn score_item(display_name: &str, words: &std::collections::HashSet<String>) -> 
         .filter(|&&w| word_found_in_set(w, words))
         .count();
 
-    let base = (matched as f32 / n_catalog)
-        .max(if n_ocr > 0.0 { matched as f32 / n_ocr } else { 0.0 });
+    // A full catalog match scores 1.0. A partial match is capped at 0.9, so an
+    // extra unmatched catalog word (e.g. "Chassis" on "Lavos Prime Chassis
+    // Blueprint") can't beat the exact name via the length bonus below.
+    let base = if matched == item_words.len() {
+        1.0
+    } else {
+        (matched as f32 / n_catalog)
+            .max(if n_ocr > 0.0 { matched as f32 / n_ocr } else { 0.0 })
+            * 0.9
+    };
 
     let len_bonus: f32 = item_words.iter()
         .filter(|&&w| !word_found_in_set(w, words))
@@ -548,14 +697,19 @@ fn score_item(display_name: &str, words: &std::collections::HashSet<String>) -> 
 pub fn match_reward_items(
     params: MatchParams<'_>,
 ) -> (bool, bool, Vec<String>, Vec<f32>, String) {
-    let MatchParams { pixels, pix_w, pix_h, raw_full, ocr_lines, catalog, capture_info, hint_squad_size, player_names } = params;
+    let MatchParams { pixels, pix_w, pix_h, raw_full, ocr_lines, catalog, capture_info, hint_squad_size, player_names, own_item } = params;
 
+    // Rarity bars and the outer-slot probe are diagnostic-only — logged in the
+    // debug output below, but never used to decide card count or column
+    // position. Real debug sessions showed bars firing confidently on the
+    // wrong screen (mission-end HUD) before the reward screen even rendered,
+    // and flip-flopping attempt-to-attempt even once the real screen was up.
     let (bar_result, bar_diag) = find_rarity_bars(pixels, pix_w, pix_h);
-
-    let (card_centers, _bar_y_frac): (Vec<f32>, f32) = match &bar_result {
-        Some((centers, by)) => (centers.clone(), *by),
-        None => (vec![], 0.0),
-    };
+    let probed_card_count = probe_card_count(pixels, pix_w, pix_h);
+    let bars_look_valid = bar_result.as_ref()
+        .is_some_and(|(centers, _)| bar_centers_are_valid(centers));
+    let have_bars = bar_result.is_some();
+    let _bar_y_frac = bar_result.as_ref().map(|(_, by)| *by).unwrap_or(0.0);
 
     let ocr_y_max: f32 = 0.57;
 
@@ -583,7 +737,6 @@ pub fn match_reward_items(
             && meaningful.iter().all(|w| BADGE_WORDS.contains(&w.to_lowercase().as_str()))
     };
 
-    let raw_norm = normalise(raw_full);
     let is_prime_like = |w: &str| -> bool {
         if w.starts_with("prim") && w.len() >= 4 { return true; }
         if w == "pri" { return true; }
@@ -595,47 +748,45 @@ pub fn match_reward_items(
         if w.len() >= 3 && w.len() <= 7 { return lev_dist(w, "forma") <= 1; }
         false
     };
+
+    // Title-band entries (text, x, y) that survive the y/badge/player-name
+    // filters — card count and column position now emerge from clustering
+    // these by (x, y) proximity, instead of being decided before looking at
+    // them. A wrapped 2-line title ("Lavos Prime Chassis" / "Blueprint" —
+    // same x, one line-height apart) joins one cluster; two different cards
+    // on the same row (same y, card-width x-gap) stay in separate clusters.
+    let title_entries: Vec<(String, f32, f32)> = ocr_lines.iter()
+        .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
+        .map(|(t, x, y)| (t.clone(), *x, *y))
+        .collect();
+    let title_lines: Vec<&str> = title_entries.iter().map(|(t, _, _)| t.as_str()).collect();
+
+    // Prime/Forma keyword count is logged as a cross-check against the
+    // cluster-derived card count below, not used to drive it — every Prime
+    // part and every Forma card says one of these words, so a big mismatch
+    // is a useful diagnostic even though it no longer picks the count.
+    let raw_norm = normalise(&title_lines.join(" "));
     let prime_count = raw_norm.split_whitespace().filter(|&w| is_prime_like(w)).count();
     let forma_count  = raw_norm.split_whitespace().filter(|&w| is_forma_like(w)).count();
 
-    let ocr_cluster_count: usize = {
-        let mut xs: Vec<f32> = ocr_lines.iter()
-            .filter(|(t, _, y)| t.trim().len() >= 3 && *y >= 0.10 && *y < ocr_y_max && !is_player_name(t) && !is_ui_badge(t))
-            .map(|(_, x, _)| *x)
-            .collect();
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        if xs.is_empty() { 0 }
-        else {
-            let mut count = 1usize;
-            let mut cluster_sum = xs[0];
-            let mut cluster_n   = 1usize;
-            for &x in &xs[1..] {
-                let center = cluster_sum / cluster_n as f32;
-                if x - center > 0.10 {
-                    count += 1;
-                    cluster_sum = x;
-                    cluster_n   = 1;
-                } else {
-                    cluster_sum += x;
-                    cluster_n   += 1;
-                }
-            }
-            count.min(4)
-        }
-    };
-    let word_card_count = (prime_count + forma_count)
-        .max(ocr_cluster_count)
-        .max(hint_squad_size.unwrap_or(0))
-        .clamp(1, 4);
-
-    let bars_trusted = !card_centers.is_empty()
-        && card_centers.len() == word_card_count
-        && bar_centers_are_valid(&card_centers);
-    let active_centers: Vec<f32> = if bars_trusted {
-        card_centers.clone()
-    } else {
-        hardcoded_card_centers(word_card_count)
-    };
+    // x-gap tolerance tight enough to keep two adjacent cards' titles apart
+    // while tolerating normal OCR jitter within one card's own title.
+    const CLUSTER_X_TOL: f32 = 0.06;
+    // y-gap tolerance wide enough to join a wrapped title's second line (one
+    // line-height below, same x) to its first, but well short of the gap to
+    // an unrelated row further down (e.g. a leaked "N Owned/Crafted" badge).
+    const CLUSTER_Y_TOL: f32 = 0.08;
+    let raw_clusters = cluster_title_entries(&title_entries, CLUSTER_X_TOL, CLUSTER_Y_TOL);
+    let raw_cluster_count = raw_clusters.len();
+    // hint_squad_size is a hard ceiling (a squad can never produce more cards
+    // than members) but NOT a floor: DE's client-side EE.log never reveals
+    // whether another squad member's reward was null, so a squad of 4 with
+    // one empty-handed member still only shows 3 cards. If clustering found
+    // more candidates than the ceiling allows, merge the closest adjacent
+    // pair(s) back together — the smallest x-gap is the one most likely to
+    // be a single over-split title rather than two real neighbouring cards.
+    let squad_cap = hint_squad_size.unwrap_or(4).clamp(1, 4);
+    let columns: Vec<(Vec<String>, f32)> = merge_clusters_to_cap(raw_clusters, squad_cap);
 
     let raw_ocr_log: String = {
         let mut lines_log = Vec::new();
@@ -665,36 +816,14 @@ pub fn match_reward_items(
         lines_log.join("\n")
     };
 
-    let columns: Vec<(Vec<String>, f32)> = {
-        let mut cols: Vec<(Vec<String>, f32)> =
-            active_centers.iter().map(|&cx| (Vec::new(), cx)).collect();
-        for (text, x, y) in ocr_lines {
-            if *y < 0.10 || *y >= ocr_y_max || is_player_name(text) || is_ui_badge(text) { continue; }
-            let idx = active_centers.iter().enumerate()
-                .min_by(|(_, a), (_, b)| {
-                    (x - *a).abs().partial_cmp(&(x - *b).abs())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            cols[idx].0.push(text.clone());
-        }
-        cols
-    };
-
     let mut items: Vec<String> = Vec::new();
     let mut positions: Vec<f32> = Vec::new();
-
-    let (_bar_y_frac, have_bars) = match &bar_result {
-        Some((_, by)) => (*by, true),
-        None => (0.0f32, false),
-    };
 
     let mut col_match_log: Vec<String> = Vec::new();
     let mut any_low_confidence = false;
 
     for (col_idx, (col_texts, cx)) in columns.iter().enumerate() {
-        if items.len() >= active_centers.len() { break; }
+        if items.len() >= squad_cap { break; }
         let words = build_word_set(col_texts);
 
         let col_preview: Vec<&str> = col_texts.iter().take(4).map(|s| s.trim()).collect();
@@ -703,6 +832,26 @@ pub fn match_reward_items(
                 "  Col[{}] x={:.2}: (no words) — skipped\n    OCR: {:?}",
                 col_idx, cx, col_preview));
             continue;
+        }
+
+        // An "Owned"/"Crafted" ribbon sitting near this column's title is
+        // the clearest known OCR-corruption case (the ribbon's pixels bleed
+        // into the title read — real case: "Calibaäl Prime@ueprint" instead
+        // of "Caliban Prime Blueprint"). Loose x tolerance on purpose: the
+        // ribbon isn't always x-aligned with the title the way wrapped
+        // title lines are.
+        let badge_nearby = ocr_lines.iter()
+            .any(|(t, x, y)| is_ui_badge(t) && (*x - *cx).abs() < 0.15 && *y < ocr_y_max);
+
+        if badge_nearby {
+            if let Some(own) = own_item.and_then(|p| catalog.iter().find(|(u, _)| u == p)) {
+                col_match_log.push(format!(
+                    "  Col[{}] x={:.2}: badge-flagged column — EE.log own-item override → \"{}\"\n    OCR: {:?}",
+                    col_idx, cx, own.1, col_preview));
+                items.push(own.0.clone());
+                positions.push(*cx);
+                continue;
+            }
         }
 
         let mut best_score = 0.0f32;
@@ -727,12 +876,34 @@ pub fn match_reward_items(
         let top3_str = top3.iter()
             .map(|(s, n)| format!("{:.2} \"{}\"", s, n))
             .collect::<Vec<_>>().join(" · ");
+        // A garbled OCR word (e.g. "uepqint" for "blueprint") can fall
+        // outside the Levenshtein tolerance and get dropped from scoring
+        // entirely, leaving only generic words ("prime") to discriminate —
+        // that's how an unrelated item won a 3-way tie over the real
+        // "Saryn Prime Blueprint" (real case, below the 0.67 floor anyway,
+        // but the same tie shape can land above it too). A near-tie in the
+        // raw text score is treated as "not actually confident" even when
+        // the top score alone clears the floor.
+        let text_tied = top3.len() >= 2 && (top3[0].0 - top3[1].0) < 0.05;
 
         let mut icon_log = String::new();
         let mut icon_accepted = false;
         if best_score < 0.67 && have_bars {
             let bar_y = _bar_y_frac;
-            let half_w = if columns.len() > 1 { 0.56 / columns.len() as f32 / 2.0 } else { 0.10 };
+            // Columns are no longer evenly spaced, so size the icon crop from
+            // this column's actual gap to its nearest neighbour rather than
+            // an assumed fixed grid width.
+            let half_w = {
+                let left_gap = columns.get(col_idx.wrapping_sub(1))
+                    .filter(|_| col_idx > 0)
+                    .map(|(_, ocx)| (cx - ocx).abs());
+                let right_gap = columns.get(col_idx + 1).map(|(_, ocx)| (ocx - cx).abs());
+                let gaps: Vec<f32> = [left_gap, right_gap].into_iter().flatten().collect();
+                match gaps.into_iter().fold(None, |acc: Option<f32>, g| Some(acc.map_or(g, |a| a.min(g)))) {
+                    Some(min_gap) => (min_gap / 2.0).clamp(0.05, 0.14),
+                    None => 0.10,
+                }
+            };
             let icon_type = classify_card_icon(
                 pixels, pix_w, pix_h,
                 (cx - half_w).max(0.0), (cx + half_w).min(1.0), bar_y
@@ -804,11 +975,37 @@ pub fn match_reward_items(
             col_idx, cx, best_score, best_display, col_preview, words_str, top3_str, icon_log
         ));
 
-        if best_score < 0.67 {
+        // A "confident" score can still come from a sparse read: if matched/n_ocr
+        // hit 1.0 off only 1-2 OCR words, base score alone can't tell two same-length
+        // catalog candidates apart (see the "Wisp Prime Neuroptics" vs "...Chassis"
+        // false positive this was written for). Only trust the score outright when
+        // every word of the matched display name was actually seen in OCR, or the
+        // icon classifier independently confirmed it — otherwise flag for a retry.
+        let full_word_match = best_unique.as_ref()
+            .and_then(|u| catalog.iter().find(|(k, _)| k == u))
+            .map(|(_, dn)| {
+                let norm = normalise(dn);
+                let mut seen = std::collections::HashSet::new();
+                let iw: Vec<&str> = norm.split_whitespace().filter(|&w| seen.insert(w)).collect();
+                !iw.is_empty() && iw.iter().all(|&w| word_found_in_set(w, &words))
+            })
+            .unwrap_or(false);
+
+        // A near-tie in the raw text score is only a red flag when the winner
+        // itself isn't a full word match — two genuinely different candidates
+        // scoring the same with weak evidence (the "Pride Mesa..." vs "Saryn
+        // Prime Blueprint" 3-way tie, real case) is not confidence, it's luck.
+        // A tie between a short name and a longer superset of it that both
+        // happen to score 1.0 ("Lavos Prime Blueprint" vs "...Chassis
+        // Blueprint") is already resolved correctly by the word-count
+        // tiebreak above and must not be re-flagged here.
+        if best_score < 0.67 || (!icon_accepted && text_tied && !full_word_match) {
+            // No truncation here: a debug sample truncated to 3 fragments was
+            // exactly what hid the evidence needed to diagnose merged-column
+            // bugs in real user reports.
             let raw = col_texts.iter()
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
-                .take(3)
                 .collect::<Vec<_>>()
                 .join(" ");
             if !raw.is_empty() {
@@ -819,34 +1016,87 @@ pub fn match_reward_items(
         }
         let unique = match best_unique { Some(u) => u, None => continue };
 
-        // A "confident" score can still come from a sparse read: if matched/n_ocr
-        // hit 1.0 off only 1-2 OCR words, base score alone can't tell two same-length
-        // catalog candidates apart (see the "Wisp Prime Neuroptics" vs "...Chassis"
-        // false positive this was written for). Only trust the score outright when
-        // every word of the matched display name was actually seen in OCR, or the
-        // icon classifier independently confirmed it — otherwise flag for a retry.
-        let full_word_match = catalog.iter().find(|(k, _)| *k == unique)
-            .map(|(_, dn)| {
-                let norm = normalise(dn);
-                let mut seen = std::collections::HashSet::new();
-                let iw: Vec<&str> = norm.split_whitespace().filter(|&w| seen.insert(w)).collect();
-                !iw.is_empty() && iw.iter().all(|&w| word_found_in_set(w, &words))
-            })
-            .unwrap_or(false);
         if !icon_accepted && !full_word_match {
             any_low_confidence = true;
         }
 
+        // A badge-flagged column without an EE.log override (handled above)
+        // and without a full word match is exactly the unreliable-OCR case
+        // this is guarding against — don't lock in a possibly-wrong identity
+        // (Pattern B: a ribbon-corrupted "Calibaäl Prime@ueprint" confidently
+        // matched the wrong item). Demote to low-confidence instead so the
+        // retry loop gets another frame to read it cleanly.
+        if badge_nearby && !full_word_match && !icon_accepted {
+            col_match_log.push(format!(
+                "  Col[{}] x={:.2}: badge-flagged column without full word match — demoted to low-confidence",
+                col_idx, cx));
+            let raw = col_texts.iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !raw.is_empty() {
+                items.push(format!("?:{}", raw));
+                positions.push(*cx);
+            }
+            continue;
+        }
+
+        // Split-detection: the x/y clustering above can still under-split two
+        // real cards into one bucket (e.g. unusually wide OCR jitter on that
+        // attempt). After accounting for every word of the chosen match,
+        // check whether the leftover words independently point at a second
+        // catalog item — if so, recover it as its own card instead of
+        // silently discarding it. This is exactly how "Atlas Prime Chassis
+        // Blueprint" got lost merging into a forced "Braton Prime Blueprint"
+        // bucket before this redesign (real debug log, Voltar test 3).
+        let chosen_words: std::collections::HashSet<String> = catalog.iter()
+            .find(|(k, _)| k == &unique)
+            .map(|(_, dn)| normalise(dn).split_whitespace().map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+        let leftover_words: std::collections::HashSet<String> = words.iter()
+            .filter(|w| !chosen_words.contains(w.as_str()))
+            .cloned()
+            .collect();
+        let mut split_item: Option<String> = None;
+        if !badge_nearby && leftover_words.len() >= 2 && items.len() + 1 < squad_cap {
+            let mut split_best_score = 0.0f32;
+            let mut split_best_unique: Option<String> = None;
+            for (u2, dn2) in catalog {
+                if dn2.len() < 5 || *u2 == unique { continue; }
+                let s2 = score_item(dn2, &leftover_words);
+                if s2 > split_best_score {
+                    split_best_score = s2;
+                    split_best_unique = Some(u2.clone());
+                }
+            }
+            if split_best_score >= 0.55 {
+                if let Some(u2) = split_best_unique {
+                    let split_name = catalog.iter().find(|(k, _)| k == &u2)
+                        .map(|(_, n)| n.as_str()).unwrap_or("?");
+                    col_match_log.push(format!(
+                        "  Col[{}] split: leftover {{{}}} → \"{}\" ({:.2}) — recovered as separate card",
+                        col_idx,
+                        { let mut lw: Vec<&str> = leftover_words.iter().map(|s| s.as_str()).collect(); lw.sort(); lw.join(", ") },
+                        split_name, split_best_score
+                    ));
+                    split_item = Some(u2);
+                }
+            }
+        }
+
         items.push(unique);
         positions.push(*cx);
+        if let Some(u2) = split_item {
+            items.push(u2);
+            positions.push(*cx);
+        }
         let _ = col_idx;
     }
 
-    let estimated_cards = hint_squad_size
-        .unwrap_or(0)
-        .max(word_card_count)
-        .max(if bars_trusted { card_centers.len() } else { 0 })
-        .max(1);
+    // The card count is the (squad-capped) cluster count itself — there is
+    // no separate bar/word-driven estimate left to reconcile it against.
+    let estimated_cards = columns.len().max(1);
 
     let fill_limit = estimated_cards.min(
         columns.iter().filter(|(t, _)| !build_word_set(t).is_empty()).count()
@@ -937,19 +1187,25 @@ pub fn match_reward_items(
         }
     }
 
-    let col_mode = if bars_trusted { "bar columns (validated)" }
-                   else if have_bars { "hardcoded (bars rejected)" }
-                   else { "hardcoded (no bars)" };
+    let col_mode = "clustered (x/y proximity)";
     let ff_items: Vec<&str> = items.iter().map(|s| {
         catalog.iter().find(|(u,_)| u == s).map(|(_,n)| n.as_str()).unwrap_or(s.as_str())
     }).collect();
     let n_confirmed = items.iter().filter(|s| !s.starts_with("?:")).count();
     let is_complete = n_confirmed > 0 && n_confirmed >= estimated_cards;
-    let expected_src = match (hint_squad_size, !card_centers.is_empty()) {
-        (Some(h), _) if h >= word_card_count && h >= card_centers.len() => "EE.log",
-        (_, true) if card_centers.len() >= word_card_count => "bars",
-        _ if ocr_cluster_count > prime_count + forma_count => "x-clusters",
-        _ => "prime+forma",
+    let expected_src = if raw_cluster_count > squad_cap {
+        "clusters, capped to squad size"
+    } else {
+        "clusters"
+    };
+    let bars_str = match &bar_result {
+        Some(_) => format!("{} ({}, diagnostic only)", bar_diag,
+            if bars_look_valid { "geometrically valid" } else { "geometrically invalid" }),
+        None => format!("{} (diagnostic only)", bar_diag),
+    };
+    let probe_str = match probed_card_count {
+        Some(n) => format!("{} cards (outer-slot bar present, diagnostic only)", n),
+        None    => "no confident slot (diagnostic only)".into(),
     };
     let ee_hint_str = match hint_squad_size {
         Some(n) => format!("{} players (from EE.log)", n),
@@ -959,7 +1215,8 @@ pub fn match_reward_items(
         "├─ Capture  : {}\n\
          ├─ OCR      : {} chars, {} lines\n\
          ├─ Bars     : {}\n\
-         ├─ Prime/Forma: {}p + {}f + {}x = {} cards\n\
+         ├─ Bar probe: {}\n\
+         ├─ Prime/Forma cross-check: {}p + {}f (raw clusters: {})\n\
          ├─ EE hint  : {}\n\
          ├─ Expected : {} cards (from {}){}{}\n\
          ├─ Raw lines:\n{}\n\
@@ -968,8 +1225,9 @@ pub fn match_reward_items(
          └─ Items    : {:?}",
         capture_info,
         raw_full.len(), ocr_lines.len(),
-        bar_diag,
-        prime_count, forma_count, ocr_cluster_count, word_card_count,
+        bars_str,
+        probe_str,
+        prime_count, forma_count, raw_cluster_count,
         ee_hint_str,
         estimated_cards, expected_src,
         if is_complete { " ✅ complete" } else { " ⚡ partial" },
@@ -988,7 +1246,7 @@ pub fn match_reward_items(
 pub fn extract_reward_items_twophase(
     params: super::OcrParams<'_>,
 ) -> (bool, bool, Vec<String>, Vec<f32>, String) {
-    let super::OcrParams { pixels, pix_w, pix_h, game_h: _game_h, catalog, capture_info, hint_squad_size, player_names } = params;
+    let super::OcrParams { pixels, pix_w, pix_h, game_h: _game_h, catalog, capture_info, hint_squad_size, player_names, own_item } = params;
 
     let (raw_full, ocr_lines) =
         match windows::run_windows_ocr(to_bmp(pixels, pix_w, pix_h), pix_w, pix_h) {
@@ -1012,7 +1270,17 @@ pub fn extract_reward_items_twophase(
     {
         let lower = raw_full.to_lowercase();
         const QUALITY: &[&str] = &["intact", "exceptional", "flawless", "radiant"];
-        if lower.contains(" relic") && QUALITY.iter().any(|q| lower.contains(q)) {
+        // The reward card screen's own header names the cracked relic (e.g. "Axi D6
+        // Intact"), which previously tripped this same check and caused the real
+        // reward screen to be skipped for its entire lifetime. The pre-mission/
+        // inter-rotation relic PICKER screen is the thing this check is meant to
+        // catch, and it lists several of the player's relics at once — so require
+        // at least two quality-word hits (one single mention is just the reward
+        // screen's own header) before treating it as the picker and skipping.
+        let quality_hits: usize = QUALITY.iter()
+            .map(|q| lower.matches(q).count())
+            .sum();
+        if lower.contains(" relic") && quality_hits >= 2 {
             return (false, true, vec![], vec![], format!(
                 "├─ Capture  : {}\n└─ OCR      : relic selection screen detected (skipped)",
                 capture_info
@@ -1022,7 +1290,7 @@ pub fn extract_reward_items_twophase(
 
     match_reward_items(MatchParams {
         pixels, pix_w, pix_h, raw_full: &raw_full, ocr_lines: &ocr_lines,
-        catalog, capture_info, hint_squad_size, player_names,
+        catalog, capture_info, hint_squad_size, player_names, own_item,
     })
 }
 
@@ -1132,6 +1400,7 @@ mod tests {
         let (_complete, _skip, items, _positions, diag) = match_reward_items(MatchParams {
             pixels: &pixels, pix_w: 8, pix_h: 8, raw_full: &raw_full, ocr_lines: &ocr_lines,
             catalog: &catalog, capture_info: "replay", hint_squad_size: None, player_names: &player_names,
+            own_item: None,
         });
 
         let fold = |n: &str| n.trim_start_matches("2X ").to_string();
@@ -1145,6 +1414,93 @@ mod tests {
                 "Lex Prime Barrel".to_string(),
             ],
             "expected exactly the three real rewards, no fabricated fourth\n{diag}"
+        );
+    }
+
+    /// Real OCR capture from a friend's play session ("Voltar test 3", attempt #6)
+    /// where the old force-bucketed-into-N-slots matcher merged "assis"/"Blueprint"
+    /// (a garbled "Chassis Blueprint") into the same bucket as "Acceltra Prime
+    /// Blueprint" and silently dropped the chassis card entirely. The emergent
+    /// clustering redesign must keep them as separate cards.
+    #[test]
+    fn a_squad_mates_blueprint_does_not_swallow_a_neighboring_chassis_card() {
+        let lines: &[(&str, f32, f32)] = &[
+            ("@ Owned", 0.27, 0.28),
+            ("Braton Prime Barrel", 0.31, 0.52),
+            ("Volatarian", 0.30, 0.59),
+            ("B,\" 140 Crafted", 0.41, 0.28),
+            ("Forma Blueprint", 0.43, 0.52),
+            ("Obituator::", 0.44, 0.59),
+            ("@ 3 Owned", 0.53, 0.28),
+            ("FPS 118166 T168 'CPU 92« 4.12/t4.23GH21GPU 65 4.9/7.868 1 RAM 27.5/31.968", 0.82, 0.01),
+            ("Crafted", 0.67, 0.28),
+            ("Acceltra Prime Blueprint", 0.69, 0.52),
+            ("TransCatGir1551 e", 0.70, 0.59),
+            ("assis", 0.60, 0.49),
+            ("Blueprint", 0.56, 0.52),
+            ("Azuline501 e:", 0.57, 0.59),
+            ("Steel Path Bonus", 0.53, 0.77),
+            ("+1 Steel Essence", 0.53, 0.80),
+            ("Endless Bonus Resource Drop Chance Booster | 4 Relics Opened", 0.51, 0.89),
+        ];
+        let ocr_lines: Vec<(String, f32, f32)> =
+            lines.iter().map(|(t, x, y)| (t.to_string(), *x, *y)).collect();
+        let raw_full = lines.iter().map(|(t, _, _)| *t).collect::<Vec<_>>().join(" ");
+
+        let catalog: Vec<(String, String)> = [
+            "Braton Prime Barrel", "Braton Prime Blueprint",
+            "Forma Blueprint", "2X Forma Blueprint",
+            "Atlas Prime Chassis Blueprint", "Ember Prime Chassis Blueprint",
+            "Frost Prime Chassis Blueprint", "Acceltra Prime Blueprint",
+            "Afuris Prime Barrel", "Landslide Fists Prime Blueprint",
+            "Titan Extractor Prime Blueprint",
+        ]
+        .iter()
+        .map(|n| (n.to_string(), n.to_string()))
+        .collect();
+
+        let player_names: Vec<String> = [
+            "ConicalAtol1", "Volatarian", "Klaxsh", "CallMeLszy", "lv255",
+            "ChuckTesta000", "Obituator", "Azuline501", "TransCatGirl551",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let pixels = vec![0u8; 8 * 8 * 4];
+
+        let (_complete, _skip, items, _positions, diag) = match_reward_items(MatchParams {
+            pixels: &pixels, pix_w: 8, pix_h: 8, raw_full: &raw_full, ocr_lines: &ocr_lines,
+            catalog: &catalog, capture_info: "replay", hint_squad_size: Some(4), player_names: &player_names,
+            own_item: None,
+        });
+
+        let mut got = items.clone();
+        got.sort();
+        // "assis Blueprint" ties 0.94 three ways (Atlas/Ember/Frost Prime Chassis
+        // Blueprint all score equally and none is a full word match — the
+        // warframe name itself never appears in OCR) with no icon data in this
+        // synthetic test to break the tie, so the matcher correctly refuses to
+        // guess rather than confidently showing a possibly-wrong identity (see
+        // Pattern C). What matters for this test is that the chassis card stays
+        // its own card instead of being swallowed into the neighboring Acceltra
+        // column — accept either a specific chassis guess or the low-confidence
+        // placeholder.
+        let chassis_card = got.iter().find(|n| n.contains("ssis") || n.contains("Chassis"));
+        assert!(
+            chassis_card.is_some(),
+            "chassis card must not be swallowed by the neighboring Acceltra card\n{diag}"
+        );
+        let mut rest: Vec<String> = got.iter().filter(|n| *n != chassis_card.unwrap()).cloned().collect();
+        rest.sort();
+        assert_eq!(
+            rest,
+            vec![
+                "Acceltra Prime Blueprint".to_string(),
+                "Braton Prime Barrel".to_string(),
+                "Forma Blueprint".to_string(),
+            ],
+            "expected the other 3 real rewards unaffected\n{diag}"
         );
     }
 }

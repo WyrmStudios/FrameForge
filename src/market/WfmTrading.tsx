@@ -4,9 +4,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import type { WfmAuction, WfmItem, WfmManagedOrder, WfmWhisper } from "../types/market";
-import type { TradeCompletedEvent } from "../types/trades";
-import type { AddTradeArgs, WfmCloseOrderArgs, WfmCreateOrderArgs, WfmCredentials, WfmSaveCredentialsArgs, WfmSession, WfmSetAuctionVisibleArgs, WfmUpdateOrderArgs } from "../types/tauri";
-import "./WfmTrading.css";
+import type { TradeCompletedEvent, TradeSplitItem, TradeSplitPendingEvent } from "../types/trades";
+import type { AddTradeArgs, UpdateTradeArgs, WfmCloseOrderArgs, WfmCreateOrderArgs, WfmCredentials, WfmSaveCredentialsArgs, WfmSession, WfmSetAuctionVisibleArgs, WfmUpdateOrderArgs } from "../types/tauri";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,6 +65,93 @@ async function invokeWfm<T>(command: string, args?: Record<string, unknown>): Pr
   }
 }
 
+// ─── WFM classes (Tailwind) ──────────────────────────────────────────────────
+const WFM_LOGIN_WRAP  = "flex-1 flex items-center justify-center p-6";
+const WFM_LOGIN_CARD  = "bg-white/4 border border-border/60 rounded-8 p-6 w-full max-w-85 flex flex-col gap-3";
+const WFM_LOGIN_TITLE = "text-14 font-bold text-foreground";
+const WFM_LOGIN_DESC  = "text-12 text-muted leading-normal";
+const WFM_FIELD       = "flex flex-col gap-1";
+const WFM_FIELD_LABEL = "text-11 text-muted shrink-0 min-w-20";
+const WFM_INPUT       = "bg-black/20 border border-border/80 rounded-4 text-foreground text-12 px-2 py-1.25 outline-none transition-[border-color] duration-100 w-full focus:border-accent";
+const WFM_ERROR       = "text-12 text-danger py-1";
+const WFM_REMEMBER    = "flex items-center gap-1.5 text-12 text-muted cursor-pointer select-none";
+const WFM_BTN_PRIMARY = "bg-[var(--color-accent)] border-0 rounded-5 text-white text-13 font-semibold px-4 py-2 cursor-pointer transition-[opacity] duration-100 hover:opacity-85 disabled:opacity-40 disabled:cursor-default";
+const WFM_ALT_NOTE    = "text-11 text-muted leading-normal mt-2";
+const WFM_ALT_LINK    = "text-accent underline";
+const WFM_TRADING     = "flex flex-col h-full overflow-hidden";
+const WFM_HEADER      = "flex items-center px-3 py-1.5 border-b border-border shrink-0 gap-2";
+const WFM_TABS        = "flex gap-0.5";
+const WFM_TAB         = "relative border border-border/60 bg-transparent text-muted text-12 px-3 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100 hover:bg-white/6 hover:text-foreground";
+const WFM_TAB_ON      = "relative border border-accent bg-accent/15 text-accent text-12 px-3 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100";
+const WFM_BADGE       = "inline-flex items-center justify-center bg-danger text-white text-10 font-bold rounded-10 min-w-4 h-4 px-1 ml-1 align-middle";
+const WFM_SESSION     = "flex items-center gap-1.25 ml-auto";
+const WFM_STATUS_PICKER = "flex gap-0.75 items-center";
+const WFM_OPT         = "border rounded-full w-4.5 h-4.5 text-8 cursor-pointer flex items-center justify-center transition-[opacity,border-color] duration-150 p-0 hover:enabled:opacity-70 disabled:cursor-default";
+const WFM_ST          = { online: { c: "text-success", on: "bg-success/15" }, ingame: { c: "text-accent", on: "bg-accent/15" }, invisible: { c: "text-muted", on: "bg-muted/15" } } as const;
+const WFM_USERNAME    = "text-12 text-foreground font-semibold";
+const WFM_LOGOUT      = "bg-transparent border-0 text-muted text-14 cursor-pointer px-0.5 leading-none transition-[color] duration-100 hover:text-danger";
+const WFM_PANEL       = "flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 flex flex-col gap-1";
+const WFM_SECTION_LABEL = "text-10 font-bold uppercase tracking-0.04 text-muted pt-0.5 pb-1";
+const WFM_SECTION_ROW = "flex items-center gap-0";
+const WFM_REFRESH     = "bg-transparent border-0 text-muted text-14 cursor-pointer pl-1.5 leading-none transition-[color] duration-100 hover:text-foreground";
+const WFM_BULK        = "bg-transparent border border-border/50 rounded-3 text-9 font-bold px-1.25 py-0.25 cursor-pointer whitespace-nowrap normal-case tracking-normal ml-1 transition-[background,border-color,color] duration-100";
+const WFM_BULK_SHOW   = `${WFM_BULK} text-success hover:bg-success/12 hover:border-[var(--color-success)]`;
+const WFM_BULK_HIDE   = `${WFM_BULK} text-muted hover:bg-white/6 hover:border-muted/50 hover:text-foreground`;
+const WFM_EMPTY       = "p-5 text-center text-12 text-muted";
+const WFM_VIS_BTN     = "bg-transparent border-0 cursor-pointer text-13 p-0 leading-none opacity-70 shrink-0 transition-[opacity] duration-100 hover:opacity-100";
+const WFM_HINT        = "text-11 text-muted pb-2 italic";
+const WFM_SEARCH      = "w-full bg-[var(--color-surface)] border border-border rounded-6 text-foreground text-12 px-2 py-1.25 mb-1.5 outline-none focus:border-accent";
+const WFM_ORDERS      = "flex flex-col gap-0.5";
+const WFM_ORDER_ROW   = "flex items-center gap-1.5 px-2 py-1.25 bg-white/3 border border-border/35 rounded-4 transition-[background] duration-100 hover:bg-white/6";
+const WFM_TYPE        = "text-10 font-bold px-1.25 py-0.25 rounded-3 shrink-0";
+const WFM_TYPES       = { sell: `${WFM_TYPE} bg-success/15 text-success`, buy: `${WFM_TYPE} bg-accent/15 text-accent`, direct: `${WFM_TYPE} bg-direct-trade/15 text-direct-trade`, auction: `${WFM_TYPE} bg-ducat/15 text-ducat` } as const;
+const WFM_ORDER_NAME  = "flex-1 text-12 text-foreground truncate min-w-0";
+const WFM_ORDER_PRICE = "text-12 font-bold text-ducat shrink-0 tabular-nums";
+const WFM_ORDER_QTY   = "text-11 text-muted shrink-0 min-w-6";
+const WFM_BUYOUT      = "text-11 text-muted shrink-0 min-w-15";
+const WFM_SM_BASE     = "border rounded-3 text-11 px-1.75 py-0.5 cursor-pointer whitespace-nowrap transition-[background,color] duration-100";
+const WFM_SM_OFF      = `${WFM_SM_BASE} bg-white/6 border-border/50 text-muted hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_DEL      = `${WFM_SM_BASE} bg-white/6 border-border/50 text-muted hover:bg-white/12 hover:border-danger hover:text-danger`;
+const WFM_SM_SAVE     = `${WFM_SM_BASE} bg-white/6 border-[var(--color-success)] text-success hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_INVITE   = `${WFM_SM_BASE} bg-white/6 border-[var(--color-accent)] text-accent hover:bg-white/12 hover:text-foreground`;
+const WFM_SM_REVERT   = `${WFM_SM_BASE} bg-white/6 !border-confirm/45 !text-success hover:bg-white/12 hover:!bg-confirm/12 disabled:opacity-50 disabled:cursor-default`;
+const WFM_AE_OVERLAY  = "fixed inset-0 bg-black/60 flex items-center justify-center z-1000";
+const WFM_AE_CARD     = "bg-transparent border border-border rounded-8 w-75 max-w-[95vw] flex flex-col overflow-hidden";
+const WFM_AE_HEADER   = "flex items-center gap-2 px-3.5 py-3 border-b border-border";
+const WFM_AE_TITLE    = "text-14 font-semibold text-foreground";
+const WFM_RIVEN_MOD   = "italic text-muted text-[0.92em]";
+const WFM_AE_BODY     = "flex flex-col gap-3 p-3.5";
+const WFM_AE_FIELD    = "flex flex-col gap-1.25";
+const WFM_AE_LABEL    = "text-11 text-muted";
+const WFM_AE_VIS_ROW  = "flex gap-1";
+const WFM_VIS_ON      = `${WFM_SM_BASE} bg-accent/20 border-accent text-accent`;
+const WFM_AE_HINT     = "text-10 text-muted italic";
+const WFM_AE_TYPE_WARN = "block mt-1 text-10 text-ducat";
+const WFM_AE_INPUT_ROW = "flex items-center gap-1.25";
+const WFM_AE_INPUT    = "w-20 bg-black/30 border border-border/80 rounded-3 text-foreground text-12 px-1.5 py-1 outline-none focus:border-accent";
+const WFM_PLAT        = "text-11 text-ducat shrink-0";
+const WFM_AE_ERROR    = "text-11 text-danger pt-0.5";
+const WFM_AE_FOOTER   = "flex gap-1.5 px-3.5 py-2.5 border-t border-border justify-end";
+const WFM_CHANGELOG   = "mt-3.5 border-t border-border pt-2";
+const WFM_CH_ROW      = "flex items-center gap-1.5 px-1 py-1.25 rounded-4 text-12 border-b border-border/40 last:border-b-0";
+const WFM_CH_BADGE    = "shrink-0 w-4.5 h-4.5 rounded-full flex items-center justify-center text-11 font-bold";
+const WFM_CH_TEXT     = "flex-1 min-w-0 truncate text-foreground";
+const WFM_CH_PLAYER   = "text-muted text-11";
+const WFM_CH_TIME     = "shrink-0 text-10 text-muted";
+const WFM_CH_REV_LABEL = "text-10 text-muted italic";
+const WFM_CLEAR       = "bg-transparent border-0 text-muted text-11 cursor-pointer self-end pb-1 underline hover:text-danger";
+const WFM_WHISPER     = "border rounded-6 px-3 py-2.5 flex flex-col gap-1.5";
+const WFM_W_HEADER    = "flex justify-between items-center";
+const WFM_W_FROM      = "text-13 font-bold text-foreground";
+const WFM_W_TIME      = "text-10 text-muted";
+const WFM_W_SUMMARY   = "text-12 text-muted";
+const WFM_W_ITEM      = "text-foreground font-semibold";
+const WFM_W_PRICE     = "text-ducat";
+const WFM_W_GHOST_BADGE = "text-11 text-success font-semibold";
+const WFM_W_ACTIONS   = "flex gap-1.25 flex-wrap";
+const WFM_W_REVERT    = "flex items-center gap-2 mt-1";
+const WFM_REVERT_HINT = "text-11 text-muted flex-1";
+
 // ── Login panel ───────────────────────────────────────────────────────────────
 
 function LoginPanel({ onLogin }: { onLogin: (u: string) => void }) {
@@ -89,34 +175,34 @@ function LoginPanel({ onLogin }: { onLogin: (u: string) => void }) {
   };
 
   return (
-    <div className="wfm-login-wrap">
-      <div className="wfm-login-card">
-        <div className="wfm-login-title">Connect warframe.market</div>
-        <p className="wfm-login-desc">Log in to view live orders, manage listings, and receive trade whispers.</p>
+    <div className={WFM_LOGIN_WRAP}>
+      <div className={WFM_LOGIN_CARD}>
+        <div className={WFM_LOGIN_TITLE}>Connect warframe.market</div>
+        <p className={WFM_LOGIN_DESC}>Log in to view live orders, manage listings, and receive trade whispers.</p>
 
-        <div className="wfm-field">
-          <label>Email</label>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+        <div className={WFM_FIELD}>
+          <label className={WFM_FIELD_LABEL}>Email</label>
+          <input className={WFM_INPUT} type="email" value={email} onChange={e => setEmail(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()} autoComplete="email" />
         </div>
-        <div className="wfm-field">
-          <label>Password</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+        <div className={WFM_FIELD}>
+          <label className={WFM_FIELD_LABEL}>Password</label>
+          <input className={WFM_INPUT} type="password" value={password} onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === "Enter" && submit()} />
         </div>
-        {error && <div className="wfm-error">{error}</div>}
-        <label className="wfm-remember-row">
+        {error && <div className={WFM_ERROR}>{error}</div>}
+        <label className={WFM_REMEMBER}>
           <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
           Remember credentials
         </label>
-        <button className="wfm-btn-primary" onClick={submit} disabled={loading || !email || !password}>
+        <button className={WFM_BTN_PRIMARY} onClick={submit} disabled={loading || !email || !password}>
           {loading ? "Logging in…" : "Log in"}
         </button>
 
-        <p className="wfm-alt-login-note">
+        <p className={WFM_ALT_NOTE}>
           Using Steam, Xbox, Discord, or GitHub to log in to warframe.market? You'll need to create
           email/password credentials first — go to{" "}
-          <a href="https://warframe.market/settings/account" target="_blank" rel="noreferrer">
+          <a className={WFM_ALT_LINK} href="https://warframe.market/settings/account" target="_blank" rel="noreferrer">
             warframe.market/settings/account
           </a>{" "}
           and fill in <strong>Create credentials</strong>, then use those here.
@@ -189,71 +275,71 @@ function AuctionEditPopup({ auction, onSave, onClose }: {
   const typeChanged = isDirect !== auction.is_direct_sell;
 
   return (
-    <div className="wfm-ae-popup-overlay" onClick={onClose}>
-      <div className="wfm-ae-popup-card" onClick={e => e.stopPropagation()}>
-        <div className="wfm-ae-popup-header">
-          <span className="wfm-ae-popup-title">
-            {weaponName}{modName && <em className="wfm-riven-mod"> {modName}</em>}
+    <div className={WFM_AE_OVERLAY} onClick={onClose}>
+      <div className={WFM_AE_CARD} onClick={e => e.stopPropagation()}>
+        <div className={WFM_AE_HEADER}>
+          <span className={WFM_AE_TITLE}>
+            {weaponName}{modName && <em className={WFM_RIVEN_MOD}> {modName}</em>}
           </span>
-          <button className="wfm-logout-btn" style={{ fontSize: 18 }} onClick={onClose}>×</button>
+          <button className={`${WFM_LOGOUT} text-lg`} onClick={onClose}>×</button>
         </div>
-        <div className="wfm-ae-popup-body">
-          <div className="wfm-ae-popup-field">
-            <label>Listing type</label>
-            <div className="wfm-ae-vis-row">
-              <button className={`wfm-btn-sm wfm-ae-vis${!isDirect ? " active" : ""}`} onClick={() => switchType(false)}>Auction</button>
-              <button className={`wfm-btn-sm wfm-ae-vis${isDirect ? " active" : ""}`} onClick={() => switchType(true)}>Direct Sale</button>
+        <div className={WFM_AE_BODY}>
+          <div className={WFM_AE_FIELD}>
+            <label className={WFM_AE_LABEL}>Listing type</label>
+            <div className={WFM_AE_VIS_ROW}>
+              <button className={isDirect ? WFM_SM_OFF : WFM_VIS_ON} onClick={() => switchType(false)}>Auction</button>
+              <button className={isDirect ? WFM_VIS_ON : WFM_SM_OFF} onClick={() => switchType(true)}>Direct Sale</button>
             </div>
             {typeChanged && (
-              <span className="wfm-ae-popup-hint wfm-ae-type-warn">
+              <span className={WFM_AE_TYPE_WARN}>
                 ⚠ Switching type deletes and recreates the listing — may take up to 20 s due to WFM rate limits
               </span>
             )}
           </div>
 
           {isDirect ? (
-            <div className="wfm-ae-popup-field">
-              <label>Price</label>
-              <div className="wfm-ae-popup-input-row">
-                <input type="number" min={1} className="wfm-ae-input" value={price}
+            <div className={WFM_AE_FIELD}>
+              <label className={WFM_AE_LABEL}>Price</label>
+              <div className={WFM_AE_INPUT_ROW}>
+                <input type="number" min={1} className={WFM_AE_INPUT} value={price}
                   onChange={e => setPrice(+e.target.value)} />
-                <span className="wfm-plat">p</span>
+                <span className={WFM_PLAT}>p</span>
               </div>
             </div>
           ) : (
             <>
-              <div className="wfm-ae-popup-field">
-                <label>Start price</label>
-                <div className="wfm-ae-popup-input-row">
-                  <input type="number" min={1} className="wfm-ae-input" value={startPrice}
+              <div className={WFM_AE_FIELD}>
+                <label className={WFM_AE_LABEL}>Start price</label>
+                <div className={WFM_AE_INPUT_ROW}>
+                  <input type="number" min={1} className={WFM_AE_INPUT} value={startPrice}
                     onChange={e => setStartPrice(+e.target.value)} />
-                  <span className="wfm-plat">p</span>
+                  <span className={WFM_PLAT}>p</span>
                 </div>
               </div>
-              <div className="wfm-ae-popup-field">
-                <label>Buyout price</label>
-                <div className="wfm-ae-popup-input-row">
-                  <input type="number" min={1} placeholder="none" className="wfm-ae-input" value={buyoutPrice}
+              <div className={WFM_AE_FIELD}>
+                <label className={WFM_AE_LABEL}>Buyout price</label>
+                <div className={WFM_AE_INPUT_ROW}>
+                  <input type="number" min={1} placeholder="none" className={WFM_AE_INPUT} value={buyoutPrice}
                     onChange={e => setBuyoutPrice(e.target.value)} />
-                  <span className="wfm-plat">p</span>
-                  <span className="wfm-ae-popup-hint">empty = no buyout</span>
+                  <span className={WFM_PLAT}>p</span>
+                  <span className={WFM_AE_HINT}>empty = no buyout</span>
                 </div>
               </div>
             </>
           )}
 
-          <div className="wfm-ae-popup-field">
-            <label>Visibility</label>
-            <div className="wfm-ae-vis-row">
-              <button className={`wfm-btn-sm wfm-ae-vis${visible ? " active" : ""}`} onClick={() => setVisible(true)}>Visible</button>
-              <button className={`wfm-btn-sm wfm-ae-vis${!visible ? " active" : ""}`} onClick={() => setVisible(false)}>Hidden</button>
+          <div className={WFM_AE_FIELD}>
+            <label className={WFM_AE_LABEL}>Visibility</label>
+            <div className={WFM_AE_VIS_ROW}>
+              <button className={visible ? WFM_VIS_ON : WFM_SM_OFF} onClick={() => setVisible(true)}>Visible</button>
+              <button className={visible ? WFM_SM_OFF : WFM_VIS_ON} onClick={() => setVisible(false)}>Hidden</button>
             </div>
           </div>
-          {error && <div className="wfm-ae-error">{error}</div>}
+          {error && <div className={WFM_AE_ERROR}>{error}</div>}
         </div>
-        <div className="wfm-ae-popup-footer">
-          <button className="wfm-btn-sm wfm-btn-save" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-          <button className="wfm-btn-sm" onClick={onClose}>Cancel</button>
+        <div className={WFM_AE_FOOTER}>
+          <button className={WFM_SM_SAVE} onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          <button className={WFM_SM_OFF} onClick={onClose}>Cancel</button>
         </div>
       </div>
     </div>
@@ -338,69 +424,69 @@ function RivensSection({ rivenOrders, itemIdMap, auctionRefreshKey, onEditOrder,
   const totalCount = rivenOrders.length + auctions.length;
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <div className="wfm-section-label wfm-section-label-row">
+    <div className="mt-4">
+      <div className={`${WFM_SECTION_LABEL} ${WFM_SECTION_ROW}`}>
         <span>Rivens ({totalCount})</span>
-        <button className="wfm-refresh-btn" onClick={load} title="Refresh" disabled={busy}>↻</button>
+        <button className={WFM_REFRESH} onClick={load} title="Refresh" disabled={busy}>↻</button>
         {totalCount > 0 && <>
-          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllVisible(true)} title="Set all rivens visible">Vis All</button>
-          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllVisible(false)} title="Set all rivens hidden">Hide All</button>
+          <button className={WFM_BULK_SHOW} onClick={() => setAllVisible(true)} title="Set all rivens visible">Vis All</button>
+          <button className={WFM_BULK_HIDE} onClick={() => setAllVisible(false)} title="Set all rivens hidden">Hide All</button>
         </>}
       </div>
       {busy && totalCount === 0 ? (
-        <div className="wfm-empty">Loading…</div>
+        <div className={WFM_EMPTY}>Loading…</div>
       ) : totalCount === 0 ? (
-        <div className="wfm-empty">No active riven listings. Post from Market → Rivens tab.</div>
+        <div className={WFM_EMPTY}>No active riven listings. Post from Market → Rivens tab.</div>
       ) : (
-        <div className="wfm-orders">
+        <div className={WFM_ORDERS}>
           {rivenOrders.map(o => (
-            <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
+            <div key={o.id} className={`${WFM_ORDER_ROW}${o.visible ? "" : " opacity-50"}`}>
               <button
-                className="wfm-vis-btn"
+                className={WFM_VIS_BTN}
                 title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
                 onClick={() => onToggleOrderVisible(o)}>
                 {o.visible ? "👁" : "🚫"}
               </button>
-              <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
-              <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
-              <span className="wfm-order-price">{fmt(o.platinum)}p</span>
-              <span className="wfm-order-qty">×{o.quantity}</span>
-              <button className="wfm-btn-sm" onClick={() => onEditOrder(o)}>Edit</button>
-              <button className="wfm-btn-sm wfm-btn-del" onClick={() => onDeleteOrder(o.id)}>✕</button>
+              <span className={WFM_TYPES[o.type]}>{o.type === "sell" ? "S" : "B"}</span>
+              <span className={WFM_ORDER_NAME}>{orderName(o, itemIdMap)}</span>
+              <span className={WFM_ORDER_PRICE}>{fmt(o.platinum)}p</span>
+              <span className={WFM_ORDER_QTY}>×{o.quantity}</span>
+              <button className={WFM_SM_OFF} onClick={() => onEditOrder(o)}>Edit</button>
+              <button className={WFM_SM_DEL} onClick={() => onDeleteOrder(o.id)}>✕</button>
             </div>
           ))}
           {auctions.map(a => {
             const weaponName = a.item.weapon_url_name.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
             const modName = a.item.name ? a.item.name.charAt(0).toUpperCase() + a.item.name.slice(1) : "";
             return (
-              <div key={a.id} className={`wfm-order-row${a.visible ? "" : " wfm-order-hidden"}`}>
+              <div key={a.id} className={`${WFM_ORDER_ROW}${a.visible ? "" : " opacity-50"}`}>
                 <button
-                  className="wfm-vis-btn"
+                  className={WFM_VIS_BTN}
                   title={a.visible ? "Visible — click to hide" : "Hidden — click to show"}
                   onClick={() => toggleAuctionVisible(a.id, a.visible)}>
                   {a.visible ? "👁" : "🚫"}
                 </button>
-                <span className={`wfm-order-type ${a.is_direct_sell ? "direct" : "auction"}`}>
+                <span className={a.is_direct_sell ? WFM_TYPES.direct : WFM_TYPES.auction}>
                   {a.is_direct_sell ? "DIR" : "AUC"}
                 </span>
-                <span className="wfm-order-name">
-                  {weaponName}{modName && <em className="wfm-riven-mod"> {modName}</em>}
+                <span className={WFM_ORDER_NAME}>
+                  {weaponName}{modName && <em className={WFM_RIVEN_MOD}> {modName}</em>}
                 </span>
-                <span className="wfm-order-price">
+                <span className={WFM_ORDER_PRICE}>
                   {a.is_direct_sell ? (a.buyout_price ?? a.starting_price) : a.starting_price}p
                 </span>
                 {!a.is_direct_sell && (
-                  <span className="wfm-auction-buyout">
+                  <span className={WFM_BUYOUT}>
                     {a.buyout_price != null ? `bo: ${a.buyout_price}p` : "bo: —"}
                   </span>
                 )}
                 {!a.is_direct_sell && (
-                  <span className="wfm-order-qty">
+                  <span className={WFM_ORDER_QTY}>
                     {a.bids ?? 0} {(a.bids ?? 0) === 1 ? "bid" : "bids"}
                   </span>
                 )}
-                <button className="wfm-btn-sm" onClick={() => openAuctionEdit(a)}>Edit</button>
-                <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteAuction(a.id)}>✕</button>
+                <button className={WFM_SM_OFF} onClick={() => openAuctionEdit(a)}>Edit</button>
+                <button className={WFM_SM_DEL} onClick={() => deleteAuction(a.id)}>✕</button>
               </div>
             );
           })}
@@ -496,40 +582,40 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
   };
 
   return (
-    <div className="wfm-panel">
-      <div className="wfm-section-label wfm-section-label-row">
+    <div className={WFM_PANEL}>
+      <div className={`${WFM_SECTION_LABEL} ${WFM_SECTION_ROW}`}>
         <span>Active Listings ({nonRivenOrders.length})</span>
-        <button className="wfm-refresh-btn" onClick={loadOrders} title="Refresh">↻</button>
+        <button className={WFM_REFRESH} onClick={loadOrders} title="Refresh">↻</button>
         {nonRivenOrders.length > 0 && <>
-          <button className="wfm-bulk-btn wfm-bulk-show" onClick={() => setAllOrdersVisible(true)} title="Set all listings visible">Vis All</button>
-          <button className="wfm-bulk-btn wfm-bulk-hide" onClick={() => setAllOrdersVisible(false)} title="Set all listings hidden">Hide All</button>
+          <button className={WFM_BULK_SHOW} onClick={() => setAllOrdersVisible(true)} title="Set all listings visible">Vis All</button>
+          <button className={WFM_BULK_HIDE} onClick={() => setAllOrdersVisible(false)} title="Set all listings hidden">Hide All</button>
         </>}
       </div>
-      <div className="wfm-listings-hint">To post a new listing, click any set in the Prime Sets tab.</div>
+      <div className={WFM_HINT}>To post a new listing, click any set in the Prime Sets tab.</div>
       <input
-        className="wfm-listings-search"
+        className={WFM_SEARCH}
         type="text"
         placeholder="Search listings…"
         value={search}
         onChange={e => setSearch(e.target.value)}
       />
-      {loading ? <div className="wfm-empty">Loading…</div> :
-       visibleOrders.length === 0 ? <div className="wfm-empty">{q ? "No listings match." : "No active listings."}</div> :
-       <div className="wfm-orders">
+      {loading ? <div className={WFM_EMPTY}>Loading…</div> :
+       visibleOrders.length === 0 ? <div className={WFM_EMPTY}>{q ? "No listings match." : "No active listings."}</div> :
+       <div className={WFM_ORDERS}>
          {visibleOrders.map(o => (
-           <div key={o.id} className={`wfm-order-row${o.visible ? "" : " wfm-order-hidden"}`}>
+           <div key={o.id} className={`${WFM_ORDER_ROW}${o.visible ? "" : " opacity-50"}`}>
              <button
-               className="wfm-vis-btn"
+               className={WFM_VIS_BTN}
                title={o.visible ? "Visible — click to hide" : "Hidden — click to show"}
                onClick={() => toggleOrderVisible(o)}>
                {o.visible ? "👁" : "🚫"}
              </button>
-             <span className={`wfm-order-type ${o.type}`}>{o.type === "sell" ? "S" : "B"}</span>
-             <span className="wfm-order-name">{orderName(o, itemIdMap)}</span>
-             <span className="wfm-order-price">{fmt(o.platinum)}p</span>
-             <span className="wfm-order-qty">×{o.quantity}</span>
-             <button className="wfm-btn-sm" onClick={() => startEdit(o)}>Edit</button>
-             <button className="wfm-btn-sm wfm-btn-del" onClick={() => deleteOrder(o.id)}>✕</button>
+             <span className={WFM_TYPES[o.type]}>{o.type === "sell" ? "S" : "B"}</span>
+             <span className={WFM_ORDER_NAME}>{orderName(o, itemIdMap)}</span>
+             <span className={WFM_ORDER_PRICE}>{fmt(o.platinum)}p</span>
+             <span className={WFM_ORDER_QTY}>×{o.quantity}</span>
+             <button className={WFM_SM_OFF} onClick={() => startEdit(o)}>Edit</button>
+             <button className={WFM_SM_DEL} onClick={() => deleteOrder(o.id)}>✕</button>
            </div>
          ))}
        </div>
@@ -560,31 +646,31 @@ function ListingsPanel({ username: _username, itemIdMap, wfmItems, imageMap, auc
         onBulkOrdersVisible={bulkRivenOrdersVisible}
       />
       {changelog && changelog.length > 0 && (
-        <div className="wfm-changelog">
-          <div className="wfm-section-label">Auto-updated listings</div>
+        <div className={WFM_CHANGELOG}>
+          <div className={WFM_SECTION_LABEL}>Auto-updated listings</div>
           {changelog.map(entry => (
-            <div key={entry.id} className={`wfm-changelog-row${entry.reverted ? " wfm-changelog-reverted" : ""}`}>
-              <span className={`wfm-changelog-badge ${entry.action}`}>
+            <div key={entry.id} className={`${WFM_CH_ROW}${entry.reverted ? " opacity-55" : ""}`}>
+              <span className={`${WFM_CH_BADGE} ${entry.action === "decreased" ? "bg-accent/20 text-accent" : "bg-success/20 text-success"}`}>
                 {entry.action === "decreased" ? "−" : "✓"}
               </span>
-              <span className="wfm-changelog-text">
+              <span className={WFM_CH_TEXT}>
                 {entry.action === "decreased"
                   ? <><strong>{entry.itemName}</strong> ({entry.platinum}p) ×{entry.oldQty} → ×{entry.newQty}</>
                   : <><strong>{entry.itemName}</strong> ({entry.platinum}p) listing sold</>
                 }
-                <span className="wfm-changelog-player"> · {entry.withPlayer}</span>
+                <span className={WFM_CH_PLAYER}> · {entry.withPlayer}</span>
               </span>
-              <span className="wfm-changelog-time">{new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+              <span className={WFM_CH_TIME}>{new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               {!entry.reverted && entry.revertInfo && onUndo && (
                 <button
-                  className="wfm-btn-sm wfm-btn-revert"
+                  className={WFM_SM_REVERT}
                   disabled={entry.reverting}
                   onClick={() => onUndo(entry)}
                 >
                   {entry.reverting ? "Undoing…" : "↺ Undo"}
                 </button>
               )}
-              {entry.reverted && <span className="wfm-changelog-reverted-label">Reverted</span>}
+              {entry.reverted && <span className={WFM_CH_REV_LABEL}>Reverted</span>}
             </div>
           ))}
         </div>
@@ -634,6 +720,38 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
+  // Multi-item trades split one platinum total evenly across items by default —
+  // surface that split here so the user can correct individual amounts.
+  const [splitReviews, setSplitReviews] = useState<(TradeSplitPendingEvent & { key: number })[]>([]);
+  const nextSplitKey = useRef(0);
+
+  useEffect(() => {
+    const unlisten = listen<TradeSplitPendingEvent>(TAURI_EVENTS.TRADE_SPLIT_PENDING, e => {
+      setSplitReviews(prev => [...prev, { ...e.payload, key: nextSplitKey.current++ }]);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  const updateSplitAmount = (reviewKey: number, itemIndex: number, platinum: number) => {
+    setSplitReviews(prev => prev.map(r => {
+      if (r.key !== reviewKey) return r;
+      const items = [...r.items];
+      items[itemIndex] = { ...items[itemIndex], platinum };
+      return { ...r, items };
+    }));
+  };
+
+  const saveSplitAmount = (item: TradeSplitItem) => {
+    if (item.id == null) return;
+    invoke(TAURI_COMMANDS.UPDATE_TRADE, { id: item.id, platinum: item.platinum } satisfies UpdateTradeArgs)
+      .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
+      .catch((e) => console.error("[trade-log] update_trade failed:", e));
+  };
+
+  const dismissSplitReview = (reviewKey: number) => {
+    setSplitReviews(prev => prev.filter(r => r.key !== reviewKey));
+  };
+
   // Auto-complete a matching whisper when an in-game trade finishes.
   useEffect(() => {
     const unlisten = listen<TradeCompletedEvent>(TAURI_EVENTS.TRADE_COMPLETED, (e) => {
@@ -655,10 +773,13 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
         updated[idx] = { ...updated[idx], completedAt: now };
         matchedFrom = updated[idx].from;
 
-        // Copy the sold reply to clipboard automatically
+        // Copy a reply to clipboard automatically, worded for which side we were
         const w = updated[idx];
         if (w.item) {
-          navigator.clipboard.writeText(`/w ${w.from} ${w.item} sold! Thank you.`).catch(() => {});
+          const reply = w.direction === "sell"
+            ? `/w ${w.from} ${w.item} sold! Thank you.`
+            : `/w ${w.from} Got it, thanks!`;
+          navigator.clipboard.writeText(reply).catch(() => {});
         }
 
         // Remove the ghost after 5 minutes
@@ -783,28 +904,41 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
     });
   };
 
+  // Local player sold `item` to `from` (local player sent a "want to sell" whisper).
   const copySold = (from: string, item?: string, price?: number) => {
     const msg = item
       ? `/w ${from} ${item} sold! Thank you.`
       : `/w ${from} Sold! Thank you.`;
     navigator.clipboard.writeText(msg);
-    // Auto-log the trade to Statistics
-    if (item) {
-      const args: AddTradeArgs = {
-        withPlayer: from,
-        direction: "sold",
-        itemName: item,
-        itemUrl: "",
-        quantity: 1,
-        platinum: price ?? 0,
-        source: "wfm",
-        notes: "",
-      };
-      invoke(TAURI_COMMANDS.ADD_TRADE, { params: args })
-        .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
-        .catch((e) => console.error("[trade-log] add_trade failed:", e));
-    }
+    logWfmTrade(from, "sold", item, price);
     setWhispers(prev => prev.filter(w => w.from !== from));
+  };
+
+  // Local player bought `item` from `from` (local player sent a "want to buy" whisper).
+  const copyBought = (from: string, item?: string, price?: number) => {
+    const msg = item
+      ? `/w ${from} Got it, thanks!`
+      : `/w ${from} Thank you!`;
+    navigator.clipboard.writeText(msg);
+    logWfmTrade(from, "bought", item, price);
+    setWhispers(prev => prev.filter(w => w.from !== from));
+  };
+
+  const logWfmTrade = (withPlayer: string, direction: "sold" | "bought", item?: string, price?: number) => {
+    if (!item) return;
+    const args: AddTradeArgs = {
+      withPlayer,
+      direction,
+      itemName: item,
+      itemUrl: "",
+      quantity: 1,
+      platinum: price ?? 0,
+      source: "wfm",
+      notes: "",
+    };
+    invoke(TAURI_COMMANDS.ADD_TRADE, { params: args })
+      .then(() => emit(TAURI_EVENTS.TRADES_UPDATED).catch(() => {}))
+      .catch((e) => console.error("[trade-log] add_trade failed:", e));
   };
 
   const revertOrder = async (w: WfmWhisper, idx: number) => {
@@ -832,54 +966,88 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
   };
 
   return (
-    <div className="wfm-panel">
+    <div className={WFM_PANEL}>
+      {splitReviews.map(r => (
+        <div key={r.key} className={`${WFM_WHISPER} border-border/40 bg-white/4`}>
+          <div className={WFM_W_HEADER}>
+            <span className={WFM_W_FROM}>{r.withPlayer}</span>
+          </div>
+          <div className={WFM_W_SUMMARY}>
+            {fmt(r.totalPlatinum)}p {r.direction === "sold" ? "received" : "paid"} for {r.items.length} items — split evenly below, edit if it's wrong:
+          </div>
+          <div className="flex flex-col gap-1">
+            {r.items.map((item, i) => (
+              <div key={i} className="flex justify-between items-center gap-2">
+                <span className={WFM_W_ITEM}>{item.name}{item.qty > 1 ? ` ×${item.qty}` : ""}</span>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-20 bg-white/6 border border-border/50 rounded-4 px-1.5 py-0.5 text-12 text-right text-foreground"
+                  value={item.platinum}
+                  onChange={e => updateSplitAmount(r.key, i, Number(e.target.value))}
+                  onBlur={() => saveSplitAmount(r.items[i])}
+                />
+              </div>
+            ))}
+          </div>
+          <div className={WFM_W_ACTIONS}>
+            <button className={WFM_SM_OFF} onClick={() => dismissSplitReview(r.key)}>Done</button>
+          </div>
+        </div>
+      ))}
       {whispers.length === 0 ? (
-        <div className="wfm-empty-msg">
+        <div className={WFM_EMPTY}>
           <div>No trade whispers yet.</div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "var(--muted)" }}>
+          <div className="mt-1 text-11 text-muted">
             When someone whispers you a warframe.market trade offer, it will appear here.
           </div>
         </div>
       ) : (
         <>
-          <button className="wfm-clear-btn" onClick={() => setWhispers([])}>Clear all</button>
+          <button className={WFM_CLEAR} onClick={() => setWhispers([])}>Clear all</button>
           {whispers.map((w, i) => (
-            <div key={i} className={`wfm-whisper${w.completedAt ? " wfm-whisper-ghost" : ""}`}>
-              <div className="wfm-whisper-header">
-                <span className="wfm-whisper-from">{w.from}</span>
-                <span className="wfm-whisper-time">{w.timestamp}</span>
+            <div key={i} className={`${WFM_WHISPER}${w.completedAt ? " border-confirm/35 bg-confirm/5 opacity-75" : " border-border/40 bg-white/4"}`}>
+              <div className={WFM_W_HEADER}>
+                <span className={WFM_W_FROM}>{w.from}</span>
+                <span className={WFM_W_TIME}>{w.timestamp}</span>
               </div>
               {w.completedAt && (
-                <div className="wfm-whisper-ghost-badge">✓ Completed in-game · auto-closing in 5 min</div>
+                <div className={WFM_W_GHOST_BADGE}>✓ Completed in-game · auto-closing in 5 min</div>
               )}
               {w.item && (
-                <div className="wfm-whisper-summary">
-                  Wants: <span className="wfm-whisper-item">{w.item}</span>
-                  {w.price && <span className="wfm-whisper-price"> · {fmt(w.price)}p</span>}
+                <div className={WFM_W_SUMMARY}>
+                  {w.direction === "sell" ? "Selling" : "Buying"}: <span className={WFM_W_ITEM}>{w.item}</span>
+                  {w.price && <span className={WFM_W_PRICE}> · {fmt(w.price)}p</span>}
                 </div>
               )}
               {!w.completedAt && (
-                <div className="wfm-whisper-actions">
-                  <button className="wfm-btn-sm wfm-btn-invite" onClick={() => copyInvite(w.from)}>
+                <div className={WFM_W_ACTIONS}>
+                  <button className={WFM_SM_INVITE} onClick={() => copyInvite(w.from)}>
                     {copied === w.from ? "✓ Copied!" : "📋 Copy invite"}
                   </button>
-                  <button className="wfm-btn-sm wfm-btn-sold" onClick={() => copySold(w.from, w.item, w.price)}>
-                    ✓ Sold
-                  </button>
-                  <button className="wfm-btn-sm" onClick={() => setWhispers(prev => prev.filter((_, j) => j !== i))}>
+                  {w.direction === "sell" ? (
+                    <button className={WFM_SM_SAVE} onClick={() => copySold(w.from, w.item, w.price)}>
+                      ✓ Sold
+                    </button>
+                  ) : (
+                    <button className={WFM_SM_SAVE} onClick={() => copyBought(w.from, w.item, w.price)}>
+                      ✓ Bought
+                    </button>
+                  )}
+                  <button className={WFM_SM_OFF} onClick={() => setWhispers(prev => prev.filter((_, j) => j !== i))}>
                     Ignore
                   </button>
                 </div>
               )}
               {w.completedAt && w.revertInfo && (
-                <div className="wfm-whisper-revert">
-                  <span className="wfm-revert-hint">
+                <div className={WFM_W_REVERT}>
+                  <span className={WFM_REVERT_HINT}>
                     {w.revertInfo.newQty > 0
                       ? `WFM qty: ${w.revertInfo.originalQty} → ${w.revertInfo.newQty}`
                       : `WFM listing sold (was ×${w.revertInfo.originalQty})`}
                   </span>
                   <button
-                    className="wfm-btn-sm wfm-btn-revert"
+                    className={WFM_SM_REVERT}
                     disabled={reverting === i}
                     onClick={() => revertOrder(w, i)}
                   >
@@ -1029,7 +1197,7 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
   };
 
   if (checking) {
-    return <div className="wfm-login-wrap"><div className="wfm-login-loading" style={{ marginTop: 40 }}>Connecting to warframe.market…</div></div>;
+    return <div className={WFM_LOGIN_WRAP}><div className="wfm-login-loading mt-10">Connecting to warframe.market…</div></div>;
   }
 
   if (!username) {
@@ -1037,22 +1205,22 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
   }
 
   return (
-    <div className="wfm-trading">
-      <div className="wfm-header">
-        <div className="wfm-tabs">
-          <button className={tab === "listings" ? "active" : ""} onClick={() => setTab("listings")}>Listings</button>
-          <button className={tab === "messages" ? "active" : ""} onClick={switchToMessages}>
-            Messages {unread > 0 && <span className="wfm-badge">{unread}</span>}
+    <div className={WFM_TRADING}>
+      <div className={WFM_HEADER}>
+        <div className={WFM_TABS}>
+          <button className={tab === "listings" ? WFM_TAB_ON : WFM_TAB} onClick={() => setTab("listings")}>Listings</button>
+          <button className={tab === "messages" ? WFM_TAB_ON : WFM_TAB} onClick={switchToMessages}>
+            Messages {unread > 0 && <span className={WFM_BADGE}>{unread}</span>}
           </button>
         </div>
-        <div className="wfm-session-info">
-          <div className="wfm-status-picker"
+        <div className={WFM_SESSION}>
+          <div className={WFM_STATUS_PICKER}
             title={wfmStatus === "offline"
               ? "WFM set you offline — reconnecting automatically, or click a dot to force"
               : `Status: ${wfmStatus}. Click to change.`}>
             {(["online", "ingame", "invisible"] as const).map(s => (
               <button key={s} disabled={statusBusy}
-                className={`wfm-status-opt${wfmStatus === s ? " active" : ""} wfm-status-${s}`}
+                className={`${WFM_OPT} ${wfmStatus === s ? `border-transparent opacity-100 ${WFM_ST[s].on}` : "bg-transparent border-border/50 opacity-35"} ${WFM_ST[s].c}`}
                 title={{ online: "Set Online", ingame: "Set In Game", invisible: "Set Invisible" }[s]}
                 onClick={async () => {
                   setStatusBusy(true); setStatusError("");
@@ -1065,23 +1233,23 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
                 }}>●</button>
             ))}
           </div>
-          <span className="wfm-username">{username}</span>
-          <button className="wfm-logout-btn" onClick={logout} title="Log out">⏻</button>
+          <span className={WFM_USERNAME}>{username}</span>
+          <button className={WFM_LOGOUT} onClick={logout} title="Log out">⏻</button>
         </div>
       </div>
 
       {statusError && (
-        <div style={{ padding: "4px 12px", fontSize: 11, color: "var(--red)", background: "rgba(248,81,73,.08)", borderBottom: "1px solid rgba(248,81,73,.2)" }}>
+        <div className="border-b border-danger/20 bg-danger/8 px-3 py-1 text-11 text-red">
           {statusError}
         </div>
       )}
 
       {/* Both panels stay mounted so MessagesPanel's trade-completed listener
           fires even when the user is on the Listings tab. */}
-      <div style={{ display: tab === "listings" ? "contents" : "none" }}>
+      <div className={tab === "listings" ? "contents" : "hidden"}>
         <ListingsPanel username={username} itemIdMap={new Map(wfmItems.map(i => [i.id, i.item_name]))} wfmItems={wfmItems} imageMap={imageMap} auctionRefreshKey={auctionRefreshKey} changelog={listingChangelog} onUndo={handleUndo} />
       </div>
-      <div style={{ display: tab === "messages" ? "contents" : "none" }}>
+      <div className={tab === "messages" ? "contents" : "hidden"}>
         <MessagesPanel username={username} wfmItems={wfmItems} recordSales={recordSales} onListingChange={handleListingChange} />
       </div>
     </div>

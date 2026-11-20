@@ -7,5 +7,5 @@ interface KeepMountedWhenHiddenProps {
 
 // Children stay mounted while hidden so their background listeners keep running.
 export default function KeepMountedWhenHidden({ active, children }: KeepMountedWhenHiddenProps) {
-  return <div style={{ display: active ? "contents" : "none" }}>{children}</div>;
+  return <div className={active ? "contents" : "hidden"}>{children}</div>;
 }

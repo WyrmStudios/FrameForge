@@ -1,0 +1,65 @@
+name: Dev Test Build
+
+# Builds an installer from the latest `dev` branch for testers.
+# Published as a GitHub prerelease under a FIXED tag (dev-test-build) so it:
+#   - always has the same download link (testers never need a new URL)
+#   - is never returned by /releases/latest, so the in-app updater
+#     (which polls releases/latest/download/latest.json) can never see it
+#     or offer it to users running an official (main) release.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+
+concurrency:
+  group: dev-test-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build test installer (no updater artifacts/signing)
+        shell: bash
+        run: |
+          echo '{"bundle":{"createUpdaterArtifacts":false}}' > ci-config.json
+          pnpm tauri build --config ci-config.json
+
+      - name: Publish dev test build
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-test-build
+          name: "FrameForge – dev test build"
+          prerelease: true
+          make_latest: false
+          body: |
+            Automated test build from `dev` @ ${{ github.sha }}.
+
+            **Not an official release.** This build does not trigger and
+            will never be offered by the in-app updater. For testers only —
+            use at your own risk.
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi

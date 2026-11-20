@@ -1,4 +1,4 @@
-export type InventorySortMode = "qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "recent";
+export type InventorySortMode = "qty-desc" | "qty-asc" | "name-asc" | "name-desc" | "plat-desc" | "plat-asc" | "ducat-desc" | "ducat-asc" | "ducat-ratio-desc" | "ducat-ratio-asc";
 
 export interface InventoryFilters {
   category: string;
@@ -8,6 +8,7 @@ export interface InventoryFilters {
   filterPrime: boolean;
   filterVaulted: boolean;
   filterUnvaulted: boolean;
+  filterTradeable: boolean;
   filterRank: number | "unranked" | null;
   sortMode: InventorySortMode;
 }

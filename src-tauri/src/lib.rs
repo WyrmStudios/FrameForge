@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::io::Write;
 
 use tracing::info;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use app_state::{load_corrections, AppState};
 use catalogue::load_items_cache;
@@ -38,6 +38,8 @@ mod memory_scanner;
 mod monitor;
 mod ocr;
 mod ocr_fallback;
+#[cfg(test)]
+mod ocr_bench;
 mod paths;
 mod platform;
 mod pricing;
@@ -69,6 +71,7 @@ pub struct OcrParams<'a> {
     capture_info: &'a str,
     hint_squad_size: Option<usize>,
     player_names: &'a [String],
+    own_item: Option<&'a str>,
 }
 
 pub struct BlobBuildParams<'a> {
@@ -79,6 +82,7 @@ pub struct BlobBuildParams<'a> {
     path_to_vaulted: &'a HashMap<String, bool>,
     path_to_tradable: &'a HashMap<String, bool>,
     path_to_masterable: &'a HashMap<String, bool>,
+    path_to_max_level_cap: &'a HashMap<String, u32>,
     relic_drops: &'a HashMap<String, Vec<String>>,
     existing_wfm_prices: &'a HashMap<String, u32>,
     excluded_paths: &'a std::collections::HashSet<String>,
@@ -249,7 +253,7 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
 
-    logging::init(app.handle());
+    logging::init();
 
     match paths::root() {
         Some(root) => info!("app root: {} (dev)", root.display()),
@@ -336,6 +340,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     state.wfm.cache_price(slug, Some(price));
                 }
             }
+            let _ = app_handle.emit(events::BULK_PRICES_UPDATED, ());
         });
     }
 
@@ -386,7 +391,6 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     // the memory scanner's on/off state.
     let debug_path = std::env::temp_dir().join("frameforge_reward_debug.txt");
     let last_found_path = std::env::temp_dir().join("frameforge_last_reward.txt");
-    monitor::start_memory_trigger(app.clone());
     monitor::start_legacy_reward_worker(flag, debug_path, last_found_path);
 
     Ok(())
@@ -557,8 +561,8 @@ pub fn run() {
             unmatched_paths_dir,
             corrections: initial.corrections,
             force_pid_check: Arc::new(AtomicBool::new(false)),
-            relic_pick_overlay_enabled: Arc::new(AtomicBool::new(true)),
-            mem_trigger_enabled: Arc::new(AtomicBool::new(false)),
+            relic_pick_overlay_enabled: Arc::new(AtomicBool::new(false)),
+            overlays_enabled: Arc::new(AtomicBool::new(false)),
         })
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
@@ -576,6 +580,7 @@ pub fn run() {
             trade_log::get_trades,
             trade_log::add_trade,
             trade_log::delete_trade,
+            trade_log::update_trade,
             diagnostics::clear_cache,
             settings::load_settings,
             settings::save_settings,
@@ -604,6 +609,7 @@ pub fn run() {
             wfm_top::get_wfm_top_items,
             wfm_commands::get_item_price,
             pricing::refresh_bulk_prices,
+            pricing::get_bulk_prices,
             updater::check_for_update,
             updater::install_update,
             settings::factory_reset,
@@ -659,6 +665,7 @@ pub fn run() {
             companion_api::get_rivens,
             rivens::get_weapon_dispositions,
             companion_api::save_api_inventory,
+            companion_api::save_api_rivens,
             syndicates::get_syndicate_stores,
             syndicates::get_research_lab_stores,
             worldstate::fetch_worldstate,
@@ -671,8 +678,6 @@ pub fn run() {
             diagnostics::debug_create_window,
             relic_pick::show_overlay_window,
             relic_pick::move_overlay_offscreen,
-            relic_pick::show_test_overlay_window,
-            relic_pick::hide_test_overlay_window,
             diagnostics::get_diag_folder_size,
             diagnostics::clear_diag_folder,
             diagnostics::save_auto_diag_capture,
@@ -686,13 +691,15 @@ pub fn run() {
             monitor::stop_monitor,
             monitor::poke_scan,
             monitor::set_relic_pick_enabled,
-            monitor::set_mem_trigger_enabled,
+            monitor::set_overlays_enabled,
             monitor::get_monitor_status,
             catalogue::get_blueprint_names,
             platform::get_system_locale,
             catalogue::get_current_crafting,
             relic_pick::debug_detect_fissure_era,
             relic_pick::test_relic_pick_overlay,
+            relic_pick::hide_relic_pick_overlay,
+            relic_pick::show_relic_pick_window,
             relic_pick::debug_ee_log_tail,
             console_login::open_console_login,
             wfcd::get_drop_data,
