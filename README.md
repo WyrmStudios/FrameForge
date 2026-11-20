@@ -1,4 +1,4 @@
-# FrameForge `v4.5.0`
+# FrameForge `v4.7.0`
 
 A desktop companion for Warframe — live inventory, market prices, trading, timers, relic overlay, and riven analysis. Read-only, no game modification.
 
@@ -110,6 +110,8 @@ The item database (items, recipes, relic drops) is fetched and rebuilt in the ba
 Tabbed sidebar layout: **General** (Foundry page size, scanner, API, account info, pop-out), **Overlays** (Relic Overlay and Relic Pick Overlay settings), **Market** (WFM status automation), **Filters** (filter preset management per module), **Accessibility** (colorblind mode, text size up to 200%), **Data** (item database, cache), and **Debugging** (loggers, diagnostic tools with folder access and one-click clear).
 
 **Filter Presets** — save, pin, and reorder named filter presets for Inventory, Foundry, Market, and Relic Helper, from each toolbar or from Settings → Filters. Search boxes across the app accept comma-separated terms for OR-style matching (e.g. `braton, soma` shows both).
+
+**Beta Updates** — opt in to development/beta builds instead of only full releases (Settings → General). Beta builds are less stable; the in-app updater checks a separate channel so stable users never see them.
 
 ---
 
