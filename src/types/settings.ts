@@ -58,4 +58,5 @@ export interface SettingsSnapshot {
   relicPickPriority: RelicPickPriority; relicPickRefinement: RelicRefinement;
   relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize;
   filterPresets: FilterPresetSettings;
+  betaUpdatesEnabled: boolean;
 }

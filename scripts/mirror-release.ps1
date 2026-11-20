@@ -16,8 +16,13 @@ param(
     [string]$Signature = "",
     [string]$PubDate = "",
     [string]$CodebergToken = "",
-    [string]$GitLabToken = ""
+    [string]$GitLabToken = "",
+    [switch]$Beta
 )
+
+# Beta builds get their own floating pointer (latest-beta) so stable users'
+# updater never resolves against them - see src-tauri/src/updater.rs.
+$FloatingTag = if ($Beta) { "latest-beta" } else { "latest" }
 
 $CodebergOwner    = "Sikewyrm"
 $CodebergRepo     = "FrameForge"
@@ -63,7 +68,7 @@ if (-not $CodebergToken) {
         if ($existingId) {
             & curl.exe -s -X DELETE -H $cbAuth "$cbApi/releases/$existingId" | Out-Null
         }
-        $payloadFile = Write-JsonTempFile @{ tag_name = $tagName; target_commitish = "main"; name = $name; body = $body; draft = $false; prerelease = $false }
+        $payloadFile = Write-JsonTempFile @{ tag_name = $tagName; target_commitish = "main"; name = $name; body = $body; draft = $false; prerelease = [bool]$Beta }
         $resp = & curl.exe -s -X POST -H $cbAuth -H "Content-Type: application/json" --data-binary "@$payloadFile" "$cbApi/releases"
         Remove-Item $payloadFile -Force
         return ($resp | ConvertFrom-Json)
@@ -92,8 +97,10 @@ if (-not $CodebergToken) {
             }
             Add-CodebergAsset -releaseId $release.id -filePath $latestJsonFile -fileName "latest.json"
 
-            # Floating "latest" release: the stable URL the in-app updater actually polls.
-            $floating = New-CodebergRelease -tagName "latest" -name "latest" -body "Floating pointer to the newest full release - see the versioned release above for this version's notes."
+            # Floating release: the stable URL the in-app updater actually polls
+            # ("latest" for full releases, "latest-beta" for beta/dev builds).
+            $floatingBody = if ($Beta) { "Floating pointer to the newest beta/dev build - see the versioned release above for this version's notes." } else { "Floating pointer to the newest full release - see the versioned release above for this version's notes." }
+            $floating = New-CodebergRelease -tagName $FloatingTag -name $FloatingTag -body $floatingBody
             if ($floating.id) {
                 Add-CodebergAsset -releaseId $floating.id -filePath $latestJsonFile -fileName "latest.json"
             }
@@ -134,8 +141,9 @@ if (-not $GitLabToken) {
             }
         }
         Send-GitLabPackageFile -version $Tag -filePath $latestJsonFile -fileName "latest.json"
-        # Floating "latest" package version: the stable URL the in-app updater actually polls.
-        Send-GitLabPackageFile -version "latest" -filePath $latestJsonFile -fileName "latest.json"
+        # Floating package version: the stable URL the in-app updater actually polls
+        # ("latest" for full releases, "latest-beta" for beta/dev builds).
+        Send-GitLabPackageFile -version $FloatingTag -filePath $latestJsonFile -fileName "latest.json"
         Remove-Item $latestJsonFile -Force
 
         # Best-effort human-browsable Release object (not required for the updater itself).

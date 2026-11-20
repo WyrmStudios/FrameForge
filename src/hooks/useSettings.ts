@@ -51,9 +51,11 @@ interface UseSettingsReturn {
   wfmRecordSales: boolean;
   companionApiEnabled: boolean;
   filterPresets: FilterPresetSettings;
+  betaUpdatesEnabled: boolean;
 
   // Setters
   setCompanionApiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setBetaUpdatesEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -133,6 +135,7 @@ export function useSettings(
   const [wfmRecordSales, setWfmRecordSales] = useState(false);
   const [filterPresets, setFilterPresets] = useState<FilterPresetSettings>(() => parseFilterPresetSettings(undefined));
   const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
+  const [betaUpdatesEnabled, setBetaUpdatesEnabled] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const settingsLoadedRef = useRef(false);
@@ -175,6 +178,7 @@ export function useSettings(
     relicPickLines: DEFAULT_RELIC_PICK_LINES,
     foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
     filterPresets: { presets: [], restorePreviousFiltersOnPresetClick: false },
+    betaUpdatesEnabled: false,
   });
   const wfmInvisibleOnStartRef = useRef(false);
   const wfmInvisibleOnCloseRef = useRef(false);
@@ -267,6 +271,7 @@ export function useSettings(
         if (typeof s.wfmAutoInvisibleMins === "number") setWfmAutoInvisibleMins(s.wfmAutoInvisibleMins);
         if (typeof s.wfmRecordSales === "boolean") setWfmRecordSales(s.wfmRecordSales);
         if (s.filterPresets) setFilterPresets(parseFilterPresetSettings(s.filterPresets));
+        if (typeof s.betaUpdatesEnabled === "boolean") setBetaUpdatesEnabled(s.betaUpdatesEnabled);
         return s;
       } catch {
         const overlaysEnabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false";
@@ -329,6 +334,8 @@ export function useSettings(
     companionApiEnabled,
     setCompanionApiEnabled,
     filterPresets,
+    betaUpdatesEnabled,
+    setBetaUpdatesEnabled,
 
     // Setters
     setMemoryScannerEnabled,

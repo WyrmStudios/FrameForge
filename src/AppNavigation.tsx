@@ -36,7 +36,7 @@ export default function AppNavigation({ activeModule, onModuleChange }: AppNavig
         <span className={MODULE_LABEL}>Timers</span>
       </button>
       <button className={`${MODULE_BTN} ${activeModule === "arbitrations" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("arbitrations")} title="Arbitrations">
-        <span aria-hidden className="size-6 text-center text-20 leading-6">?</span>
+        <img src="/arbitrations-icon.png" alt="" className="size-6 object-contain" />
         <span className={MODULE_LABEL}>Arbitrations</span>
       </button>
       <button className={`${MODULE_BTN} ${activeModule === "statistics" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("statistics")} title="Statistics">
