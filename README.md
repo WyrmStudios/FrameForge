@@ -1,4 +1,4 @@
-# FrameForge `v4.5.0`
+# FrameForge `v4.7.0`
 
 A desktop companion for Warframe — live inventory, market prices, trading, timers, relic overlay, and riven analysis. Read-only, no game modification.
 
@@ -7,6 +7,19 @@ A desktop companion for Warframe — live inventory, market prices, trading, tim
 ---
 
 ## Features
+
+### Arbitrations
+
+Browse the cached arbitration schedule up to 60 days ahead (seven by default),
+filter by farming tier, and favorite nodes. The rotation comes from the
+community feed at [browse.wf](https://browse.wf). Optional alerts match
+favorites or selected tiers, with a ten-minute default lead time.
+
+Completed runs are recovered from EE.log at startup and tracked live. History
+supports deletion and analytics; Vitus values are estimates, and kill counts
+require host telemetry. An optional summary overlay closes after 12 seconds
+and is disabled by default. Data sources and parser/model attribution:
+[third-party notices](THIRD_PARTY_NOTICES.md).
 
 ### Live Inventory
 Reads your inventory directly from Warframe's process memory (read-only, same API as Overwolf). Instead of scanning for individual item patterns, FrameForge locates and captures the full account JSON blob that the game client holds in memory — the same authoritative data the game itself uses.
@@ -98,6 +111,8 @@ Tabbed sidebar layout: **General** (Foundry page size, scanner, API, account inf
 
 **Filter Presets** — save, pin, and reorder named filter presets for Inventory, Foundry, Market, and Relic Helper, from each toolbar or from Settings → Filters. Search boxes across the app accept comma-separated terms for OR-style matching (e.g. `braton, soma` shows both).
 
+**Beta Updates** — opt in to development/beta builds instead of only full releases (Settings → General). Beta builds are less stable; the in-app updater checks a separate channel so stable users never see them.
+
 ---
 
 ## EULA Transparency
@@ -118,7 +133,7 @@ Everything else (Foundry, Market, Relics, Timers, Statistics) runs on public dat
 |---|---|
 | Memory access | Read-only `ReadProcessMemory` — never writes, never injects |
 | Game modification | None |
-| Network | warframe.market, DE worldstate, WFCD GitHub repos, FrameForgePricing mirror. No FrameForge server, no telemetry |
+| Network | warframe.market, DE worldstate, WFCD GitHub repos, browse.wf, FrameForgePricing mirror. No FrameForge server, no telemetry |
 | Credentials | WFM token in Windows Credential Manager. Warframe API credentials never written to disk |
 
 Source code is fully public under GPLv3 — build and verify it yourself.
@@ -145,6 +160,7 @@ Source code is fully public under GPLv3 — build and verify it yourself.
 
 ```powershell
 # Prerequisites: Node.js 20+, pnpm, Rust MSVC toolchain
+# `pnpm test` needs Node 22.6+ (it runs the TypeScript tests through --experimental-strip-types)
 rustup default stable-x86_64-pc-windows-msvc
 
 git clone https://github.com/WyrmStudios/FrameForge.git
@@ -152,6 +168,7 @@ cd FrameForge
 pnpm install
 pnpm tauri dev      # dev mode with hot reload
 pnpm tauri build    # installer → src-tauri/target/release/bundle/
+pnpm test           # unit tests (Node 22.6+)
 ```
 
 ---

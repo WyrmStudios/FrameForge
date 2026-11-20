@@ -61,18 +61,18 @@ fn get_sol_nodes() -> &'static std::collections::HashMap<String, SolNode> {
     })
 }
 
-fn resolve_node(id: &str) -> String {
+pub(crate) fn resolve_node(id: &str) -> String {
     if let Some(n) = get_sol_nodes().get(id) { return n.display.clone(); }
     if let Some(stripped) = id.strip_suffix("HUB") { return format!("{} Relay", stripped); }
     if let Some(stripped) = id.strip_prefix("CrewBattleNode") { return format!("Railjack {}", stripped); }
     id.to_string()
 }
 
-fn node_enemy(id: &str) -> String {
+pub(crate) fn node_enemy(id: &str) -> String {
     get_sol_nodes().get(id).map(|n| n.enemy.clone()).unwrap_or_default()
 }
 
-fn node_mission_type(id: &str) -> String {
+pub(crate) fn node_mission_type(id: &str) -> String {
     get_sol_nodes().get(id).map(|n| n.mission_type.clone()).unwrap_or_default()
 }
 

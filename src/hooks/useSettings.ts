@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { DEFAULT_LEAD_MINS } from "../arbitration/arbitrationAlerts";
+import { DEFAULT_SCHEDULE_DAYS } from "../arbitration/arbitrationSchedule";
+import { TIER_KEYS } from "../arbitration/arbitrationTiers";
 import { PREFERENCE_KEYS } from "../constants/preferences";
 import { COMPANION_API_SUSPENDED, TAURI_COMMANDS } from "../constants/tauri";
 import {
@@ -48,9 +51,11 @@ interface UseSettingsReturn {
   wfmRecordSales: boolean;
   companionApiEnabled: boolean;
   filterPresets: FilterPresetSettings;
+  betaUpdatesEnabled: boolean;
 
   // Setters
   setCompanionApiEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setBetaUpdatesEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -130,11 +135,18 @@ export function useSettings(
   const [wfmRecordSales, setWfmRecordSales] = useState(false);
   const [filterPresets, setFilterPresets] = useState<FilterPresetSettings>(() => parseFilterPresetSettings(undefined));
   const [companionApiEnabled, setCompanionApiEnabled] = useState(false);
+  const [betaUpdatesEnabled, setBetaUpdatesEnabled] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const settingsLoadedRef = useRef(false);
   const settingsRef = useRef<SettingsSnapshot>({
     overlaysEnabled: true,
+    arbitrationFavorites: [],
+    arbitrationLeadMins: DEFAULT_LEAD_MINS,
+    arbitrationOverlayEnabled: false,
+    arbitrationTierFilter: [...TIER_KEYS],
+    arbitrationAlertTiers: [],
+    arbitrationScheduleDays: DEFAULT_SCHEDULE_DAYS,
     overlayEnabled: true,
     overlayPriority: DEFAULT_RELIC_OVERLAY_PRIORITY,
     overlayOffsets: DEFAULT_OVERLAY_OFFSETS,
@@ -166,6 +178,7 @@ export function useSettings(
     relicPickLines: DEFAULT_RELIC_PICK_LINES,
     foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
     filterPresets: { presets: [], restorePreviousFiltersOnPresetClick: false },
+    betaUpdatesEnabled: false,
   });
   const wfmInvisibleOnStartRef = useRef(false);
   const wfmInvisibleOnCloseRef = useRef(false);
@@ -258,6 +271,7 @@ export function useSettings(
         if (typeof s.wfmAutoInvisibleMins === "number") setWfmAutoInvisibleMins(s.wfmAutoInvisibleMins);
         if (typeof s.wfmRecordSales === "boolean") setWfmRecordSales(s.wfmRecordSales);
         if (s.filterPresets) setFilterPresets(parseFilterPresetSettings(s.filterPresets));
+        if (typeof s.betaUpdatesEnabled === "boolean") setBetaUpdatesEnabled(s.betaUpdatesEnabled);
         return s;
       } catch {
         const overlaysEnabled = localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false";
@@ -320,6 +334,8 @@ export function useSettings(
     companionApiEnabled,
     setCompanionApiEnabled,
     filterPresets,
+    betaUpdatesEnabled,
+    setBetaUpdatesEnabled,
 
     // Setters
     setMemoryScannerEnabled,

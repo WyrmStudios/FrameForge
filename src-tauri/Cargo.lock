@@ -5284,7 +5284,7 @@ dependencies = [
 
 [[package]]
 name = "warframe-companion"
-version = "4.6.0"
+version = "4.7.0"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -5309,6 +5309,7 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "ureq",
+ "url",
  "whirlpool",
  "windows 0.58.0",
  "windows-sys 0.52.0",

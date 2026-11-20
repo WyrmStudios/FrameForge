@@ -1,0 +1,23 @@
+0.101 Sys [Diag]: Current time: Thu Jul  9 19:02:14 2026 [UTC: Thu Jul  9 17:02:14 2026]
+2.005 Sys [Info]: Warframe startup chatter
+620.300 Script [Info]: MapRedux.lua: Confirm sector SolNode30_EliteAlert
+620.300 Net [Info]: Set squad mission: {"name":"SolNode30_EliteAlert"}
+620.301 Script [Info]: ThemedSquadOverlay.lua: Pending mission: SolNode30_EliteAlert
+625.410 Script [Info]: ThemedSquadOverlay.lua: Mission name: Tyana Pass (Mars) - Arbitration
+628.900 Sys [Info]: SyncAutoPopulatedConsumables for mission MT_DEFENSE with location SolNode30
+631.200 Game [Info]: OnStateStarted, mission type=MT_DEFENSE
+640.000 Script [Info]: WaveDefend.lua: Defense wave: 1
+640.000 Script [Info]: WaveDefend.lua: Starting wave 1, spawning a total of 44 tier-0 enemies (26 simultaneous, 0% chance of eximus)
+645.000 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent5 Live 5 Spawned 4 Ticking 5 Paused 0 IgnoredTicking 0 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+700.000 Script [Info]: WaveDefend.lua: _SleepBetweenWaves(3)
+703.000 Script [Info]: WaveDefend.lua: Defense wave: 2
+760.000 Sys [Info]: Created /Lotus/Interface/ProjectionsCountdown.swf
+760.010 Sys [Info]: Created /Lotus/Interface/DefenseReward.swf
+763.000 Script [Info]: WaveDefend.lua: Defense wave: 3
+800.000 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent19 Live 5 Spawned 20 Ticking 5 Paused 0 IgnoredTicking 0 MonitoredTicking 5 AllyLive 4 AllyActive 4 NeutralActive 0
+820.000 Script [Info]: WaveDefend.lua: _SleepBetweenWaves(3)
+823.000 Script [Info]: WaveDefend.lua: Defense wave: 4
+880.000 Sys [Info]: Created /Lotus/Interface/ProjectionsCountdown.swf
+880.010 Sys [Info]: Created /Lotus/Interface/DefenseReward.swf
+895.300 Script [Info]: EndOfMatch.lua: Initialize
+895.410 Sys [Info]: EOM missionLocationUnlocked=1

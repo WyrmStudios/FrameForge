@@ -1,0 +1,20 @@
+0.098 Sys [Diag]: Current time: Wed Jul  8 20:11:02 2026 [UTC: Wed Jul  8 18:11:02 2026]
+2.005 Sys [Info]: Warframe startup chatter
+2040.984 Script [Info]: ThemedSquadOverlay.lua: Cached mission name=Apollo (Lua) - Arbitration (SolNode308)
+2047.451 Script [Info]: ThemedSquadOverlay.lua: LoadLevelMsg received. Client joining mission in-progress: {"name":"SolNode308_EliteAlert"}
+2051.361 Script [Info]: Client loaded {"name":"SolNode308_EliteAlert"} with MissionInfo:
+2053.010 Sys [Info]: SyncAutoPopulatedConsumables for mission MT_ARTIFACT with location SolNode308
+2055.220 Game [Info]: OnStateStarted, mission type=MT_ARTIFACT
+2060.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: ARTIFACT_ROUND
+2071.500 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent12 Live 9 Spawned 2 Ticking 8 Paused 1 IgnoredTicking 6 MonitoredTicking 2 AllyLive 7 AllyActive 6 NeutralActive 0
+2090.000 Sys [Info]: Created /Lotus/Interface/SurvivalReward.swf
+2150.000 Sys [Info]: Created /Lotus/Interface/SurvivalReward.swf
+2210.000 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent40 Live 9 Spawned 30 Ticking 8 Paused 1 IgnoredTicking 6 MonitoredTicking 2 AllyLive 7 AllyActive 6 NeutralActive 0
+2300.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: ARTIFACT_ROUND_DONE
+2301.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: REWARDS (host)
+2320.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: INTERVAL
+2340.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: ARTIFACT_ROUND
+2400.000 AI [Info]: OnAgentCreated /Npc/CorpusEliteShieldDroneAgent77 Live 9 Spawned 60 Ticking 8 Paused 1 IgnoredTicking 6 MonitoredTicking 2 AllyLive 7 AllyActive 6 NeutralActive 0
+2600.000 Script [Info]: SentientArtifactMission.lua: Disruption: State change: ARTIFACT_ROUND_DONE
+2612.400 Script [Info]: EndOfMatch.lua: Initialize
+2612.510 Sys [Info]: EOM missionLocationUnlocked=1
