@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 use crate::app_state::AppState;
-use crate::events;
+use crate::{arbitrations, db, events, log_tail};
 use crate::log_watcher;
 use crate::wfcd::RelicReward;
 use crate::append_to_file;
@@ -95,8 +95,22 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
     if let Some(log_path) = ee_log_path {
         let flag = flag.clone();
         std::thread::spawn(move || {
+            let mut arbitration_runs = db::ArbitrationRecorder::default();
             let mut file_pos: u64 = std::fs::metadata(&log_path)
                 .map(|m| m.len()).unwrap_or(0);
+            let existed_at_start = std::fs::metadata(&log_path).is_ok();
+            let mut tail = log_tail::LogTail::from_start(log_path.clone());
+            // Only arbitration consumes history; old trade prompts and reward overlays
+            // must not replay. Keep the parser so an active run can finish live.
+            // A log that was already there holds history to drain; one that does
+            // not exist yet will only ever contain bytes written while we watch,
+            // so those are live. Drained in pieces so a large file is never one
+            // allocation.
+            if existed_at_start {
+                while let Some(chunk) = tail.read() {
+                    arbitrations::record_arbitration_runs(&ee_ocr_app, &mut arbitration_runs, chunk.text, false);
+                }
+            }
             let mut active_since: Option<std::time::Instant> = None;
             // Last time a poll actually read new (non-empty) EE.log content.
             // Drives the fast/slow poll cadence below — recent game activity
@@ -185,6 +199,8 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                     // Log rotated/truncated — any carried fragment is from a
                     // different file and must not be glued onto the new one.
                     line_carry.clear();
+                    // A replacement starts a new arbitration parser too; retains failed writes.
+                    arbitration_runs.restart();
                 }
                 if f.seek(SeekFrom::Start(file_pos)).is_err() { continue; }
                 let mut raw = String::new();
@@ -203,6 +219,7 @@ pub(crate) fn spawn_reward_watcher_thread(deps: RewardWatcherDeps) {
                 // written by the game sits in line_carry until the next wake-up.
                 let Some(split_at) = line_carry.rfind('\n') else { continue };
                 let buf: String = line_carry.drain(..=split_at).collect();
+                arbitrations::record_arbitration_runs(&ee_ocr_app, &mut arbitration_runs, buf.clone(), true);
 
                 let lower = buf.to_lowercase();
 
