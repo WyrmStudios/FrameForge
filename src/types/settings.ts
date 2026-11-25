@@ -1,3 +1,4 @@
+import type { Unobtainable } from "./mastery";
 import type { FilterPresetSettings } from "./filterPresets";
 import type { TierKey } from "../arbitration/arbitrationTiers";
 
@@ -7,6 +8,9 @@ export type RelicPickPriority = "unowned" | "ducat" | "platinum";
 export type RelicRefinement = "intact" | "exceptional" | "flawless" | "radiant";
 export type RelicPickLines = "all" | "best" | "estimated";
 export type FoundryPageSize = 30 | 60 | 100;
+
+/** True keeps that class out of the Mastery progress denominator; its sources show only in the Unobtainable bucket. */
+export type MasteryExclude = Record<Unobtainable, boolean>;
 
 export type FissureVariant = "normal" | "hard" | "storm";
 
@@ -56,7 +60,7 @@ export interface SettingsSnapshot {
   modularWidth: number; modularSectionOrder: string[]; modularPopout: boolean; wfmInvisibleOnStart: boolean;
   wfmInvisibleOnClose: boolean; wfmAutoInvisible: boolean; wfmAutoInvisibleMins: number; wfmRecordSales: boolean; relicPickEnabled: boolean;
   relicPickPriority: RelicPickPriority; relicPickRefinement: RelicRefinement;
-  relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize;
+  relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize; masteryExclude: MasteryExclude;
   filterPresets: FilterPresetSettings;
   betaUpdatesEnabled: boolean;
 }

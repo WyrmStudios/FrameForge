@@ -272,6 +272,33 @@ fn path_display_name(path: &str) -> String {
     out
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct BaroPrice {
+    pub(crate) ducats: u32,
+    pub(crate) credits: u32,
+}
+
+/// Describes Baro's current or next visit. The manifest is keyed by
+/// `unique_name` and is empty outside a visit, since the worldstate lists
+/// his stock only while he is docked.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct VoidTrader {
+    pub(crate) activation_ms: i64,
+    pub(crate) expiry_ms: i64,
+    pub(crate) manifest: std::collections::HashMap<String, BaroPrice>,
+}
+
+pub(crate) fn void_trader(raw: &serde_json::Value) -> Option<VoidTrader> {
+    let trader = raw["VoidTraders"].as_array()?.first()?;
+    let manifest = trader["Manifest"].as_array().into_iter().flatten()
+        .filter_map(|item| Some((store_to_unique(item["ItemType"].as_str()?), BaroPrice {
+            ducats: item["PrimePrice"].as_u64().unwrap_or(0) as u32,
+            credits: item["RegularPrice"].as_u64().unwrap_or(0) as u32,
+        })))
+        .collect();
+    Some(VoidTrader { activation_ms: ws_ms(&trader["Activation"]), expiry_ms: ws_ms(&trader["Expiry"]), manifest })
+}
+
 /// Map store item paths to catalog unique_names where possible.
 /// /Lotus/StoreItems/X   → /Lotus/X        (direct catalog items like mods, primes)
 /// /Lotus/Types/StoreItems/... → unchanged  (bundle packages — no catalog entry)
@@ -1062,5 +1089,27 @@ mod parse_worldstate_value_tests {
         let result = parse_worldstate_value(&raw, 0, &catalog);
         assert_eq!(result["invasions"][0]["attReward"], "Detonite Injector");
         assert_eq!(result["invasions"][0]["defReward"], "Fieldron");
+    }
+}
+
+#[cfg(test)]
+mod void_trader_tests {
+    use super::{void_trader, BaroPrice};
+
+    #[test]
+    fn void_trader_keys_the_manifest_by_unique_name() {
+        let raw = serde_json::json!({ "VoidTraders": [{
+            "Activation": { "$date": { "$numberLong": "1000" } },
+            "Expiry": { "$date": { "$numberLong": "2000" } },
+            "Manifest": [
+                { "ItemType": "/Lotus/StoreItems/Weapons/VoidTrader/VTDetron", "PrimePrice": 500, "RegularPrice": 200000 },
+                { "ItemType": "/Lotus/StoreItems/Types/Recipes/Weapons/WeaponParts/DeraVandalBarrel", "PrimePrice": 50, "RegularPrice": 25000 },
+            ],
+        }] });
+        let trader = void_trader(&raw).expect("one trader listed");
+        assert_eq!((trader.activation_ms, trader.expiry_ms), (1000, 2000));
+        assert_eq!(trader.manifest["/Lotus/Weapons/VoidTrader/VTDetron"], BaroPrice { ducats: 500, credits: 200_000 });
+        assert_eq!(trader.manifest["/Lotus/Types/Recipes/Weapons/WeaponParts/DeraVandalBarrel"], BaroPrice { ducats: 50, credits: 25_000 });
+        assert!(void_trader(&serde_json::json!({ "VoidTraders": [] })).is_none());
     }
 }

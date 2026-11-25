@@ -1009,6 +1009,254 @@
         "tradeable_wfm": true
     },
     {
+        "path": "/Lotus/Powersuits/Excalibur/ExcaliburPrime",
+        "unobtainable": "founders"
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Pistol/LatoPrime",
+        "unobtainable": "founders"
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Melee/LongSword/SkanaPrime",
+        "unobtainable": "founders"
+    },
+    {
+        "path": "/Lotus/Types/Game/CrewShip/RailJack/DefaultHarness",
+        "name": "Plexus",
+        "category": "Railjack",
+        "masterable": true
+    },
+    {
+        "path": "/Lotus/Types/Sentinels/SentinelWeapons/PrismaBurstLaserPistol",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/VoidTrader/VTDetron",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Melee/Warfan/TnMoonWarfan/MoonWarfanWeapon",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Pistols/ConclaveLeverPistol/ConclaveLeverPistol",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/ClanTech/Energy/DeraVandal",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/LongGuns/GrineerM16Homage/KarakWraith",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/LongGuns/WraithLatron/WraithLatron",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Rifle/VandalSniperRifle",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Shotgun/ShotgunVandal",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/Pistols/WraithTwinVipers/WraithTwinVipers",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/LongGuns/GrineerSniperRifle/VulkarWraith",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Melee/Fist/FuraxWraith",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/Pistols/WraithSingleViper/WraithSingleViper",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/ClanTech/Energy/VandalElectroProd",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/Melee/GrineerMachetteAndCleaver/WraithMacheteWeapon",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/LongGuns/WraithGorgon/WraithGorgon",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Grineer/Melee/GrineerCombatKnife/GrineerCombatKnife",
+        "route": {
+            "kind": "baro"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Melee/Hammer/ThrowingHammer",
+        "route": {
+            "kind": "nightwave"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/LongGuns/TnModQuestRifle/TnModQuestRifleWeapon",
+        "route": {
+            "kind": "quest",
+            "quest": "The Teacher"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Orokin/BallasSword/BallasSwordWeapon",
+        "route": {
+            "kind": "quest",
+            "quest": "Chimera Prologue"
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Shotgun/Shotgun",
+        "route": {
+            "kind": "market_credits",
+            "credits": 25000
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Pistol/HeavyPistol",
+        "route": {
+            "kind": "market_credits",
+            "credits": 50000
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Pistol/BurstPistol",
+        "route": {
+            "kind": "market_credits",
+            "credits": 20000
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/LasSilencedPistol/LasSilencedPistolWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 3
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/AK47/TC2024AK47Weapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 4
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/LongGuns/TnBeltFedRifle/TnBeltFedRifleWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 4
+        }
+    },
+    {
+        "path": "/Lotus/Powersuits/Frumentarius/Frumentarius",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 4
+        }
+    },
+    {
+        "path": "/Lotus/Powersuits/Temple/Temple",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 4
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Pistols/1999EntHybridPistolWeapon/1999EntHybridPistolWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 4
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/LasGooPistol/LasGooPistolPlayerWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 5
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/LasGooAK/LasGooAKPlayerWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 5
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/LasGrenadeLauncher/LasrianNoxPlayerWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 5
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Lasria/LasGooSickle/LasGooSicklePlayerWeapon",
+        "route": {
+            "kind": "vendor",
+            "syndicate": "The Hex",
+            "rank": 5
+        }
+    },
+    {
+        "path": "/Lotus/Weapons/Tenno/Melee/Swords/PrimeWar/PrimeWarWeapon",
+        "route": {
+            "kind": "quest",
+            "quest": "Jade Shadows: Constellations"
+        }
+    },
+    {
         "path": "/Lotus/Types/Recipes/Weapons/DuelistBowBlueprint",
         "name": "Cintra Blueprint",
         "category": "Blueprints",

@@ -2,12 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TAURI_COMMANDS } from "../constants/tauri";
 import type { WfmItem, WfmCachedPrices } from "../types/market";
+import { normalizeForWfm } from "../utils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function normalizeForWfm(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-}
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 // One IPC call per consumer tree, shared by every module that needs WFM

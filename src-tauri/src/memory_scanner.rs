@@ -105,6 +105,20 @@ pub struct BlobInventory {
     pub weapon_skins:    HashMap<String, i64>,
     /// Path → mastery rank derived from XPInfo.
     pub mastery_data:    HashMap<String, u32>,
+    /// XPInfo: affinity per equipment type. `None` when the section was not an
+    /// array; an empty array is a real zero.
+    pub mastery_xp:      Option<HashMap<String, i64>>,
+    /// PlayerSkills: Intrinsic ranks (`LPS_*`) and banked points (`LPP_*`)
+    /// under the game's own field names. `None` when the section was not an
+    /// object, while an empty object is a real zero everywhere.
+    pub player_skills:   Option<HashMap<String, i64>>,
+    /// Missions: completion counts per node key. `None` when the section was
+    /// not an array. An empty array is a real zero and stays `Some`.
+    pub missions:        Option<HashMap<String, BlobMission>>,
+    /// Affiliations: standing and rank per syndicate tag. `None` when the
+    /// section was not an array. A syndicate the player never touched has
+    /// no entry, so absence in a present array means zero standing.
+    pub affiliations:    Option<HashMap<String, BlobAffiliation>>,
     pub pending_recipes: Vec<BlobPendingRecipe>,
     /// Warframe paths fed to Helminth (InfestedFoundry.ConsumedSuits).
     pub consumed_suits:  Vec<String>,
@@ -135,6 +149,34 @@ impl BlobInventory {
         bytes.hash(&mut h);
         h.finish().max(1)
     }
+}
+
+/// One `Missions` entry. `Completes` counts every clear of the node across
+/// modes, so a node first cleared on the Steel Path counts as cleared on the
+/// normal chart too. `Tier` is null on most entries and 1, 2 or 8 on the
+/// rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobMission {
+    pub completes: u32,
+    pub tier:      Option<u32>,
+}
+
+impl BlobMission {
+    /// On a verified account every node and junction cleared on the Steel
+    /// Path carried tier 1 and every other one carried null.
+    // TODO: bits 2 and 8 are not understood.
+    pub fn steel_path_cleared(&self) -> bool {
+        self.tier.is_some_and(|tier| tier & 1 != 0)
+    }
+}
+
+/// One `Affiliations` entry. `Title` is the rank; it is absent at rank 0
+/// and negative for a syndicate the player has been demoted by, where
+/// `Standing` is negative too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobAffiliation {
+    pub standing: i64,
+    pub title:    i32,
 }
 
 /// One owned unique item (warframe, weapon, companion, archwing, amp, mech).
@@ -926,6 +968,31 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         }
     }
 
+    let mastery_xp: Option<HashMap<String, i64>> = json["XPInfo"].as_array().map(|arr| {
+        arr.iter().filter_map(|e| Some((e["ItemType"].as_str()?.to_string(), e["XP"].as_i64()?))).collect()
+    });
+
+    let player_skills: Option<HashMap<String, i64>> = json["PlayerSkills"].as_object().map(|skills| {
+        skills.iter().filter_map(|(field, value)| Some((field.clone(), value.as_i64()?))).collect()
+    });
+
+    let missions: Option<HashMap<String, BlobMission>> = json["Missions"].as_array().map(|arr| {
+        arr.iter().filter_map(|e| Some((
+            e["Tag"].as_str()?.to_string(),
+            BlobMission { completes: e["Completes"].as_u64()? as u32, tier: e["Tier"].as_u64().map(|t| t as u32) },
+        ))).collect()
+    });
+
+    let affiliations: Option<HashMap<String, BlobAffiliation>> = json["Affiliations"].as_array().map(|arr| {
+        arr.iter().filter_map(|e| Some((
+            e["Tag"].as_str()?.to_string(),
+            BlobAffiliation {
+                standing: e["Standing"].as_i64()?,
+                title: if e["Title"].is_null() { 0 } else { i32::try_from(e["Title"].as_i64()?).ok()? },
+            },
+        ))).collect()
+    });
+
     // PendingRecipes (Foundry)
     let pending_recipes: Vec<BlobPendingRecipe> = json["PendingRecipes"].as_array()
         .map(|a| a.iter().filter_map(|e| {
@@ -958,7 +1025,8 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
     let mut inv = BlobInventory {
         credits, endo, platinum, free_platinum, mastery_level,
         unique_items, stackable_items, mods,
-        flavour_items, weapon_skins, mastery_data, pending_recipes, consumed_suits,
+        flavour_items, weapon_skins, mastery_data, mastery_xp, player_skills, missions, affiliations,
+        pending_recipes, consumed_suits,
         rivens, sections, content_hash: 0,
     };
     inv.content_hash = inv.compute_content_hash();
@@ -2053,5 +2121,100 @@ mod xp_to_rank_tests {
         // be untouched by this fix.
         let path = "/Lotus/Types/Sentinels/SentinelWeapons/DethMachineRifle";
         assert_eq!(xp_to_rank(450_000, path), 30);
+    }
+}
+
+#[cfg(test)]
+mod mastery_section_tests {
+    use super::{parse_full_account_blob, BlobAffiliation, BlobMission};
+
+    /// Same completeness padding as `stitch_engine_tests::make_blob`, with
+    /// `XPInfo` swappable so a test can make it absent.
+    fn make_blob(fields: &str) -> Vec<u8> {
+        make_blob_with_xp_info(fields, "[]")
+    }
+
+    fn make_blob_with_xp_info(fields: &str, xp_info: &str) -> Vec<u8> {
+        let padding = "x".repeat(60_000);
+        format!(
+            r#"{{"SubscribedToEmails":0,
+"RegularCredits":0,"FusionPoints":0,"PremiumCredits":0,"PremiumCreditsFree":0,"PlayerLevel":0,
+"FlavourItems":[],"InfestedFoundry":{{}},"PendingRecipes":[],"RawUpgrades":[],"Upgrades":[],"WeaponSkins":[],"XPInfo":{xp_info},
+"Suits":[{{"ItemType":"/Lotus/Powersuits/Mag/Mag","XP":0}}],"LongGuns":[],"Pistols":[],"Melee":[],"SpaceSuits":[],"SpaceMelee":[],"SpaceGuns":[],"Sentinels":[],"SentinelWeapons":[],"KubrowPets":[],"OperatorAmps":[],"MechSuits":[],
+"MiscItems":[],"Recipes":[],"FusionTreasures":[],"CrewShipRawSalvage":[],"ShipDecorations":[],
+"_pad":"{padding}",
+{fields},
+"DeathSquadable":false}}"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn xp_info_distinguishes_empty_from_absent() {
+        let empty = parse_full_account_blob(&make_blob(r#""RegularCredits":1"#)).expect("parses");
+        assert_eq!(empty.mastery_xp.as_ref().map(|xp| xp.len()), Some(0));
+
+        let credited = parse_full_account_blob(&make_blob_with_xp_info(
+            r#""RegularCredits":1"#, r#"[{"ItemType":"/Lotus/Weapons/Tenno/Rifle/Braton","XP":450000}]"#,
+        )).expect("parses");
+        assert_eq!(credited.mastery_xp.expect("array").get("/Lotus/Weapons/Tenno/Rifle/Braton"), Some(&450_000));
+
+        let absent = parse_full_account_blob(&make_blob_with_xp_info(r#""RegularCredits":7"#, "null")).expect("still parses");
+        assert!(absent.mastery_xp.is_none());
+        assert_eq!(absent.credits, 7);
+    }
+
+    /// A capture with every Drifter track at 10 carried `LPP_DRIFTER: 0`
+    /// while `LPP_SPACE` held 89,930 next to unmaxed Railjack tracks, so the
+    /// `LPP_*` fields are banked points, not lifetime earnings.
+    #[test]
+    fn player_skills_are_carried_as_named_numbers_and_absent_when_missing() {
+        let captured = parse_full_account_blob(&make_blob(
+            r#""RegularCredits":1,"PlayerSkills":{"LPP_SPACE":89930,"LPS_GUNNERY":8,"LPS_ENGINEERING":8,"LPS_TACTICAL":10,"LPS_PILOTING":9,"LPP_DRIFTER":0,"LPS_DRIFT_RIDING":10,"LPS_DRIFT_COMBAT":10,"LPS_DRIFT_OPPORTUNITY":10,"LPS_DRIFT_ENDURANCE":10,"LPS_COMMAND":10,"Note":"ignored"}"#,
+        )).expect("parses");
+        let skills = captured.player_skills.expect("object");
+        assert_eq!(skills.len(), 11);
+        assert_eq!((skills["LPP_SPACE"], skills["LPS_GUNNERY"], skills["LPP_DRIFTER"], skills["LPS_DRIFT_ENDURANCE"]), (89_930, 8, 0, 10));
+
+        let empty = parse_full_account_blob(&make_blob(r#""RegularCredits":1,"PlayerSkills":{}"#)).expect("parses");
+        assert_eq!(empty.player_skills.as_ref().map(|s| s.len()), Some(0));
+
+        assert!(parse_full_account_blob(&make_blob(r#""RegularCredits":1"#)).expect("parses").player_skills.is_none());
+        assert!(parse_full_account_blob(&make_blob(r#""RegularCredits":1,"PlayerSkills":null"#)).expect("parses").player_skills.is_none());
+    }
+
+    #[test]
+    fn missions_distinguish_empty_from_absent_and_keep_the_tier() {
+        let absent = parse_full_account_blob(&make_blob(r#""RegularCredits":1"#)).expect("parses");
+        assert!(absent.missions.is_none());
+
+        let empty = parse_full_account_blob(&make_blob(r#""RegularCredits":1,"Missions":[]"#)).expect("parses");
+        assert_eq!(empty.missions.as_ref().map(|m| m.len()), Some(0));
+
+        let cleared = parse_full_account_blob(&make_blob(
+            r#""RegularCredits":1,"Missions":[{"Completes":14,"Tier":1,"Tag":"SolNode27"},{"Completes":2,"Tag":"EarthToVenusJunction"},{"Tag":"SolNode1"},{"Completes":3}]"#,
+        )).expect("parses");
+        let missions = cleared.missions.expect("array");
+        assert_eq!(missions.get("SolNode27"), Some(&BlobMission { completes: 14, tier: Some(1) }));
+        assert_eq!(missions.get("EarthToVenusJunction"), Some(&BlobMission { completes: 2, tier: None }));
+        assert_eq!(missions.len(), 2, "an entry without both tag and count is dropped");
+    }
+
+    #[test]
+    fn affiliations_keep_standing_and_title_and_skip_malformed_entries() {
+        let absent = parse_full_account_blob(&make_blob(r#""RegularCredits":1"#)).expect("parses");
+        assert!(absent.affiliations.is_none());
+
+        let empty = parse_full_account_blob(&make_blob(r#""RegularCredits":1,"Affiliations":[]"#)).expect("parses");
+        assert_eq!(empty.affiliations.as_ref().map(|a| a.len()), Some(0));
+
+        let captured = parse_full_account_blob(&make_blob(
+            r#""RegularCredits":1,"Affiliations":[{"Standing":334561,"Title":5,"FreeFavorsEarned":[1,2],"Tag":"CetusSyndicate"},{"Initiated":true,"Standing":61579,"Tag":"LibrarySyndicate"},{"Standing":-71000,"Title":-2,"Tag":"NewLokaSyndicate"},{"Title":3,"Tag":"NoStanding"},{"Standing":5,"Title":1},{"Standing":"5","Title":1,"Tag":"TextStanding"},{"Standing":5,"Title":"1","Tag":"TextTitle"}]"#,
+        )).expect("parses");
+        let affiliations = captured.affiliations.expect("array");
+        assert_eq!(affiliations.get("CetusSyndicate"), Some(&BlobAffiliation { standing: 334_561, title: 5 }));
+        assert_eq!(affiliations.get("LibrarySyndicate"), Some(&BlobAffiliation { standing: 61_579, title: 0 }), "no Title is rank 0");
+        assert_eq!(affiliations.get("NewLokaSyndicate"), Some(&BlobAffiliation { standing: -71_000, title: -2 }));
+        assert_eq!(affiliations.len(), 3, "entries without a tag or with a non-numeric standing or title are dropped");
     }
 }

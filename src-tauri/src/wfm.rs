@@ -135,6 +135,14 @@ impl RateLimiter {
 // The client
 // ==============================================================================
 
+/// One warframe.market sell quote. `price` None means the slug is not listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PriceQuote {
+    pub price: Option<u32>,
+    /// Unix seconds when the quote was fetched.
+    pub fetched_at: Option<i64>,
+}
+
 pub struct Wfm {
     session: Mutex<Option<WfmSession>>,
     /// General limit: ≤3 requests/second across every WFM endpoint.
@@ -1185,6 +1193,16 @@ impl Wfm {
 
     pub fn uncache_price(&self, slug: &str) {
         self.price_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(slug);
+    }
+
+    /// Returns every quote, expired ones included, since the views show them
+    /// as estimates with their age.
+    pub fn quotes(&self) -> std::collections::HashMap<String, PriceQuote> {
+        let now = chrono::Utc::now().timestamp();
+        self.price_cache.lock().unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(slug, &(price, ts))| (slug.clone(), PriceQuote { price, fetched_at: Some(now - ts.elapsed().as_secs() as i64) }))
+            .collect()
     }
 
     /// A clone of the whole slug → price cache (live entries only).

@@ -44,6 +44,9 @@ ocrs = "0.7"
 rten = "0.9"
 # ── END ocrs fallback ───────────────────────────────────────────────────────
 
+[dev-dependencies]
+tempfile = "3"
+
 [package.metadata.cargo-machete]
 # native-tls isn't imported directly — it's the backend enabled by
 # tungstenite's "native-tls" feature (src/wfm.rs's client_tls call).

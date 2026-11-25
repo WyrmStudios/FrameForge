@@ -36,6 +36,12 @@ mod inventory_state;
 mod log_tail;
 mod log_watcher;
 mod logging;
+mod mastery;
+mod mastery_nodes;
+mod mastery_progress;
+mod mastery_recipe;
+mod mastery_relics;
+mod mastery_rules;
 mod mem_regions;
 mod memory_scanner;
 mod monitor;
@@ -99,6 +105,8 @@ struct InitialState {
     weapon_dispositions: HashMap<String, f32>,
     recipes: HashMap<String, Vec<wfcd::RecipeComponent>>,
     relic_drops: HashMap<String, Vec<String>>,
+    drop_locations: HashMap<String, Vec<wfcd::DropLocation>>,
+    mastery_progress: mastery_progress::MasteryProgress,
     relic_rewards: HashMap<String, Vec<wfcd::RelicReward>>,
     quantities: HashMap<String, i64>,
     unique: HashMap<String, i64>,
@@ -138,6 +146,8 @@ struct InitialCachePaths<'a> {
     items_cache_path: &'a std::path::PathBuf,
     recipes_cache_path: &'a std::path::PathBuf,
     relic_drops_cache_path: &'a std::path::PathBuf,
+    drop_locations_cache_path: &'a std::path::PathBuf,
+    mastery_progress_path: &'a std::path::PathBuf,
     relic_rewards_cache_path: &'a std::path::PathBuf,
     inventory_state_cache_path: &'a std::path::PathBuf,
     syndicate_catalog_path: &'a std::path::PathBuf,
@@ -151,6 +161,8 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
         items_cache_path,
         recipes_cache_path,
         relic_drops_cache_path,
+        drop_locations_cache_path,
+        mastery_progress_path,
         relic_rewards_cache_path,
         inventory_state_cache_path,
         syndicate_catalog_path,
@@ -165,6 +177,8 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
         .collect();
     let recipes = load_recipes_cache(recipes_cache_path);
     let relic_drops: HashMap<String, Vec<String>> = std::fs::read_to_string(relic_drops_cache_path)
+        .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let drop_locations: HashMap<String, Vec<wfcd::DropLocation>> = std::fs::read_to_string(drop_locations_cache_path)
         .ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
     // Relic rewards: invalidate on old format or age > 24 h.
@@ -195,6 +209,7 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
 
     // Inventory state → split into quantities, uniques, mods.
     let inv_state = load_inventory_state_cache(inventory_state_cache_path);
+    let mastery_progress = mastery_progress::MasteryProgress::load(mastery_progress_path.clone(), &inv_state);
 
     let quantities: HashMap<String, i64> = inv_state.items.iter()
         .filter(|(k, v)| {
@@ -245,7 +260,7 @@ fn load_initial_state(paths: InitialCachePaths<'_>) -> InitialState {
     let corrections = load_corrections(corrections_path);
 
     InitialState {
-        items, weapon_dispositions, recipes, relic_drops, relic_rewards,
+        items, weapon_dispositions, recipes, relic_drops, drop_locations, mastery_progress, relic_rewards,
         quantities, unique, mods, syndicate_catalog, auction_ids,
         relics_run_prices, wfm_prices, corrections,
     }
@@ -376,6 +391,7 @@ async fn start_monitor(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         flag: flag.clone(),
         db_path: state.db_path.clone(),
         inventory_state_cache_path: state.inventory_state_cache_path.clone(),
+        mastery_progress: state.mastery_progress.clone(),
         shared_quantities: state.current_quantities.clone(),
         shared_unique: state.unique_quantities.clone(),
         shared_mods: state.current_mods.clone(),
@@ -421,6 +437,8 @@ pub fn run() {
     let items_cache_path = cache_dir.join("items_cache.json");
     let recipes_cache_path = cache_dir.join("recipes_cache.json");
     let relic_drops_cache_path = cache_dir.join("relic_drops_cache.json");
+    let drop_locations_cache_path = cache_dir.join("drop_locations_cache.json");
+    let mastery_progress_path = cache_dir.join("mastery-progress-v1.json");
     let relic_rewards_cache_path = cache_dir.join("relic_rewards_cache.json");
     let quantities_cache_path = cache_dir.join("quantities_cache.json");
     let inventory_state_cache_path = cache_dir.join("inventory_state_cache.json");
@@ -473,6 +491,7 @@ pub fn run() {
             for path in &[
                 &items_cache_path, &recipes_cache_path,
                 &relic_drops_cache_path, &relic_rewards_cache_path,
+                &drop_locations_cache_path,
             ] {
                 let _ = std::fs::remove_file(path);
             }
@@ -488,6 +507,8 @@ pub fn run() {
         items_cache_path: &items_cache_path,
         recipes_cache_path: &recipes_cache_path,
         relic_drops_cache_path: &relic_drops_cache_path,
+        drop_locations_cache_path: &drop_locations_cache_path,
+        mastery_progress_path: &mastery_progress_path,
         relic_rewards_cache_path: &relic_rewards_cache_path,
         inventory_state_cache_path: &inventory_state_cache_path,
         syndicate_catalog_path: &syndicate_catalog_path,
@@ -507,16 +528,20 @@ pub fn run() {
             items_cache_path,
             recipes_cache_path,
             relic_drops_cache_path,
+            drop_locations_cache_path,
             relic_rewards_cache_path,
             quantities_cache_path,
             inventory_state_cache_path,
+            mastery_progress: Arc::new(Mutex::new(initial.mastery_progress)),
             settings_path,
             log_path,
             changes_log_path,
             conn: Mutex::new(conn),
             wfcd_items: Mutex::new(initial.items),
-            recipes: Mutex::new(initial.recipes),
+            recipe_consumers: Mutex::new(Arc::new(mastery_recipe::recipe_consumers(&initial.recipes))),
+            recipes: Mutex::new(Arc::new(initial.recipes)),
             relic_drops: Mutex::new(initial.relic_drops),
+            drop_locations: Mutex::new(Arc::new(initial.drop_locations)),
             relic_rewards: Mutex::new(initial.relic_rewards),
             blueprint_to_result: Mutex::new(HashMap::new()),
             wiki_reward_names: Mutex::new(std::collections::HashSet::new()),
@@ -546,7 +571,7 @@ pub fn run() {
             wfm_priority_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             wfm_queue_started: Arc::new(AtomicBool::new(false)),
             wfm_top_cache_path,
-            syndicate_catalog: Mutex::new(initial.syndicate_catalog),
+            syndicate_catalog: Mutex::new(Arc::new(initial.syndicate_catalog)),
             syndicate_catalog_path,
             auction_ids: Mutex::new(initial.auction_ids),
             auction_ids_path,
@@ -600,6 +625,11 @@ pub fn run() {
             catalogue::get_weapon_catalog,
             catalogue::get_craftable_items,
             diagnostics::toggle_debug_categorization,
+            mastery::get_mastery_overview,
+            mastery::evaluate_mastery_plan,
+            mastery::load_mastery_plan,
+            mastery::save_mastery_plan,
+            mastery_recipe::plan_crafts,
             catalogue::get_recipe,
             catalogue::get_recipes_bulk,
             catalogue::get_relic_drops,
