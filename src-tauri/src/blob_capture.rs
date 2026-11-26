@@ -12,6 +12,8 @@ use crate::catalogue;
 use crate::db;
 use crate::events;
 use crate::inventory_state::{build_inventory_from_blob, load_inventory_state_cache};
+use crate::mastery::MasteryProvenance;
+use crate::mastery_progress::MasteryProgress;
 use crate::memory_scanner;
 use crate::monitor::{
     self, BlobStatusPayload, InventoryUpdate,
@@ -25,6 +27,7 @@ pub(crate) struct BlobCaptureDeps {
     pub flag: Arc<AtomicBool>,
     pub db_path: std::path::PathBuf,
     pub inventory_state_cache_path: std::path::PathBuf,
+    pub mastery_progress: Arc<Mutex<MasteryProgress>>,
     pub shared_quantities: Arc<Mutex<HashMap<String, i64>>>,
     pub shared_unique: Arc<Mutex<HashMap<String, i64>>>,
     pub shared_mods: Arc<Mutex<HashMap<String, memory_scanner::ModCount>>>,
@@ -50,7 +53,7 @@ pub(crate) fn spawn_blob_capture_thread(
     catalog: monitor::MonitorCatalog,
 ) {
     let BlobCaptureDeps {
-        app, flag, db_path, inventory_state_cache_path,
+        app, flag, db_path, inventory_state_cache_path, mastery_progress,
         shared_quantities, shared_unique, shared_mods, shared_crafting,
         blob_log_enabled, blob_log_dir, debug_cat_enabled,
         unmatched_paths_dir, force_pid_check, blob_rx, blob_tx,
@@ -162,6 +165,7 @@ pub(crate) fn spawn_blob_capture_thread(
                 match section_baseline.evaluate(&blob.sections) {
                     Err(missing) => {
                         warn!(?missing, "blob rejected: sections present in last good blob are missing - truncated capture");
+                        mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).discard_blob();
                         continue;
                     }
                     Ok(true) => {
@@ -174,6 +178,14 @@ pub(crate) fn spawn_blob_capture_thread(
 
                 if blob.content_hash != 0 && Some(blob.content_hash) == last_applied_hash {
                     debug!("blob unchanged since last apply - skipping");
+                    // The same data seen again re-observes the last confirmed progress.
+                    let provenance = {
+                        let mut progress = mastery_progress.lock().unwrap_or_else(|e| e.into_inner());
+                        progress.reobserve(now).then(|| MasteryProvenance::from(progress.record()))
+                    };
+                    if let Some(provenance) = provenance {
+                        let _ = app.emit(events::MASTERY_OBSERVED, provenance);
+                    }
                     continue;
                 }
 
@@ -192,6 +204,9 @@ pub(crate) fn spawn_blob_capture_thread(
                     &mut last_snapshot_date, now,
                 ) {
                     last_applied_hash = Some(blob.content_hash);
+                    apply_mastery_progress(&blob, &mastery_progress, &app, now);
+                } else {
+                    mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).discard_blob();
                 }
             }
 
@@ -511,4 +526,26 @@ fn process_blob(
         }
     }
     true
+}
+
+/// Each section confirms its own progress kind; one the blob did not carry
+/// as the expected JSON shape leaves that kind as it was.
+fn apply_mastery_progress(blob: &memory_scanner::BlobInventory, progress: &Mutex<MasteryProgress>, app: &tauri::AppHandle, now: i64) {
+    if blob.mastery_xp.is_none() {
+        warn!("XPInfo is not an array; inventory applied, equipment progress left as it was");
+    }
+    if blob.player_skills.is_none() {
+        warn!("PlayerSkills is not an object; inventory applied, Intrinsics progress left as it was");
+    }
+    if blob.missions.is_none() {
+        warn!("Missions is not an array; inventory applied, node progress left as it was");
+    }
+    if blob.affiliations.is_none() {
+        warn!("Affiliations is not an array; inventory applied, standing left as it was");
+    }
+    if progress.lock().unwrap_or_else(|e| e.into_inner())
+        .apply_blob(blob.mastery_xp.as_ref(), blob.player_skills.as_ref(), blob.missions.as_ref(), blob.affiliations.as_ref(), now)
+    {
+        let _ = app.emit(events::MASTERY_UPDATE, ());
+    }
 }

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --experimental-strip-types --test src/arbitration/*.test.ts",
+    "test": "node --experimental-strip-types --test src/arbitration/*.test.ts src/completionist/*.test.ts src/lib/*.test.ts",
     "build": "tsc && vite build",
     "lint": "eslint .",
     "lint:tailwind": "node scripts/check-tailwind.mjs",

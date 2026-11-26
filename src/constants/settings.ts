@@ -1,6 +1,8 @@
+import type { Unobtainable } from "../types/mastery";
 import type {
   ClockFormat,
   FoundryPageSize,
+  MasteryExclude,
   RelicOverlayPriority,
   RelicPickLines,
   RelicPickPriority,
@@ -26,3 +28,10 @@ export const FOUNDRY_PAGE_SIZE_OPTIONS = [30, 60, 100] as const satisfies readon
 export const DEFAULT_FOUNDRY_PAGE_SIZE: FoundryPageSize = 30;
 
 export const MODULAR_SECTION_ORDER_DEFAULT = ["tracking", "favorites", "timers", "fissures"] as const;
+
+export const MASTERY_EXCLUDE_OPTIONS: readonly { key: Unobtainable; label: string; noun: string; desc: string }[] = [
+  { key: "founders", label: "Exclude Founders items", noun: "Founders item", desc: "Excalibur Prime, Lato Prime and Skana Prime were sold with the 2013 Founders packs and never offered again." },
+  { key: "retiredEvent", label: "Exclude retired event items", noun: "Retired event item", desc: "Event rewards that no recurring event, Baro Ki'Teer or Nightwave brings back." },
+  { key: "removedNode", label: "Exclude removed nodes", noun: "Removed node", desc: "Star chart nodes the game removed; players who cleared them keep the credit." },
+];
+export const DEFAULT_MASTERY_EXCLUDE: MasteryExclude = { founders: true, retiredEvent: true, removedNode: true };

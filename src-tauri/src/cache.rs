@@ -138,6 +138,13 @@ fn path_of(name: &str) -> PathBuf {
     paths::cache_dir().join(name)
 }
 
+#[cfg(test)]
+pub(crate) fn test_scratch(label: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("system temp dir is writable");
+    let path = dir.path().join(format!("{label}.json"));
+    (dir, path)
+}
+
 pub fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

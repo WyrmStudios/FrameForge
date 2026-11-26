@@ -5,12 +5,13 @@ use tracing::{info, warn};
 
 use crate::cache::{self, Fetched};
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct WfcdItem {
     pub name: String,
     pub unique_name: String,
     pub category: String,
-    /// WFCD `type` field — most granular discriminator (110 values). Always set.
+    /// WFCD `type` field — most granular discriminator (110 values). Always set
+    /// by WFCD; empty on a stand-in built from a corrections-table row.
     pub item_type: String,
     /// WFCD `productCategory` field — inventory slot type. Empty string when not set (~93% of items).
     pub product_category: String,
@@ -29,6 +30,11 @@ pub struct WfcdItem {
     pub tradable: Option<bool>,
     /// Whether levelling this item grants mastery XP (masterable from WFCD).
     pub masterable: Option<bool>,
+    /// What the Market charges in credits for the blueprint (bpCost from
+    /// WFCD). Also set on dojo research items, where it is the replication
+    /// cost rather than a Market price.
+    #[serde(default)]
+    pub bp_cost: Option<u32>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -40,6 +46,14 @@ pub struct RecipeComponent {
     #[serde(default = "default_one")]
     pub result_count: u32,
     pub components: Vec<RecipeComponent>,
+    /// Set on a blueprint node to the build price of the recipe it unlocks.
+    /// It stays None when the export carried no price, so an unpriced recipe
+    /// reads as unknown and never as free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<u32>,
+    /// Set on a blueprint node when the blueprint survives the craft.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reusable: bool,
 }
 
 fn default_one() -> u32 { 1 }
@@ -51,6 +65,11 @@ pub struct RelicReward {
     /// "Bronze" = Common, "Silver" = Uncommon, "Gold" = Rare
     pub rarity: String,
     pub image_name: Option<String>,
+    /// Relics.json's per-refinement drop chance in percent. The table's
+    /// rarity labels are unreliable (a 25.33% Intact drop reads "Uncommon"),
+    /// so this is the only field the probability maths trusts.
+    #[serde(default)]
+    pub chance: Option<f64>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -61,10 +80,20 @@ pub struct SyndicateOffer {
     pub image_name: Option<String>,
     pub tier: String,
     pub ducats: Option<u32>,
+    #[serde(default)]
+    pub standing: Option<u32>,
     /// For Blueprint items: the unique_name of the item crafted from this blueprint.
     /// None for mods, sigils, and other directly-owned items.
     #[serde(default)]
     pub result_unique: Option<String>,
+}
+
+/// A place other than a relic that drops an item, such as a mission
+/// rotation, a vendor or a cache. `location` is WFCD's free text.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct DropLocation {
+    pub location: String,
+    pub chance: Option<f64>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -74,6 +103,10 @@ pub struct FetchResult {
     pub recipes: HashMap<String, Vec<RecipeComponent>>,
     /// component unique_name → list of relic unique_names that can drop it
     pub relic_drops: HashMap<String, Vec<String>>,
+    /// item or component unique_name → every non-relic place it drops, one
+    /// entry per location
+    #[serde(default)]
+    pub drop_locations: HashMap<String, Vec<DropLocation>>,
     /// relic unique_name → 6 rewards sorted Bronze×3, Silver×2, Gold×1
     pub relic_rewards: HashMap<String, Vec<RelicReward>>,
     /// blueprint_unique → (display name, ducats)
@@ -841,6 +874,21 @@ fn parse_export_recipes(json: Option<&serde_json::Value>) -> HashMap<String, Exp
     map
 }
 
+/// Price and reusability of every blueprint in the export, keyed by the
+/// blueprint path. Several results have two blueprints (a helmet and its
+/// conversion, a lens and its convert recipe), and keying by result keeps
+/// only one, so this walks the raw entries instead. An entry without
+/// `consumeOnUse` counts as consumable, so a missing blueprint shows as a
+/// shortage rather than gating its recipe.
+fn blueprint_prices(json: Option<&serde_json::Value>) -> HashMap<&str, (Option<u32>, bool)> {
+    json.and_then(|j| j.as_object()).into_iter().flatten()
+        .map(|(blueprint, entry)| (blueprint.as_str(), (
+            entry["buildPrice"].as_u64().map(|p| p as u32),
+            !entry["consumeOnUse"].as_bool().unwrap_or(true),
+        )))
+        .collect()
+}
+
 /// Read the syndicate store catalog from warframe-drop-data/syndicates.json.
 /// This covers all vendor-purchased items: sigils, specters, health restores,
 /// weapon blueprints, augment mods — items that WFCD's `drops` field mostly omits.
@@ -909,11 +957,11 @@ fn parse_syndicate_store_catalog(
             } else if raw_place.starts_with(raw_key.as_str()) {
                 let after = &raw_place[raw_key.len()..];
                 let t = after.trim_start_matches(", ").trim();
-                // Some entries have "Rank N\u{a0}: TierName" with non-breaking space — normalise
-                if t.contains('\u{00a0}') || t.starts_with("Rank ") {
-                    String::new()
-                } else {
-                    t.to_string()
+                // A few entries read "Rank 4\u{a0}: Protector" or "Rank 2:Valiant";
+                // the title after the colon is what the other entries carry.
+                match t.strip_prefix("Rank ").and_then(|rest| rest.split_once(':')) {
+                    Some((_, title)) => title.trim().to_string(),
+                    None => t.to_string(),
                 }
             } else {
                 String::new()
@@ -930,6 +978,7 @@ fn parse_syndicate_store_catalog(
                     image_name,
                     tier,
                     ducats,
+                    standing: entry["standing"].as_u64().map(|s| s as u32),
                     result_unique: None,
                 });
             }
@@ -1072,14 +1121,16 @@ fn build_recipe_node(
 ) -> RecipeComponent {
     let RecipeCtx { display_names, resolver, export_recipes } = ctx;
     if depth > 6 {
-        return RecipeComponent { unique_name, name, count, result_count: 1, components: vec![] };
+        return RecipeComponent { unique_name, name, count, result_count: 1, components: vec![], credits: None, reusable: false };
     }
 
     let (result_count, components) = if let Some(recipe) = export_recipes.get(&unique_name) {
+        // Archwing parts arrive already named "… Blueprint", so the fallback
+        // must not append it a second time.
         let blueprint_name = display_names
             .get(&recipe.blueprint_unique)
             .cloned()
-            .unwrap_or_else(|| format!("{} Blueprint", name));
+            .unwrap_or_else(|| if name.ends_with(" Blueprint") { name.clone() } else { format!("{name} Blueprint") });
 
         let mut components = vec![RecipeComponent {
             unique_name: recipe.blueprint_unique.clone(),
@@ -1087,6 +1138,8 @@ fn build_recipe_node(
             count: 1,
             result_count: 1,
             components: vec![],
+            credits: None,
+            reusable: false,
         }];
 
         for (item_type, item_count) in &recipe.ingredients {
@@ -1116,7 +1169,19 @@ fn build_recipe_node(
         (1, vec![])
     };
 
-    RecipeComponent { unique_name, name, count, result_count, components }
+    RecipeComponent { unique_name, name, count, result_count, components, credits: None, reusable: false }
+}
+
+/// WFCD lists a result's own blueprint as a plain component, so its price and
+/// reusability come from the export entry keyed by that blueprint.
+fn price_blueprints(nodes: &mut [RecipeComponent], prices: &HashMap<&str, (Option<u32>, bool)>) {
+    for node in nodes {
+        if let Some(&(credits, reusable)) = prices.get(node.unique_name.as_str()) {
+            node.credits = credits;
+            node.reusable = reusable;
+        }
+        price_blueprints(&mut node.components, prices);
+    }
 }
 
 fn wfcd_category_to_display(wfcd_cat: &str) -> &'static str {
@@ -1219,7 +1284,7 @@ fn parse_relics_rewards(
                     let no_bp = name.to_lowercase().replace(" blueprint", "");
                     image_by_name.get(&no_bp).cloned()
                 });
-            Some(RelicReward { unique_name, name, rarity, image_name })
+            Some(RelicReward { unique_name, name, rarity, image_name, chance })
         }).collect();
 
         reward_list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
@@ -1338,7 +1403,7 @@ fn parse_relics_rewards_from_drop_data(
                     let no_bp = name.to_lowercase().replace(" blueprint", "");
                     image_by_name.get(&no_bp).cloned()
                 });
-            Some(RelicReward { unique_name, name, rarity, image_name })
+            Some(RelicReward { unique_name, name, rarity, image_name, chance })
         }).collect();
 
         reward_list.sort_by_key(|r| match r.rarity.as_str() { "Silver" => 1u8, "Gold" => 2, _ => 0 });
@@ -1355,6 +1420,41 @@ fn parse_relics_rewards_from_drop_data(
     }
 
     result
+}
+
+/// WFCD repeats a resource's whole location table on every recipe that
+/// consumes it, so locations dedup on insert. Relic entries dedup where
+/// `relic_drops` is built.
+fn record_drops(
+    unique_name: &str,
+    name: &str,
+    drops: &[serde_json::Value],
+    raw_drop_entries: &mut HashMap<String, Vec<(String, String, String)>>,
+    drop_locations: &mut HashMap<String, Vec<DropLocation>>,
+) {
+    for drop in drops {
+        let location = drop.get("location").and_then(|v| v.as_str()).map(str::trim).unwrap_or("");
+        match drop.get("uniqueName").and_then(|v| v.as_str()) {
+            Some(relic_path) if relic_path.contains("/Game/Projections/") => {
+                let rarity_raw = drop.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
+                let rarity = match rarity_raw.to_lowercase().as_str() {
+                    "uncommon" => "Silver",
+                    "rare"     => "Gold",
+                    _          => "Bronze",
+                }.to_string();
+                raw_drop_entries
+                    .entry(relic_path.to_string())
+                    .or_default()
+                    .push((unique_name.to_string(), name.to_string(), rarity));
+            }
+            _ if location.is_empty() => {}
+            _ => {
+                let locations = drop_locations.entry(unique_name.to_string()).or_default();
+                if locations.iter().any(|d| d.location == location) { continue; }
+                locations.push(DropLocation { location: location.to_string(), chance: drop.get("chance").and_then(|v| v.as_f64()) });
+            }
+        }
+    }
 }
 
 #[tracing::instrument(level = "debug", skip_all)]
@@ -1376,6 +1476,7 @@ fn fetch_from_wfcd(
     // Built by inverting each item's drops[] array (item→relics stored per-item).
     // WFCD canonicalizes all refinements under the Bronze path — dedup at build time.
     let mut raw_drop_entries: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+    let mut drop_locations: HashMap<String, Vec<DropLocation>> = HashMap::new();
 
     // Group items by display category to preserve the two-pass structure below.
     let mut category_map: HashMap<String, Vec<&serde_json::Value>> = HashMap::new();
@@ -1442,6 +1543,7 @@ fn fetch_from_wfcd(
                 .or_else(|| if unique_name.contains("/EntratiMech/") { Some(40) } else { None });
             let tradable          = item.get("tradable").and_then(|v| v.as_bool());
             let masterable        = item.get("masterable").and_then(|v| v.as_bool());
+            let bp_cost           = item.get("bpCost").and_then(|v| v.as_u64()).map(|n| n as u32);
 
             // `category` (display category from wfcd_category_to_display) groups similar WFCD
             // categories together (e.g. "Sentinels"+"SentinelWeapons"+"Pets" → "Companions").
@@ -1479,7 +1581,7 @@ fn fetch_from_wfcd(
                     product_category: product_category.clone(),
                     image_name: image_name.clone(),
                     vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap,
-                    tradable, masterable,
+                    tradable, masterable, bp_cost,
                 });
             }
 
@@ -1489,29 +1591,12 @@ fn fetch_from_wfcd(
                 }
             }
 
-            // Invert each item's drops[] to build relic_path → reward_items.
-            // All.json stores drops on the item side (item → relics), not on the relic side.
-            // WFCD uses the Bronze path as the canonical key for all refinements.
+            // All.json lists drops on the item, so the relic tables come from
+            // inverting them. WFCD uses the Bronze path as the canonical key for
+            // all refinements. relic_rewards is built from Relics.json, which
+            // spells out every refinement.
             if let Some(drops_arr) = item.get("drops").and_then(|v| v.as_array()) {
-                for drop in drops_arr {
-                    let relic_path = match drop.get("uniqueName").and_then(|v| v.as_str()) {
-                        Some(p) if p.contains("/Game/Projections/") => p.to_string(),
-                        _ => continue,
-                    };
-                    let rarity_raw = drop.get("rarity").and_then(|v| v.as_str()).unwrap_or("Common");
-                    let rarity = match rarity_raw.to_lowercase().as_str() {
-                        "uncommon" => "Silver",
-                        "rare"     => "Gold",
-                        _          => "Bronze",
-                    }.to_string();
-                    // Store as-is. raw_drop_entries is only used to build relic_drops
-                    // (component → relics) for RelicHelper. relic_rewards is built
-                    // separately from Relics.json which has all refinements explicitly.
-                    raw_drop_entries
-                        .entry(relic_path)
-                        .or_default()
-                        .push((unique_name.clone(), name.clone(), rarity));
-                }
+                record_drops(&unique_name, &name, drops_arr, &mut raw_drop_entries, &mut drop_locations);
             }
 
             // Add component parts to catalog
@@ -1526,6 +1611,12 @@ fn fetch_from_wfcd(
                     // the full display name ("Ash Prime Chassis"), parent included.
                     let resolved = resolver.resolve(&cunique);
                     let cname = resolved.as_deref().unwrap_or("");
+                    // Relic and mission drops live on the component, and a
+                    // resource keeps its table whether or not it makes the
+                    // catalogue below.
+                    if let Some(drops_arr) = comp.get("drops").and_then(|v| v.as_array()) {
+                        record_drops(&cunique, cname, drops_arr, &mut raw_drop_entries, &mut drop_locations);
+                    }
                     let is_part = cunique.starts_with("/Lotus/Types/Recipes/")
                         || cunique.starts_with("/Lotus/Powersuits/")
                         || cunique.starts_with("/Lotus/Weapons/")
@@ -1608,6 +1699,7 @@ fn fetch_from_wfcd(
                             max_level_cap: None,
                             tradable: None,
                             masterable: None,
+                            bp_cost: None,
                         });
 
                         // Note: blueprint entries for these components are provided by
@@ -1712,6 +1804,7 @@ fn fetch_from_wfcd(
                             max_level_cap:    None,
                             tradable:         None,
                             masterable:       None,
+                            bp_cost:          None,
                         });
                     }
                 }
@@ -1744,6 +1837,7 @@ fn fetch_from_wfcd(
                             max_level_cap:    None,
                             tradable:         None,
                             masterable:       None,
+                            bp_cost:          None,
                         });
                     }
                 }
@@ -1777,6 +1871,7 @@ fn fetch_from_wfcd(
                     max_level_cap:    None,
                     tradable:         None,
                     masterable:       None,
+                    bp_cost:          None,
                 });
             }
         }
@@ -1828,6 +1923,7 @@ fn fetch_from_wfcd(
                             max_level_cap:    None,
                             tradable:         None,
                             masterable:       None,
+                            bp_cost:          None,
                         });
                     }
 
@@ -1848,11 +1944,18 @@ fn fetch_from_wfcd(
         }
     }
 
+    // Pass 3 renamed the built parts and added their blueprints, so the
+    // recipe trees read names from the items as they stand now.
+    let display_names: HashMap<String, String> = items.iter()
+        .map(|i| (i.unique_name.clone(), i.name.clone()))
+        .collect();
+
     // Build recipe trees
+    let prices = blueprint_prices(recipes_json);
     let mut recipes: HashMap<String, Vec<RecipeComponent>> = HashMap::new();
     for (parent_unique, item_json) in &raw_craftable {
         if let Some(comps) = item_json.get("components").and_then(|v| v.as_array()) {
-            let tree: Vec<RecipeComponent> = comps.iter().filter_map(|c| {
+            let mut tree: Vec<RecipeComponent> = comps.iter().filter_map(|c| {
                 let cu = c["uniqueName"].as_str()?.trim().to_string();
                 // Resolve by uniqueName (see build_recipe_node).
                 let cn = tree_node_name(&cu, &display_names, &resolver);
@@ -1863,11 +1966,26 @@ fn fetch_from_wfcd(
                     0,
                 ))
             }).collect();
+            price_blueprints(&mut tree, &prices);
             if !tree.is_empty() {
                 recipes.insert(parent_unique.clone(), tree);
             }
         }
     }
+
+    // WFCD records a part's drop table under the built part's path. A plan runs
+    // short of the part's blueprint, which is what drops, so the same table has
+    // to read under the blueprint path too.
+    fn alias_part_drops(components: &[RecipeComponent], drop_locations: &mut HashMap<String, Vec<DropLocation>>) {
+        for part in components {
+            let Some(blueprint) = part.components.iter().find(|c| crate::mastery_recipe::is_blueprint(c)) else { continue };
+            if let Some(locations) = drop_locations.get(&part.unique_name).cloned() {
+                drop_locations.entry(blueprint.unique_name.clone()).or_insert(locations);
+            }
+            alias_part_drops(&part.components, drop_locations);
+        }
+    }
+    for components in recipes.values() { alias_part_drops(components, &mut drop_locations); }
 
     // WFCD's components[] no longer carry an `imageName`, so every part and blueprint
     // above inherited its parent's image (all of Yareli Prime's parts wore
@@ -2038,7 +2156,7 @@ fn fetch_from_wfcd(
         .filter_map(|i| i.omega_attenuation.map(|d| (i.unique_name.clone(), d)))
         .collect();
 
-    Ok(FetchResult { items, recipes, relic_drops, relic_rewards, blueprint_names, wiki_reward_names, syndicate_catalog, weapon_dispositions })
+    Ok(FetchResult { items, recipes, relic_drops, drop_locations, relic_rewards, blueprint_names, wiki_reward_names, syndicate_catalog, weapon_dispositions })
 }
 
 pub fn fallback_items() -> Vec<WfcdItem> {
@@ -2065,7 +2183,7 @@ pub fn fallback_items() -> Vec<WfcdItem> {
         name: n.to_string(),
         category: c.to_string(),
         item_type: String::new(), product_category: String::new(),
-        image_name: None, vaulted: None, ducats: None, mastery_req: None, omega_attenuation: None, fusion_limit: None, max_level_cap: None, tradable: None, masterable: None,
+        image_name: None, vaulted: None, ducats: None, mastery_req: None, omega_attenuation: None, fusion_limit: None, max_level_cap: None, tradable: None, masterable: None, bp_cost: None,
     })
     .collect()
 }
@@ -2437,5 +2555,114 @@ mod tests {
             .find(|i| i.unique_name == "/Lotus/Types/Game/Projections/T4VoidProjectionEBronze")
             .expect("relic item should be in result.items");
         assert_eq!(found.vaulted, Some(true));
+    }
+
+    #[test]
+    fn component_drops_split_into_relics_and_locations() {
+        const BARREL: &str = "/Lotus/Types/Recipes/Weapons/WeaponParts/BratonPrimeBarrel";
+        const CELL: &str = "/Lotus/Types/Items/MiscItems/OrokinCell";
+        const AXI: &str = "/Lotus/Types/Game/Projections/T4VoidProjectionGrendelPrimeDBronze";
+        let braton = serde_json::json!({
+            "name": "Braton Prime", "uniqueName": "/Lotus/Weapons/Tenno/Rifle/BratonPrime", "category": "Primary",
+            "components": [
+                { "name": "Barrel", "uniqueName": BARREL, "drops": [
+                    { "location": "Axi A17 Relic (Radiant)", "uniqueName": AXI, "chance": 16.67, "rarity": "Uncommon" },
+                    { "location": "Corrupted Vor", "uniqueName": null, "chance": 50.0 },
+                    { "location": "Corrupted Vor", "uniqueName": null, "chance": 50.0 },
+                    { "location": "Cephalon Simaris", "chance": null },
+                ] },
+                { "name": "Orokin Cell", "uniqueName": CELL, "drops": [{ "location": "Corrupted Vor", "chance": 50.0 }] },
+            ],
+        });
+        let cell = serde_json::json!({ "name": "Orokin Cell", "uniqueName": CELL, "category": "Resources",
+            "drops": [{ "location": "Saturn/Titan (Survival), Rotation C", "chance": 12.5 }] });
+        let out = fetch_from_wfcd(&[&braton, &cell], None, None, None, None, None, None, None).expect("fixture builds");
+
+        assert_eq!(out.relic_drops.get(BARREL).map(Vec::as_slice), Some(&[AXI.to_string()][..]));
+        let at = |unique: &str| out.drop_locations.get(unique).map(|v| v.iter().map(|d| (d.location.as_str(), d.chance)).collect::<Vec<_>>());
+        assert_eq!(at(BARREL), Some(vec![("Corrupted Vor", Some(50.0)), ("Cephalon Simaris", None)]));
+        assert_eq!(at(CELL), Some(vec![("Corrupted Vor", Some(50.0)), ("Saturn/Titan (Survival), Rotation C", Some(12.5))]));
+        assert!(!out.drop_locations.contains_key(AXI));
+    }
+
+    #[test]
+    fn recipe_blueprint_nodes_carry_the_suffix_once_and_the_market_credit_price_is_kept() {
+        const FROST_CHASSIS: &str = "/Lotus/Types/Recipes/WarframeRecipes/FrostChassisComponent";
+        const FROST_CHASSIS_BP: &str = "/Lotus/Types/Recipes/WarframeRecipes/FrostChassisBlueprint";
+        const ELYTRON_HARNESS: &str = "/Lotus/Types/Recipes/ArchwingRecipes/DemolitionArchwing/DemolitionArchwingChassisComponent";
+        const ELYTRON_HARNESS_BP: &str = "/Lotus/Types/Recipes/ArchwingRecipes/DemolitionArchwing/DemolitionArchwingChassisBlueprint";
+        const FERRITE: &str = "/Lotus/Types/Items/MiscItems/Ferrite";
+        let frost = serde_json::json!({
+            "name": "Frost", "uniqueName": "/Lotus/Powersuits/Frost/Frost", "category": "Warframes",
+            "components": [{ "name": "Chassis", "uniqueName": FROST_CHASSIS, "itemCount": 1, "drops": [{ "location": "Lieutenant Lech Kril", "chance": 38.72 }] }],
+        });
+        let elytron = serde_json::json!({
+            "name": "Elytron", "uniqueName": "/Lotus/Powersuits/Archwing/DemolitionJetPack/DemolitionJetPack", "category": "Archwing",
+            "components": [{ "name": "Harness", "uniqueName": ELYTRON_HARNESS, "itemCount": 1 }],
+        });
+        let astilla = serde_json::json!({
+            "name": "Astilla", "uniqueName": "/Lotus/Weapons/Tenno/Shotgun/TnSlugShotgun/TnSlugShotgunWeapon", "category": "Primary", "bpCost": 20000,
+        });
+        let export = serde_json::json!({
+            FROST_CHASSIS_BP: { "resultType": FROST_CHASSIS, "buildPrice": 15000, "ingredients": [{ "ItemType": FERRITE, "ItemCount": 1000 }] },
+            ELYTRON_HARNESS_BP: { "resultType": ELYTRON_HARNESS, "buildPrice": 15000, "ingredients": [{ "ItemType": FERRITE, "ItemCount": 1000 }] },
+        });
+        let resources = serde_json::json!({
+            FROST_CHASSIS: { "name": "/Lotus/Language/Menu/CraftingComponent_FrostChassisName" },
+            ELYTRON_HARNESS: { "name": "/Lotus/Language/Menu/CraftingComponent_DemolitionArchwingChassisName" },
+        });
+        let dict = serde_json::json!({
+            "/Lotus/Language/Menu/CraftingComponent_FrostChassisName": "Frost Chassis",
+            "/Lotus/Language/Menu/CraftingComponent_DemolitionArchwingChassisName": "Elytron Harness",
+        });
+        let out = fetch_from_wfcd(&[&frost, &elytron, &astilla], Some(&export), None, None, Some(&resources), Some(&dict), None, None).expect("fixture builds");
+
+        let names = |result: &str| -> Vec<(String, String)> {
+            out.recipes[result].iter().flat_map(|part| std::iter::once((part.unique_name.clone(), part.name.clone()))
+                .chain(part.components.iter().map(|c| (c.unique_name.clone(), c.name.clone())))).collect()
+        };
+        assert_eq!(names("/Lotus/Powersuits/Frost/Frost"), [
+            (FROST_CHASSIS.to_string(), "Frost Chassis".to_string()),
+            (FROST_CHASSIS_BP.to_string(), "Frost Chassis Blueprint".to_string()),
+            (FERRITE.to_string(), "Ferrite".to_string()),
+        ]);
+        assert_eq!(names("/Lotus/Powersuits/Archwing/DemolitionJetPack/DemolitionJetPack")[1], (ELYTRON_HARNESS_BP.to_string(), "Elytron Harness Blueprint".to_string()));
+        let price = |name: &str| out.items.iter().find(|i| i.name == name).expect("listed").bp_cost;
+        assert_eq!((price("Astilla"), price("Frost")), (Some(20_000), None));
+        let at = |unique: &str| out.drop_locations.get(unique).map(|v| v.iter().map(|d| d.location.as_str()).collect::<Vec<_>>());
+        assert_eq!((at(FROST_CHASSIS), at(FROST_CHASSIS_BP)), (Some(vec!["Lieutenant Lech Kril"]), Some(vec!["Lieutenant Lech Kril"])));
+    }
+
+    #[test]
+    fn drop_locations_default_on_old_caches_and_round_trip() {
+        let old = serde_json::json!({
+            "items": [], "recipes": {}, "relic_drops": {}, "relic_rewards": {},
+            "blueprint_names": {}, "wiki_reward_names": [], "syndicate_catalog": {}, "weapon_dispositions": {},
+        });
+        let mut cached: FetchResult = serde_json::from_value(old).expect("a cache without the field still loads");
+        assert!(cached.drop_locations.is_empty());
+
+        let locations = vec![DropLocation { location: "Corrupted Vor".into(), chance: Some(50.0) }, DropLocation { location: "Cephalon Simaris".into(), chance: None }];
+        cached.drop_locations.insert("/Lotus/Types/Items/MiscItems/OrokinCell".into(), locations.clone());
+        let again: FetchResult = serde_json::from_str(&serde_json::to_string(&cached).expect("serializes")).expect("parses");
+        assert_eq!(again.drop_locations.get("/Lotus/Types/Items/MiscItems/OrokinCell"), Some(&locations));
+    }
+
+    #[test]
+    fn syndicate_offers_keep_the_title_and_standing_whatever_the_place_prefix() {
+        let syndicates = serde_json::json!({ "syndicates": {
+            "Steel Meridian": [
+                { "item": "Vaykor Hek", "place": "Steel Meridian, General", "standing": 125000 },
+                { "item": "Vaykor Marelok", "place": "Steel Meridian, Rank 4\u{a0}: Protector", "standing": 100000 },
+                { "item": "Ammo Case", "place": "Steel Meridian, Rank 2:Valiant" },
+            ],
+            "Ostron": [{ "item": "Jai Blueprint", "place": "Ostron (Hok), Neutral", "standing": 1000 }],
+        } });
+        let catalog = parse_syndicate_store_catalog(Some(&syndicates), &[]);
+        let offer = |syndicate: &str, name: &str| catalog[syndicate].iter().find(|o| o.name == name).map(|o| (o.tier.clone(), o.standing)).expect(name);
+        assert_eq!(offer("Steel Meridian", "Vaykor Hek"), ("General".into(), Some(125_000)));
+        assert_eq!(offer("Steel Meridian", "Vaykor Marelok"), ("Protector".into(), Some(100_000)));
+        assert_eq!(offer("Steel Meridian", "Ammo Case"), ("Valiant".into(), None));
+        assert_eq!(offer("Ostron", "Jai Blueprint"), ("(Hok), Neutral".into(), Some(1_000)));
     }
 }

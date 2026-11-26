@@ -47,3 +47,6 @@ pub const WFM_WHISPER: &str = "wfm-whisper";
 pub const WFM_PRICE_UPDATE: &str = "wfm-price-update";
 pub const WFM_TOP_PROGRESS: &str = "wfm-top-progress";
 pub const WFM_TOP_UPDATED: &str = "wfm-top-updated";
+
+pub const MASTERY_UPDATE: &str = "mastery-update";
+pub const MASTERY_OBSERVED: &str = "mastery-observed";

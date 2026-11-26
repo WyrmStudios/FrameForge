@@ -93,6 +93,7 @@ mod tests {
             max_level_cap: None,
             tradable: None,
             masterable: None,
+            bp_cost: None,
         };
         vec![
             mk(
