@@ -118,6 +118,9 @@ pub(crate) struct InventoryStateCache {
     /// All owned riven mods (veiled and revealed), populated from blob scans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) rivens: Vec<memory_scanner::BlobRivenEntry>,
+    /// Owned Kubrows/Kavats, resolved for the Companions tab.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) companions: Vec<crate::companions::ResolvedCompanion>,
 }
 
 impl InventoryStateCache {
@@ -352,10 +355,15 @@ pub(crate) fn build_inventory_from_blob(
 
     for path in excluded_paths { items.remove(path); }
 
+    let companions: Vec<crate::companions::ResolvedCompanion> = blob.companions.iter()
+        .filter_map(|c| crate::companions::resolve_companion(c, path_to_name))
+        .collect();
+
     InventoryStateCache {
         items,
         mastery_rank: if blob.mastery_level > 0 { Some(blob.mastery_level) } else { None },
         rivens: blob.rivens.clone(),
+        companions,
     }
 }
 

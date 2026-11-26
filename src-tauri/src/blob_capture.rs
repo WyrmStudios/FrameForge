@@ -9,6 +9,7 @@ use tracing::{debug, error, info, warn};
 use crate::app_state::AppState;
 use crate::cache::atomic_write;
 use crate::catalogue;
+use crate::companions;
 use crate::db;
 use crate::events;
 use crate::inventory_state::{build_inventory_from_blob, load_inventory_state_cache};
@@ -112,6 +113,7 @@ pub(crate) fn spawn_blob_capture_thread(
                 is_full_pass: true,
                 player_name: app.state::<AppState>().local_player_name
                     .lock().ok().and_then(|g| g.clone()),
+                companions: startup.current_companions.clone(),
             });
         }
 
@@ -121,6 +123,7 @@ pub(crate) fn spawn_blob_capture_thread(
         let mut current_consumed_suits = startup.current_consumed_suits;
         let mut current_socketed_shards = startup.current_socketed_shards;
         let mut current_forma_counts = startup.current_forma_counts;
+        let mut current_companions = startup.current_companions;
         let mut last_blob_time: Option<std::time::Instant> = None;
         // Guard against overlapping captures: a full memory walk can take >10 s on large
         // game processes, so without this flag we'd stack up concurrent scan threads.
@@ -189,6 +192,7 @@ pub(crate) fn spawn_blob_capture_thread(
                     &mut known_mods, &mut current_mastery_rank, &mut current_mastery_data,
                     &mut current_recipes, &mut current_consumed_suits,
                     &mut current_socketed_shards, &mut current_forma_counts,
+                    &mut current_companions, &blob_log_enabled, &blob_log_dir,
                     &mut last_snapshot_date, now,
                 ) {
                     last_applied_hash = Some(blob.content_hash);
@@ -251,6 +255,7 @@ pub(crate) fn spawn_blob_capture_thread(
                     is_full_pass: false,
                     player_name: app.state::<AppState>().local_player_name
                         .lock().ok().and_then(|g| g.clone()),
+                    companions: current_companions.clone(),
                 });
             }
             if game_running {
@@ -316,6 +321,7 @@ pub(crate) fn spawn_blob_capture_thread(
                         is_full_pass: false,
                         player_name: app.state::<AppState>().local_player_name
                             .lock().ok().and_then(|g| g.clone()),
+                        companions: current_companions.clone(),
                     });
                     last_not_running_emit = Some(std::time::Instant::now());
                 }
@@ -365,6 +371,9 @@ fn process_blob(
     current_consumed_suits: &mut Vec<String>,
     current_socketed_shards: &mut HashMap<String, Vec<memory_scanner::ArchonShard>>,
     current_forma_counts: &mut HashMap<String, u32>,
+    current_companions: &mut Vec<companions::ResolvedCompanion>,
+    blob_log_enabled: &AtomicBool,
+    blob_log_dir: &std::path::Path,
     last_snapshot_date: &mut String,
     now: i64,
 ) -> bool {
@@ -383,6 +392,11 @@ fn process_blob(
     });
     if let Ok(json) = serde_json::to_string(&sc) {
         let _ = atomic_write(inventory_state_cache_path, json.as_bytes());
+    }
+    *current_companions = sc.companions.clone();
+    if blob_log_enabled.load(Ordering::Relaxed) {
+        let ts = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ").to_string();
+        companions::write_companion_debug_log(&blob.companions, blob_log_dir, &ts);
     }
 
     // Snapshot previous full inventory (known + uniques + mods) for change detection.
@@ -486,6 +500,7 @@ fn process_blob(
         is_full_pass:     true,
         player_name: app.state::<AppState>().local_player_name
             .lock().ok().and_then(|g| g.clone()),
+        companions: current_companions.clone(),
     });
 
     let detail = format!(

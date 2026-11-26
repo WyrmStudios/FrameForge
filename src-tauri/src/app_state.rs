@@ -92,6 +92,10 @@ pub struct AppState {
     /// When true, save the raw DE API response to api_logs/ on each fetch.
     pub api_log_enabled: Arc<AtomicBool>,
     pub api_log_dir: PathBuf,
+    /// When true, log every suspected WFM trade whisper (raw EE.log line +
+    /// parsed result) to the whisper debug log. Off by default — high-volume
+    /// traders generate a lot of these.
+    pub wfm_whisper_log_enabled: Arc<AtomicBool>,
     /// The warframe.market client: session, rate limiters, and the slug → price
     /// cache all live behind this one seam, shared (Arc) with the prefetch thread.
     pub wfm: Arc<Wfm>,

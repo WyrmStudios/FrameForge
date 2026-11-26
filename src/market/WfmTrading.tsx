@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import ItemMarketPopup from "./ItemMarketPopup";
+import { useClickOutside } from "../shared/useClickOutside";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import type { WfmAuction, WfmItem, WfmManagedOrder, WfmWhisper } from "../types/market";
 import type { TradeCompletedEvent, TradeSplitItem, TradeSplitPendingEvent } from "../types/trades";
@@ -85,9 +86,16 @@ const WFM_TAB         = "relative border border-border/60 bg-transparent text-mu
 const WFM_TAB_ON      = "relative border border-accent bg-accent/15 text-accent text-12 px-3 py-0.75 rounded-4 cursor-pointer transition-[background,color,border-color] duration-100";
 const WFM_BADGE       = "inline-flex items-center justify-center bg-danger text-white text-10 font-bold rounded-10 min-w-4 h-4 px-1 ml-1 align-middle";
 const WFM_SESSION     = "flex items-center gap-1.25 ml-auto";
-const WFM_STATUS_PICKER = "flex gap-0.75 items-center";
-const WFM_OPT         = "border rounded-full w-4.5 h-4.5 text-8 cursor-pointer flex items-center justify-center transition-[opacity,border-color] duration-150 p-0 hover:enabled:opacity-70 disabled:cursor-default";
-const WFM_ST          = { online: { c: "text-success", on: "bg-success/15" }, ingame: { c: "text-accent", on: "bg-accent/15" }, invisible: { c: "text-muted", on: "bg-muted/15" } } as const;
+const WFM_STATUS_WRAP = "relative";
+const WFM_STATUS_BTN  = "flex items-center gap-1 rounded-4 border border-border bg-surface px-1.5 py-0.75 text-11 text-foreground cursor-pointer disabled:cursor-default disabled:opacity-60 hover:enabled:border-accent/50";
+const WFM_STATUS_MENU = "absolute top-[calc(100%+4px)] right-0 z-20 min-w-32 rounded-4 border border-border bg-surface p-1 shadow-[0_6px_18px_rgba(0,0,0,.45)]";
+const WFM_STATUS_ITEM = "flex w-full items-center gap-1.5 rounded-3 px-1.25 py-0.75 text-11 text-foreground cursor-pointer bg-transparent border-0 text-left hover:bg-white/5";
+const WFM_STATUS_DOT  = "inline-block w-2 h-2 rounded-full shrink-0";
+const WFM_STATUS_META = {
+  online:    { label: "Online",          dot: "bg-success",    text: "text-success" },
+  ingame:    { label: "Online In Game",  dot: "bg-state-void",  text: "text-state-void" },
+  invisible: { label: "Invisible",       dot: "bg-muted",       text: "text-muted" },
+} as const;
 const WFM_USERNAME    = "text-12 text-foreground font-semibold";
 const WFM_LOGOUT      = "bg-transparent border-0 text-muted text-14 cursor-pointer px-0.5 leading-none transition-[color] duration-100 hover:text-danger";
 const WFM_PANEL       = "flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 flex flex-col gap-1";
@@ -147,6 +155,7 @@ const WFM_W_TIME      = "text-10 text-muted";
 const WFM_W_SUMMARY   = "text-12 text-muted";
 const WFM_W_ITEM      = "text-foreground font-semibold";
 const WFM_W_PRICE     = "text-ducat";
+const WFM_W_DIR       = "text-10 text-muted";
 const WFM_W_GHOST_BADGE = "text-11 text-success font-semibold";
 const WFM_W_ACTIONS   = "flex gap-1.25 flex-wrap";
 const WFM_W_REVERT    = "flex items-center gap-2 mt-1";
@@ -1009,7 +1018,10 @@ function MessagesPanel({ username: _username, wfmItems, recordSales, onListingCh
             <div key={i} className={`${WFM_WHISPER}${w.completedAt ? " border-confirm/35 bg-confirm/5 opacity-75" : " border-border/40 bg-white/4"}`}>
               <div className={WFM_W_HEADER}>
                 <span className={WFM_W_FROM}>{w.from}</span>
-                <span className={WFM_W_TIME}>{w.timestamp}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={WFM_W_DIR}>{w.incoming ? "↙ received" : "↗ sent"}</span>
+                  <span className={WFM_W_TIME}>{w.timestamp}</span>
+                </span>
               </div>
               {w.completedAt && (
                 <div className={WFM_W_GHOST_BADGE}>✓ Completed in-game · auto-closing in 5 min</div>
@@ -1072,6 +1084,9 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
   const [checking, setChecking]         = useState(true);
   const [unread, setUnread]             = useState(0);
   const [wfmStatus, setWfmStatus]       = useState<"online" | "ingame" | "invisible" | "offline">("offline");
+  const [statusOpen, setStatusOpen]     = useState(false);
+  const statusMenuRef                   = useRef<HTMLDivElement>(null);
+  useClickOutside(statusMenuRef, () => setStatusOpen(false), statusOpen);
   const [statusBusy, setStatusBusy]     = useState(false);
   const [statusError, setStatusError]   = useState("");
   const [listingChangelog, setListingChangelog] = useState<ListingChangeEntry[]>([]);
@@ -1214,24 +1229,41 @@ export default function WfmTrading({ wfmLookup: _wfmLookup, wfmItems, imageMap, 
           </button>
         </div>
         <div className={WFM_SESSION}>
-          <div className={WFM_STATUS_PICKER}
-            title={wfmStatus === "offline"
-              ? "WFM set you offline — reconnecting automatically, or click a dot to force"
-              : `Status: ${wfmStatus}. Click to change.`}>
-            {(["online", "ingame", "invisible"] as const).map(s => (
-              <button key={s} disabled={statusBusy}
-                className={`${WFM_OPT} ${wfmStatus === s ? `border-transparent opacity-100 ${WFM_ST[s].on}` : "bg-transparent border-border/50 opacity-35"} ${WFM_ST[s].c}`}
-                title={{ online: "Set Online", ingame: "Set In Game", invisible: "Set Invisible" }[s]}
-                onClick={async () => {
-                  setStatusBusy(true); setStatusError("");
-                  try {
-                    await invoke(TAURI_COMMANDS.WFM_SET_STATUS, { status: s });
-                    setWfmStatus(s);
-                    targetStatusRef.current = s;
-                  } catch (e) { setStatusError(String(e)); }
-                  setStatusBusy(false);
-                }}>●</button>
-            ))}
+          <div className={WFM_STATUS_WRAP} ref={statusMenuRef}>
+            <button
+              className={WFM_STATUS_BTN}
+              disabled={statusBusy}
+              aria-expanded={statusOpen}
+              title={wfmStatus === "offline"
+                ? "WFM set you offline — reconnecting automatically, or click to force a status"
+                : `Status: ${WFM_STATUS_META[wfmStatus].label}. Click to change.`}
+              onClick={() => setStatusOpen(o => !o)}
+            >
+              <span className={`${WFM_STATUS_DOT} ${wfmStatus === "offline" ? "bg-muted/40" : WFM_STATUS_META[wfmStatus].dot}`} />
+              {wfmStatus === "offline" ? "Offline" : WFM_STATUS_META[wfmStatus].label}
+              <span className="text-muted">▾</span>
+            </button>
+            {statusOpen && (
+              <div className={WFM_STATUS_MENU}>
+                {(["online", "ingame", "invisible"] as const).map(s => (
+                  <button key={s} disabled={statusBusy}
+                    className={WFM_STATUS_ITEM}
+                    onClick={async () => {
+                      setStatusOpen(false);
+                      setStatusBusy(true); setStatusError("");
+                      try {
+                        await invoke(TAURI_COMMANDS.WFM_SET_STATUS, { status: s });
+                        setWfmStatus(s);
+                        targetStatusRef.current = s;
+                      } catch (e) { setStatusError(String(e)); }
+                      setStatusBusy(false);
+                    }}>
+                    <span className={`${WFM_STATUS_DOT} ${WFM_STATUS_META[s].dot}`} />
+                    <span className={wfmStatus === s ? `font-semibold ${WFM_STATUS_META[s].text}` : ""}>{WFM_STATUS_META[s].label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <span className={WFM_USERNAME}>{username}</span>
           <button className={WFM_LOGOUT} onClick={logout} title="Log out">⏻</button>

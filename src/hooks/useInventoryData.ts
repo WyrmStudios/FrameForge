@@ -6,7 +6,7 @@ import { COMPANION_API_SUSPENDED } from "../constants/tauri";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import type { CatalogItem, CraftingJob, QuantityMap } from "../types/items";
 import type { ModCopy } from "../types/inventory";
-import type { ChangeLogEntry, InventoryUpdate } from "../types/inventory";
+import type { ChangeLogEntry, InventoryUpdate, ResolvedCompanion } from "../types/inventory";
 import type { ItemListStatus, SaveApiInventoryArgs, SavedApiInventory, WarframeCredentials, WarframeInventoryRequest } from "../types/tauri";
 import type { BlobRivenEntry, BlobRivenStat } from "../types/market";
 
@@ -39,6 +39,7 @@ interface UseInventoryDataReturn {
   wfConnected: boolean;
   imgCacheDir: string;
   itemsRefreshKey: number;
+  companions: ResolvedCompanion[];
 
   // Refs
   wfConnectedRef: React.MutableRefObject<boolean>;
@@ -99,6 +100,7 @@ export function useInventoryData(): UseInventoryDataReturn {
   const [wfConnected, setWfConnected] = useState(false);
   const [imgCacheDir, setImgCacheDir] = useState("");
   const [itemsRefreshKey, setItemsRefreshKey] = useState(0);
+  const [companions, setCompanions] = useState<ResolvedCompanion[]>([]);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const wfConnectedRef = useRef(false);
@@ -136,6 +138,16 @@ export function useInventoryData(): UseInventoryDataReturn {
     }
     if (Object.keys(masteryUpdate).length > 0)
       setMasteryData(prev => ({ ...prev, ...masteryUpdate }));
+
+    // Companions (Kubrows/Kavats) — resolved Rust-side (same breed/trait lookup
+    // the memory scanner uses) so the Companions tab also works off the
+    // Companion API, not just the memory scanner / Arsenal being open.
+    if (Array.isArray(data.KubrowPets) && data.KubrowPets.length > 0) {
+      invoke<ResolvedCompanion[]>("resolve_companions_from_api", { kubrowPets: data.KubrowPets })
+        .then(resolved => { if (resolved.length > 0) setCompanions(resolved); })
+        .catch(() => {});
+    }
+
     for (const r of (Array.isArray(data.Recipes) ? data.Recipes : [])) {
       const t: string = r.ItemType;
       if (t) {
@@ -532,6 +544,7 @@ export function useInventoryData(): UseInventoryDataReturn {
           setArchonShards(prev => ({ ...prev, ...parsed }));
         }
       }
+      if (p.companions) setCompanions(p.companions);
       if (p.forma_counts) {
         if (p.is_full_pass) {
           setFormaData(p.forma_counts);
@@ -657,6 +670,7 @@ export function useInventoryData(): UseInventoryDataReturn {
     wfConnected,
     imgCacheDir,
     itemsRefreshKey,
+    companions,
 
     // Refs
     wfConnectedRef,

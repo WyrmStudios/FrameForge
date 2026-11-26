@@ -29,6 +29,7 @@ interface UseSettingsReturn {
   memoryScannerEnabled: boolean;
   blobLogEnabled: boolean;
   apiLogEnabled: boolean;
+  wfmWhisperLogEnabled: boolean;
   autoDiagEnabled: boolean;
   overlaysEnabled: boolean;
   overlayEnabled: boolean;
@@ -59,6 +60,7 @@ interface UseSettingsReturn {
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setWfmWhisperLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setAutoDiagEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlaysEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -99,6 +101,7 @@ export function useSettings(
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
   const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [apiLogEnabled, setApiLogEnabled] = useState(false);
+  const [wfmWhisperLogEnabled, setWfmWhisperLogEnabled] = useState(false);
   const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
   const [overlaysEnabled, setOverlaysEnabled] = useState<boolean>(
     () => localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false"
@@ -158,6 +161,7 @@ export function useSettings(
     memoryScannerEnabled: false,
     blobLogEnabled: false,
     apiLogEnabled: false,
+    wfmWhisperLogEnabled: false,
     autoDiagEnabled: false,
     tracked: [] as string[],
     favorites: [] as string[],
@@ -212,6 +216,7 @@ export function useSettings(
         if (!COMPANION_API_SUSPENDED && typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled === "boolean") setApiLogEnabled(s.apiLogEnabled);
+        if (typeof s.wfmWhisperLogEnabled === "boolean") setWfmWhisperLogEnabled(s.wfmWhisperLogEnabled);
         if (typeof s.autoDiagEnabled === "boolean") {
           setAutoDiagEnabled(s.autoDiagEnabled);
           localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(s.autoDiagEnabled));
@@ -306,11 +311,17 @@ export function useSettings(
     invoke("set_api_log", { enabled: apiLogEnabled }).catch(() => {});
   }, [apiLogEnabled]); // eslint-disable-line
 
+  // ── WFM whisper log toggle ───────────────────────────────────────────────────
+  useEffect(() => {
+    invoke("set_wfm_whisper_log", { enabled: wfmWhisperLogEnabled }).catch(() => {});
+  }, [wfmWhisperLogEnabled]); // eslint-disable-line
+
   return {
     // Settings state
     memoryScannerEnabled,
     blobLogEnabled,
     apiLogEnabled,
+    wfmWhisperLogEnabled,
     autoDiagEnabled,
     overlaysEnabled,
     overlayEnabled,
@@ -341,6 +352,7 @@ export function useSettings(
     setMemoryScannerEnabled,
     setBlobLogEnabled,
     setApiLogEnabled,
+    setWfmWhisperLogEnabled,
     setAutoDiagEnabled,
     setOverlaysEnabled,
     setOverlayEnabled,

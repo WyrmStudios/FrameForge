@@ -110,6 +110,10 @@ pub struct BlobInventory {
     pub consumed_suits:  Vec<String>,
     /// All owned riven mods (veiled and revealed).
     pub rivens:          Vec<BlobRivenEntry>,
+    /// True Kubrows and Kavats (not Infested Vulpaphyla/Predasite) with their raw
+    /// appearance Details, extracted from the KubrowPets array.
+    #[serde(default)]
+    pub companions:      Vec<BlobCompanionEntry>,
     /// Top-level JSON keys present in the blob — used to detect front-truncated captures.
     #[serde(default)]
     pub sections:        Vec<String>,
@@ -173,6 +177,29 @@ pub struct BlobStackableEntry {
 pub struct BlobPendingRecipe {
     pub item_type:     String,
     pub completion_ms: i64,
+}
+
+/// One owned Kubrow or Kavat (true companions only — Infested Vulpaphyla/Predasite,
+/// which share the same `KubrowPets` blob array under `/Lotus/Types/Friendly/Pets/
+/// CreaturePets/...`, are filtered out at parse time and never produce an entry here).
+///
+/// `details` is kept as the raw, unmodified `Details` sub-object. The real field
+/// names for appearance traits (size, body type, colors, pattern, eyes, head/tail
+/// for Kavats, gender) are NOT confirmed anywhere — no sample blob or API response
+/// with a live companion has been captured yet, and no public documentation of this
+/// nested schema exists. Only `Details.Name` (the player-given nickname) is
+/// verified real. Resolution into display fields happens downstream in
+/// `companions.rs` against a best-guess candidate key list, so a wrong guess can be
+/// corrected there without touching this parser. Keeping the raw value here also
+/// lets a debug capture dump exactly what DE actually sends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobCompanionEntry {
+    /// Breed path, e.g. /Lotus/Types/Game/KubrowPet/AdventurerKubrowPetPowerSuit.
+    pub item_type: String,
+    /// Player-given nickname (Details.Name) — verified real field.
+    pub pet_name:  Option<String>,
+    /// Raw Details object, unresolved.
+    pub details:   serde_json::Value,
 }
 
 fn digits_end(data: &[u8], start: usize) -> usize {
@@ -746,6 +773,7 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         "OperatorAmps", "MechSuits",
     ];
     let mut unique_items = Vec::new();
+    let mut companions: Vec<BlobCompanionEntry> = Vec::new();
     for &sec in UNIQUE_SECS {
         if let Some(arr) = json[sec].as_array() {
             for e in arr {
@@ -762,13 +790,27 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
                 let modular_parts = e["ModularParts"].as_array()
                     .map(|a| a.iter().filter_map(|p| p.as_str().map(String::from)).collect())
                     .unwrap_or_default();
+                let pet_name = e["Details"]["Name"].as_str().map(String::from);
+                // True Kubrows/Kavats only — Infested Vulpaphyla/Predasite live in the
+                // same KubrowPets array under /Lotus/Types/Friendly/Pets/CreaturePets/
+                // and get their own tab later, not this one.
+                if sec == "KubrowPets"
+                    && (it.starts_with("/Lotus/Types/Game/KubrowPet/")
+                        || it.starts_with("/Lotus/Types/Game/CatbrowPet/"))
+                {
+                    companions.push(BlobCompanionEntry {
+                        item_type: it.to_string(),
+                        pet_name:  pet_name.clone(),
+                        details:   e["Details"].clone(),
+                    });
+                }
                 unique_items.push(BlobUniqueEntry {
                     item_type:     it.to_string(),
                     section:       sec.to_string(),
                     polarized:     e["Polarized"].as_u64().unwrap_or(0) as u32,
                     xp:            e["XP"].as_i64().unwrap_or(0),
                     item_name:     e["ItemName"].as_str().map(String::from),
-                    pet_name:      e["Details"]["Name"].as_str().map(String::from),
+                    pet_name,
                     focus_lens:    e["FocusLens"].as_str().map(String::from),
                     archon_shards,
                     modular_parts,
@@ -959,7 +1001,7 @@ pub fn parse_full_account_blob(raw: &[u8]) -> Option<BlobInventory> {
         credits, endo, platinum, free_platinum, mastery_level,
         unique_items, stackable_items, mods,
         flavour_items, weapon_skins, mastery_data, pending_recipes, consumed_suits,
-        rivens, sections, content_hash: 0,
+        rivens, companions, sections, content_hash: 0,
     };
     inv.content_hash = inv.compute_content_hash();
     Some(inv)

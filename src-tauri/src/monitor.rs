@@ -47,6 +47,8 @@ pub(crate) struct InventoryUpdate {
     pub is_full_pass: bool,
     /// Local Warframe account name ("Logged in NAME" from EE.log). None until detected.
     pub player_name: Option<String>,
+    /// Owned Kubrows/Kavats for the Companions tab.
+    pub companions: Vec<crate::companions::ResolvedCompanion>,
 }
 
 #[tauri::command]
@@ -357,6 +359,7 @@ pub(crate) struct MonitorStartupState {
     pub current_consumed_suits: Vec<String>,
     pub current_socketed_shards: HashMap<String, Vec<memory_scanner::ArchonShard>>,
     pub current_forma_counts: HashMap<String, u32>,
+    pub current_companions: Vec<crate::companions::ResolvedCompanion>,
 }
 
 pub(crate) fn init_monitor_startup_state(
@@ -435,6 +438,7 @@ pub(crate) fn init_monitor_startup_state(
     let current_forma_counts: HashMap<String, u32> = startup_cache.items.iter()
         .filter_map(|(k, v)| v.forma_count.map(|n| (k.clone(), n)))
         .collect();
+    let current_companions = startup_cache.companions.clone();
 
     for suit in &current_consumed_suits {
         confirmed_unique.remove(suit);
@@ -444,6 +448,6 @@ pub(crate) fn init_monitor_startup_state(
     MonitorStartupState {
         known, prev_mods, unique_stable, confirmed_unique, known_mods,
         current_mastery_rank, current_mastery_data, current_consumed_suits,
-        current_socketed_shards, current_forma_counts,
+        current_socketed_shards, current_forma_counts, current_companions,
     }
 }

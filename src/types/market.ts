@@ -76,8 +76,10 @@ export interface WfmWhisper {
   message: string;
   item?: string;
   price?: number;
-  /** The local player's own intent: "buy" means `from` is the seller, "sell" means `from` is the buyer. */
+  /** The local player's own role in the trade: "buy" means `from` is the seller, "sell" means `from` is the buyer. Correct for both sent and received whispers — see `incoming`. */
   direction?: "buy" | "sell";
+  /** True if the trade partner sent this whisper to us; false (or absent, for older events) if we sent it to them. */
+  incoming?: boolean;
   timestamp: string;
   completedAt?: number;
   revertInfo?: {

@@ -92,6 +92,13 @@ pub(crate) fn set_api_log(enabled: bool, state: State<'_, AppState>) {
     state.api_log_enabled.store(enabled, Ordering::SeqCst);
 }
 
+/// Enable or disable the WFM trade-whisper debug log. Off by default —
+/// high-volume traders can generate a lot of entries.
+#[tauri::command]
+pub(crate) fn set_wfm_whisper_log(enabled: bool, state: State<'_, AppState>) {
+    state.wfm_whisper_log_enabled.store(enabled, Ordering::SeqCst);
+}
+
 /// Returns "started" or "stopped" so the frontend can update button state.
 #[tauri::command]
 pub(crate) async fn toggle_raw_scan(state: State<'_, AppState>) -> Result<String, String> {
@@ -198,6 +205,16 @@ pub(crate) fn get_riven_session_log() -> String {
 pub(crate) fn get_overlay_session_log() -> String {
     let path = std::env::temp_dir().join("frameforge_overlay_session.txt");
     std::fs::read_to_string(&path).unwrap_or_else(|_| "(no session log yet — trigger a Void Fissure first)".into())
+}
+
+/// Read the WFM trade-whisper debug log: every EE.log line matched as a
+/// possible trade whisper, with the raw text and what the parser made of it
+/// (sender, item, price, direction, incoming/outgoing) — added to diagnose
+/// sent-vs-received misclassification reports from a real session.
+#[tauri::command]
+pub(crate) fn get_wfm_whisper_debug_log() -> String {
+    std::fs::read_to_string(crate::log_watcher::wfm_whisper_debug_log_path())
+        .unwrap_or_else(|_| "(no WFM trade whispers logged yet — make sure the WFM Whisper Log toggle is On, then send or receive a trade message on warframe.market)".into())
 }
 
 /// Frontend tracing — App.tsx and Overlay.tsx call this to write diagnostic

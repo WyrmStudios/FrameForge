@@ -142,7 +142,6 @@ const LEGACY_CACHE_FILES: &[&str] = &[
     "relic_drops_cache.json",
     "relic_rewards_cache.json",
     "wfm_top_cache.json",
-    "syndicate_catalog.json",
     "relics_run_prices.json",
     "scan_log.txt",       // regenerated on every session; no value in keeping the old copy
 ];

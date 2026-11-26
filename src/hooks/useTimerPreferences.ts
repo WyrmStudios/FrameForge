@@ -10,7 +10,8 @@ const sameWatches = (left: FissureWatch[], right: FissureWatch[]) =>
     watch.id === right[index].id &&
     watch.tier === right[index].tier &&
     watch.missionType === right[index].missionType &&
-    watch.variant === right[index].variant
+    watch.variant === right[index].variant &&
+    watch.planet === right[index].planet
   );
 
 interface UseTimerPreferencesReturn {
