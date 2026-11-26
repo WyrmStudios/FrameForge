@@ -19,6 +19,9 @@ export interface FissureWatch {
   tier: string;
   missionType: string;
   variant: "any" | FissureVariant;
+  /** Planet/region parsed from the node name, or "Any"/unset to match every one.
+   *  Optional so watches saved before this field existed keep matching every planet. */
+  planet?: string;
 }
 
 /** Pixel offsets applied on top of each overlay's built-in placement. */
@@ -55,7 +58,7 @@ export interface SettingsSnapshot {
   overlayEnabled: boolean; overlayPriority: RelicOverlayPriority; overlayOffsets: OverlayOffsets;
   rivenEnabled: boolean; textScale: number; colorblindMode: boolean;
   clockFormat: ClockFormat; companionApiEnabled: boolean; memoryScannerEnabled: boolean;
-  blobLogEnabled: boolean; apiLogEnabled: boolean; autoDiagEnabled: boolean; tracked: string[];
+  blobLogEnabled: boolean; apiLogEnabled: boolean; wfmWhisperLogEnabled: boolean; autoDiagEnabled: boolean; tracked: string[];
   favorites: string[]; timerFavorites: string[]; fissureWatches: FissureWatch[]; fissureNotifications: boolean;
   modularWidth: number; modularSectionOrder: string[]; modularPopout: boolean; wfmInvisibleOnStart: boolean;
   wfmInvisibleOnClose: boolean; wfmAutoInvisible: boolean; wfmAutoInvisibleMins: number; wfmRecordSales: boolean; relicPickEnabled: boolean;

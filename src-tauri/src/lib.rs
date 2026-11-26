@@ -26,6 +26,7 @@ mod blob_capture;
 mod cache;
 mod catalogue;
 mod companion_api;
+mod companions;
 mod console_login; // [console-login feature] remove this line to drop the feature
 mod credentials;
 mod db;
@@ -560,6 +561,7 @@ pub fn run() {
             blob_log_dir,
             api_log_enabled: Arc::new(AtomicBool::new(false)),
             api_log_dir,
+            wfm_whisper_log_enabled: Arc::new(AtomicBool::new(false)),
             wfm: {
                 let w = Arc::new(Wfm::new());
                 for (slug, price) in initial.wfm_prices {
@@ -619,6 +621,7 @@ pub fn run() {
             diagnostics::toggle_raw_scan,
             diagnostics::set_blob_log,
             diagnostics::set_api_log,
+            diagnostics::set_wfm_whisper_log,
             diagnostics::get_app_version,
             diagnostics::set_app_version,
             settings::force_quit,
@@ -702,6 +705,7 @@ pub fn run() {
             companion_api::save_api_rivens,
             syndicates::get_syndicate_stores,
             syndicates::get_research_lab_stores,
+            companions::resolve_companions_from_api,
             worldstate::fetch_worldstate,
             arbitrations::fetch_arbitration_schedule,
             arbitrations::get_arbitration_runs,
@@ -711,6 +715,7 @@ pub fn run() {
             arbitrations::test_arbitration_overlay,
             diagnostics::get_warframe_window_rect,
             diagnostics::get_overlay_session_log,
+            diagnostics::get_wfm_whisper_debug_log,
             relic_pick::get_pending_relic_rewards,
             diagnostics::log_relic_fe,
             diagnostics::set_overlay_topmost,

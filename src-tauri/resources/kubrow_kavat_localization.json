@@ -1,0 +1,748 @@
+{
+  "language": "en",
+  "kubrow": {
+    "colors": {
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowColorWukongPrimeMid": {
+        "name": "Tidal Blue",
+        "hex": "#363e60"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowColorWukongPrimeMundane": {
+        "name": "Corrupted Gold",
+        "hex": "#a7874d"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowColorWukongPrimeVibrant": {
+        "name": "Derelict White",
+        "hex": "#b0b2c0"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorCephalonMid": {
+        "name": "Liset Grey",
+        "hex": "#28282c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorCephalonMundane": {
+        "name": "Mirage White",
+        "hex": "#3d3d42"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorCephalonVibrant": {
+        "name": "Crewman Grey",
+        "hex": "#1e1d20"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDaybreakMid": {
+        "name": "Evening Purple",
+        "hex": "#0c0917"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDaybreakMundane": {
+        "name": "Dusk Pink",
+        "hex": "#b7283f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDaybreakVibrant": {
+        "name": "Morning Yellow",
+        "hex": "#d08f4e"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDrahkMid": {
+        "name": "Osprey Blue",
+        "hex": "#255176"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDrahkMundane": {
+        "name": "Rubedo Red",
+        "hex": "#92061a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDrahkVibrant": {
+        "name": "Mirage Purple",
+        "hex": "#4f3645"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDuviriWolfAccent": {
+        "name": "Princely Gold",
+        "hex": "#593918"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDuviriWolfMid": {
+        "name": "Conspirator Green",
+        "hex": "#2b3a33"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDuviriWolfMundane": {
+        "name": "Courtier Red",
+        "hex": "#43120f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorDuviriWolfVibrant": {
+        "name": "Harbinger Red",
+        "hex": "#57140d"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorFeralMid": {
+        "name": "Maggot Pink",
+        "hex": "#b64b4c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorFeralMundane": {
+        "name": "Singularity Black",
+        "hex": "#101010"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorFeralVibrant": {
+        "name": "Inaros Brown",
+        "hex": "#af8358"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorKavatBase": {
+        "name": "Executioner Grey",
+        "hex": "#645b48"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorKavatSecondary": {
+        "name": "Hyacinth Blue",
+        "hex": "#645b48"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorKavatTertiary": {
+        "name": "Regor Green",
+        "hex": "#645b48"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidA": {
+        "name": "Sedna Grey",
+        "hex": "#85858a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidB": {
+        "name": "Derelict Black",
+        "hex": "#050f11"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidC": {
+        "name": "Mars Red",
+        "hex": "#7a5c4a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidContest": {
+        "name": "Condroc Brown",
+        "hex": "#83706b"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidD": {
+        "name": "Infested Black",
+        "hex": "#0f1a1e"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidDiamond": {
+        "name": "Star White",
+        "hex": "#e4e4da"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidE": {
+        "name": "Void Black",
+        "hex": "#050a0c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidF": {
+        "name": "Darvo Blue",
+        "hex": "#5f788e"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidG": {
+        "name": "Ordis Grey",
+        "hex": "#6f7b89"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidH": {
+        "name": "Mercury Brown",
+        "hex": "#817b6b"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidI": {
+        "name": "Eris Black",
+        "hex": "#353230"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidJ": {
+        "name": "Nova Grey",
+        "hex": "#858a91"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidK": {
+        "name": "Rhino Brown",
+        "hex": "#7f4633"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMidLiquid": {
+        "name": "Fomorian Grey",
+        "hex": "#182d35"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneA": {
+        "name": "Ash Grey",
+        "hex": "#868f8c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneB": {
+        "name": "Earth Brown",
+        "hex": "#806f66"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneC": {
+        "name": "Corpus Grey",
+        "hex": "#878f94"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneContest": {
+        "name": "Mud Puddle Brown",
+        "hex": "#19120e"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneD": {
+        "name": "Hek Green",
+        "hex": "#808b78"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneDiamond": {
+        "name": "Ki'Teer Grey",
+        "hex": "#122227"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneE": {
+        "name": "Kril Brown",
+        "hex": "#807a67"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneF": {
+        "name": "Gallium Grey",
+        "hex": "#84a2b5"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneG": {
+        "name": "Grustrag Grey",
+        "hex": "#84857b"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneH": {
+        "name": "Saturn Brown",
+        "hex": "#7d695a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneI": {
+        "name": "Arid Brown",
+        "hex": "#7e6f56"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneJ": {
+        "name": "Forest Grey",
+        "hex": "#757367"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneK": {
+        "name": "Phobos Brown",
+        "hex": "#c8907a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorMundaneLiquid": {
+        "name": "Specter White",
+        "hex": "#d5e8ed"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeA": {
+        "name": "Kavasa White",
+        "hex": "#e8eef0"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeC": {
+        "name": "Orokin Gold",
+        "hex": "#d0d28f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeD": {
+        "name": "Origin Brown",
+        "hex": "#cfd0c3"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeTraderMidA": {
+        "name": "Perrin Blue",
+        "hex": "#050a34"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeTraderMundaneA": {
+        "name": "Vaykor White",
+        "hex": "#eed4da"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorPrimeTraderVibrantA": {
+        "name": "Rakta Red",
+        "hex": "#9e2c4f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorSolsticeMid": {
+        "name": "Wukong Blue",
+        "hex": "#236d9a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorSolsticeMundane": {
+        "name": "Bombard White",
+        "hex": "#dddcdc"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorSolsticeVibrant": {
+        "name": "Manic Black",
+        "hex": "#080808"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantA": {
+        "name": "Anyo Grey",
+        "hex": "#101e2a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantB": {
+        "name": "Ambulas Black",
+        "hex": "#0d1011"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantC": {
+        "name": "Shadow Grey",
+        "hex": "#837c79"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantContest": {
+        "name": "Ostron Brown",
+        "hex": "#463428"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantD": {
+        "name": "Sargas Brown",
+        "hex": "#d0a36a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantDiamond": {
+        "name": "Wyrm Blue",
+        "hex": "#96c1d5"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantE": {
+        "name": "Jupiter Brown",
+        "hex": "#765338"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantF": {
+        "name": "Phorid Red",
+        "hex": "#743e36"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantG": {
+        "name": "Alad Blue",
+        "hex": "#486a89"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantH": {
+        "name": "Venus Brown",
+        "hex": "#262e37"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantI": {
+        "name": "Lotus Purple",
+        "hex": "#453f66"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantJ": {
+        "name": "Valkyr Brown",
+        "hex": "#7c5b4a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantK": {
+        "name": "Mirage Red",
+        "hex": "#320e0f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorVibrantLiquid": {
+        "name": "Vandal Blue",
+        "hex": "#0b798a"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasMidA": {
+        "name": "Lotus White",
+        "hex": "#f9f6f5"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasMidB": {
+        "name": "Jadeleaf Green",
+        "hex": "#015501"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasMundaneA": {
+        "name": "Tenno Red",
+        "hex": "#bd746d"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasMundaneB": {
+        "name": "Nova White",
+        "hex": "#e1e3e6"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasVibrantA": {
+        "name": "Brokk Brown",
+        "hex": "#b7715c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorXmasVibrantB": {
+        "name": "Trinity Red",
+        "hex": "#871010"
+      }
+    },
+    "patterns": {
+      "/Lotus/Types/Game/InfestedKavatPet/Patterns/InfestedCritterPatternDefault": "Deimos Vulpaphyla Pattern",
+      "/Lotus/Types/Game/InfestedPredatorPet/Patterns/InfestedPredatorPatternDefault": "Deimos Predasite Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternA": "Striped Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternB": "Patchy Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternC": "Hound Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternD": "Domino Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternE": "Merle Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternF": "Lotus Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternG": "Mottled Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternH": "Brindle Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternI": "Tigrol Fur Pattern",
+      "/Lotus/Types/Game/KubrowPet/Patterns/KubrowPetPatternInfested": "Helminth Pattern"
+    },
+    "bodyTypes": {
+      "/Lotus/Types/Game/KubrowPet/BodyTypes/KubrowPetRegularBodyType": "Athletic",
+      "/Lotus/Types/Game/KubrowPet/BodyTypes/KubrowPetThinBodyType": "Skinny",
+      "/Lotus/Types/Game/KubrowPet/BodyTypes/KubrowPetHeavyBodyType": "Bulky"
+    },
+    "eyes": {
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesA": {
+        "name": "Green",
+        "hex": "#9cad6c"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesB": {
+        "name": "Light Gold",
+        "hex": "#ad9365"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesC": {
+        "name": "Purple",
+        "hex": "#9074ad"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesD": {
+        "name": "Lilac",
+        "hex": "#ad5aaa"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesE": {
+        "name": "Blue",
+        "hex": "#6ca0ad"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesF": {
+        "name": "Red",
+        "hex": "#ad6344"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesG": {
+        "name": "Pink",
+        "hex": "#ad666f"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesH": {
+        "name": "Black",
+        "hex": "#262626"
+      },
+      "/Lotus/Types/Game/KubrowPet/Colors/KubrowPetColorEyesI": {
+        "name": "Gold",
+        "hex": "#ad7c47"
+      }
+    }
+  },
+  "kavat": {
+    "colors": {
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsA": {
+        "name": "Loka Brown",
+        "hex": "#a75e3d"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsB": {
+        "name": "Harkonar Orange",
+        "hex": "#ea4c26"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsC": {
+        "name": "Sequence Blue",
+        "hex": "#3f59a2"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsCephalon": {
+        "name": "Origin Black",
+        "hex": "#0d0b0c"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsContest": {
+        "name": "Ancient Brown",
+        "hex": "#1b110f"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsD": {
+        "name": "Hexis Black",
+        "hex": "#091a28"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsDaybreak": {
+        "name": "Sol Yellow",
+        "hex": "#e49138"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsDuviri": {
+        "name": "Castle Glint",
+        "hex": "#9d5813"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsEntrati": {
+        "name": "Vitreum Brown",
+        "hex": "#733804"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsFeral": {
+        "name": "Ogris Red",
+        "hex": "#733b33"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsHyekka": {
+        "name": "Cargo Yellow",
+        "hex": "#cf9b21"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsNexus": {
+        "name": "Darvo Purple",
+        "hex": "#6b3287"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsSolstice": {
+        "name": "Lynx Blue",
+        "hex": "#3fe6ef"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorAccentsXmas": {
+        "name": "Cleaver Green",
+        "hex": "#2c3329"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseA": {
+        "name": "Executioner Grey",
+        "hex": "#98bdc0"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseB": {
+        "name": "Mesa Yellow",
+        "hex": "#f4e562"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseC": {
+        "name": "Anti Moa Purple",
+        "hex": "#f4e8fb"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseCephalon": {
+        "name": "Cetus Brown",
+        "hex": "#7f766e"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseContest": {
+        "name": "Arid Brown",
+        "hex": "#3e2419"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseD": {
+        "name": "Dragonlily Pink",
+        "hex": "#faebec"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseDaybreak": {
+        "name": "Dawn Pink",
+        "hex": "#a4222d"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseDuviri": {
+        "name": "Netherbarrow Beige",
+        "hex": "#7a5b29"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseEntrati": {
+        "name": "Auricle Green",
+        "hex": "#365c4e"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseFeral": {
+        "name": "Grinlok Brown",
+        "hex": "#9d8779"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseHyekka": {
+        "name": "Flesh Brown",
+        "hex": "#b9acaa"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseNexus": {
+        "name": "Nidus White",
+        "hex": "#aba4ae"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseSolstice": {
+        "name": "Bombard White",
+        "hex": "#dddcdc"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseVampire": {
+        "name": "Vasca Purple",
+        "hex": "#504b5f"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorBaseXmas": {
+        "name": "Sandstorm Brown",
+        "hex": "#3f3b36"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryA": {
+        "name": "Hyacinth Blue",
+        "hex": "#12c6d1"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryB": {
+        "name": "Conculyst Brown",
+        "hex": "#7d3b29"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryC": {
+        "name": "Draga Blue",
+        "hex": "#1d3455"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryCephalon": {
+        "name": "Cephalon Blue",
+        "hex": "#44464f"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryContest": {
+        "name": "Volt Blue",
+        "hex": "#5a6279"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryD": {
+        "name": "Asteroid Grey",
+        "hex": "#3a6a6c"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryDaybreak": {
+        "name": "Horizon Pink",
+        "hex": "#d45660"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryDuviri": {
+        "name": "Farbreeze Green",
+        "hex": "#3e5240"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryEntrati": {
+        "name": "Sanctum Red",
+        "hex": "#73041d"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryFeral": {
+        "name": "Mutalist Brown",
+        "hex": "#634535"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryHyekka": {
+        "name": "Blood Red",
+        "hex": "#4b1013"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryNexus": {
+        "name": "Mesa Blue",
+        "hex": "#1f1f53"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondarySolstice": {
+        "name": "Wukong Blue",
+        "hex": "#236d9a"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryVampire": {
+        "name": "Lua Grey",
+        "hex": "#a3a3a9"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorSecondaryXmas": {
+        "name": "Atlas Red",
+        "hex": "#2f130e"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryA": {
+        "name": "Regor Green",
+        "hex": "#031919"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryB": {
+        "name": "Ancient Green",
+        "hex": "#8fefaa"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryC": {
+        "name": "Boiler Red",
+        "hex": "#ea4743"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryCephalon": {
+        "name": "Banshee Blue",
+        "hex": "#2d3235"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryContest": {
+        "name": "Nekros Black",
+        "hex": "#141010"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryD": {
+        "name": "Dreg Red",
+        "hex": "#bd3433"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryDaybreak": {
+        "name": "Lua Purple",
+        "hex": "#151120"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryDuviri": {
+        "name": "Watershed Blue",
+        "hex": "#0e344a"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryEntrati": {
+        "name": "Alchemy Black",
+        "hex": "#010101"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryFeral": {
+        "name": "Embolist Blue",
+        "hex": "#21686a"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryHyekka": {
+        "name": "Sludge Brown",
+        "hex": "#120b0e"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryNexus": {
+        "name": "Ignis Red",
+        "hex": "#71153a"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiarySolstice": {
+        "name": "Manic Black",
+        "hex": "#080808"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorTertiaryXmas": {
+        "name": "Asteroid Brown",
+        "hex": "#403627"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/GaraPrimeCatbrowPetColorAccents": {
+        "name": "Maipal Yellow",
+        "hex": "#bc953f"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/GaraPrimeCatbrowPetColorBase": {
+        "name": "Naru Blue",
+        "hex": "#b4c7b7"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/GaraPrimeCatbrowPetColorSecondary": {
+        "name": "Paskan Crimson",
+        "hex": "#86242c"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/GaraPrimeCatbrowPetColorTertiary": {
+        "name": "Aros Brown",
+        "hex": "#a87621"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/KhoraDeluxeColorAccents": {
+        "name": "Thorn Pink",
+        "hex": "#aa7065"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/KhoraDeluxeColorBase": {
+        "name": "Root Black",
+        "hex": "#121110"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/KhoraDeluxeColorSecondary": {
+        "name": "Moss Green",
+        "hex": "#62836d"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/KhoraDeluxeColorTertiary": {
+        "name": "Rose Red",
+        "hex": "#750e16"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/PrimeCatbrowPetColorAccents": {
+        "name": "Argon Violet",
+        "hex": "#503695"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/PrimeCatbrowPetColorBaseA": {
+        "name": "Carbon Grey",
+        "hex": "#919686"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/PrimeCatbrowPetColorSecondaryA": {
+        "name": "Gallium Ash",
+        "hex": "#2d332e"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/PrimeCatbrowPetColorTertiaryA": {
+        "name": "Prime Gold",
+        "hex": "#7a6839"
+      }
+    },
+    "patterns": {
+      "/Lotus/Types/Game/CatbrowPet/Patterns/CatbrowPetPatternA": "Hyacinth Fur Pattern",
+      "/Lotus/Types/Game/CatbrowPet/Patterns/CatbrowPetPatternB": "Strix Fur Pattern",
+      "/Lotus/Types/Game/CatbrowPet/Patterns/CatbrowPetPatternC": "Nesyr Fur Pattern",
+      "/Lotus/Types/Game/CatbrowPet/Patterns/CatbrowPetPatternD": "Krest Fur Pattern",
+      "/Lotus/Types/Game/CatbrowPet/Patterns/CatbrowPetPatternVampire": "Vasca Kavat Fur Pattern"
+    },
+    "eyes": {
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesA": {
+        "name": "Lime",
+        "hex": "#cef938"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesB": {
+        "name": "Green",
+        "hex": "#0ec410"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesC": {
+        "name": "Mustard",
+        "hex": "#f4db14"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesD": {
+        "name": "Gold",
+        "hex": "#fcce52"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesE": {
+        "name": "Orange",
+        "hex": "#fd8f0b"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesF": {
+        "name": "Blue",
+        "hex": "#4d8af7"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesG": {
+        "name": "Cyan",
+        "hex": "#26d8c2"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesH": {
+        "name": "White",
+        "hex": "#b4effd"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesI": {
+        "name": "Teal",
+        "hex": "#019e93"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesJ": {
+        "name": "Silver",
+        "hex": "#c8d3fd"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesK": {
+        "name": "Pink",
+        "hex": "#ead3ff"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesL": {
+        "name": "Lilac",
+        "hex": "#dcc8fd"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesM": {
+        "name": "Yellow",
+        "hex": "#feeb3d"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesN": {
+        "name": "Amber",
+        "hex": "#feaf23"
+      },
+      "/Lotus/Types/Game/CatbrowPet/Colors/CatbrowPetColorEyesVamp": {
+        "name": "Red",
+        "hex": "#911a1b"
+      }
+    },
+    "heads": {
+      "/Lotus/Types/Game/CatbrowPet/Heads/CatbrowHeadA": "Tuft",
+      "/Lotus/Types/Game/CatbrowPet/Heads/CatbrowHeadB": "Persian",
+      "/Lotus/Types/Game/CatbrowPet/Heads/CatbrowHeadC": "Ball",
+      "/Lotus/Types/Game/CatbrowPet/Heads/CatbrowHeadD": "Fennec",
+      "/Lotus/Types/Game/CatbrowPet/Heads/CatbrowHeadVampire": "Naberus"
+    },
+    "tails": {
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailA": "Leaf",
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailB": "Arrow",
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailC": "Mermaid",
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailD": "Guppy",
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailE": "Peacock",
+      "/Lotus/Types/Game/CatbrowPet/Tails/CatbrowTailVampire": "Spiked"
+    }
+  }
+}

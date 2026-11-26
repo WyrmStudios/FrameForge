@@ -4,7 +4,7 @@ import type { InventoryItem } from "./types/items";
 import type { WorldState, WsFissure, WsStorm, WsBounty } from "./types/worldstate";
 import { useWorldState } from "./worldstate";
 import { ensurePermission } from "./lib/notify";
-import { matchesWatch } from "./fissureAlerts";
+import { matchesWatch, planetOf } from "./fissureAlerts";
 import type { FissureWatch } from "./types/settings";
 
 export { matchesWatch };
@@ -333,6 +333,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
   const [wTier, setWTier] = useState("Any");
   const [wMission, setWMission] = useState("Any");
   const [wVariant, setWVariant] = useState<FissureWatch["variant"]>("any");
+  const [wPlanet, setWPlanet] = useState("Any");
 
   const setVariant = useCallback((v: FissureWatch["variant"]) => {
     setWVariant(v);
@@ -651,6 +652,10 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
         const storms = [...(ws?.voidStorms ?? [])].sort((a, b) => a.tierNum - b.tierNum);
         const list   = fissureTab === "normal" ? normal : fissureTab === "hard" ? hard : storms;
 
+        // Planet options for the watch form below — current rotation only,
+        // since that's the universe of planet names we can offer to pick from.
+        const planets = Array.from(new Set([...normal, ...hard, ...storms].map(f => planetOf(f.node)))).sort();
+
         const FissureTile = ({ f, v }: { f: WsFissure | WsStorm; v: "normal" | "hard" | "storm" }) => (
           <div className={fissureWatches.some(w => matchesWatch(w, f, v)) ? TH_FISSURE_WATCHED : TH_FISSURE_TILE}>
             <div className={TH_FISSURE_TOP}>
@@ -687,6 +692,7 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
                       <div key={w.id} className={TH_WATCH_CHIP}>
                         <span className={TH_CHIP_TIER} style={{ color: TIER_COLOR[w.tier] ?? "var(--color-foreground)" }}>{w.tier}</span>
                         {w.missionType !== "Any" && <span className={TH_CHIP_MT}>{w.missionType}</span>}
+                        {w.planet && w.planet !== "Any" && <span className={TH_CHIP_MT}>{w.planet}</span>}
                         {w.variant !== "any" && <span className={TH_CHIP_VAR}>{VARIANTS.find(v => v.key === w.variant)?.label}</span>}
                         <button className={TH_CHIP_DEL} onClick={() => onRemoveWatch(w.id)}>×</button>
                       </div>
@@ -720,9 +726,20 @@ export default function TimerHelper({ active, favorites, onFavoriteToggle, fissu
                       ))}
                     </div>
                   </div>
+                  {planets.length > 0 && (
+                    <div className={TH_FORM_ROW}>
+                      <span className={TH_FORM_LABEL}>Planet</span>
+                      <div className={TH_PILL_GROUP_WRAP}>
+                        <button className={wPlanet === "Any" ? TH_PILL_ACTIVE : TH_PILL} onClick={() => setWPlanet("Any")}>Any</button>
+                        {planets.map(p => (
+                          <button key={p} className={wPlanet === p ? TH_PILL_ACTIVE : TH_PILL} onClick={() => setWPlanet(p)}>{p}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <button className={TH_ADD_BTN} onClick={async () => {
-                    onAddWatch({ id: `${Date.now()}`, tier: wTier, missionType: wMission, variant: wVariant });
-                    setWTier("Any"); setWMission("Any"); setVariant("any");
+                    onAddWatch({ id: `${Date.now()}`, tier: wTier, missionType: wMission, variant: wVariant, planet: wPlanet });
+                    setWTier("Any"); setWMission("Any"); setVariant("any"); setWPlanet("Any");
                     // Prompt here rather than from the poll loop, so the OS dialog
                     // arrives while the user is thinking about fissure alerts.
                     if (fissureNotifications && !(await ensurePermission())) setPermissionDenied(true);

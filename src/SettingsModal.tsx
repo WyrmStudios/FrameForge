@@ -65,6 +65,7 @@ export interface SettingsModalProps {
   setQuantities: Setter<QuantityMap>; setApiQuantities: Setter<QuantityMap>; setApiModCopies: Setter<ModCopy[]>; setScannerMods: Setter<ScannerMods>; setMasteryData: Setter<Record<string, number>>; setArchonShards: Setter<ArchonShards>; setFormaData: Setter<QuantityMap>;
   setChangeLog: Setter<ChangeLogEntry[]>; setLastChanged: Setter<Record<string, number>>; setWfConnected: Setter<boolean>; wfConnectedRef: MutableRefObject<boolean>; setItemsRefreshKey: Setter<number>; setClearMsg: Setter<string>; clearMsg: string;
   blobLogEnabled: boolean; setBlobLogEnabled: Setter<boolean>; blobLogSize: number; setBlobLogSize: Setter<number>; companionApiEnabled: boolean; setCompanionApiEnabled: Setter<boolean>; apiLogEnabled: boolean; setApiLogEnabled: Setter<boolean>; apiLogSize: number; setApiLogSize: Setter<number>;
+  wfmWhisperLogEnabled: boolean; setWfmWhisperLogEnabled: Setter<boolean>;
   setShowInventoryBatchPreview: Setter<boolean>; notifyTestResult: string; setNotifyTestResult: Setter<string>; overlayLogCopied: boolean; setOverlayLogCopied: Setter<boolean>; autoDiagEnabled: boolean; setAutoDiagEnabled: Setter<boolean>;
   diagFolderSize: number; setDiagFolderSize: Setter<number>; diagPath: string | null; diagCapturing: boolean; setDiagCapturing: Setter<boolean>; setDiagPath: Setter<string | null>; reloadDebugSizes: () => void;
   memoryProbing: boolean; setMemoryProbing: Setter<boolean>; probeSize: number; setProbeSize: Setter<number>; rawScanning: boolean; setRawScanning: Setter<boolean>; rawScanSize: number; setRawScanSize: Setter<number>;
@@ -89,13 +90,14 @@ function BulkPriceRefreshButton() {
 }
 
 export default function SettingsModal(props: SettingsModalProps) {
-  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, masteryExclude, setMasteryExclude, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, setCompanionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion, arbOverlayEnabled, setArbOverlayEnabled, betaUpdatesEnabled, setBetaUpdatesEnabled } = props;
+  const { settingsTab, setSettingsTab, settingsFilterModule, setSettingsFilterModule, filterPresets, setFilterPresets, inventoryFilters, setInventoryFilters, foundryFilters, setFoundryFilters, marketFilters, setMarketFilters, relicFilters, setRelicFilters, foundryPageSize, setFoundryPageSize, settingsRef, saveAllSettings, memoryScannerEnabled, setMemoryScannerEnabled, modularPopout, setModularPopout, overlayStatus, overlaysEnabled, setOverlaysEnabled, overlayEnabled, setOverlayEnabled, overlayPriority, setOverlayPriority, overlayOffsets, setOverlayOffsets, rivenEnabled, setRivenEnabled, relicPickEnabled, setRelicPickEnabled, relicPickPriority, setRelicPickPriority, relicPickLines, setRelicPickLines, masteryExclude, setMasteryExclude, wfmLoggedIn, wfmInvisibleOnStart, setWfmInvisibleOnStart, wfmInvisibleOnStartRef, wfmInvisibleOnClose, setWfmInvisibleOnClose, wfmInvisibleOnCloseRef, wfmAutoInvisible, setWfmAutoInvisible, wfmAutoInvisibleMins, setWfmAutoInvisibleMins, wfmRecordSales, setWfmRecordSales, colorblindMode, setColorblindMode, textScale, setTextScale, clockFormat, setClockFormat, systemLocale, itemCount, recipeCount, handleFetch, fetching, fetchMsg, fissureNotifications, onFissureNotificationsChange, setQuantities, setApiQuantities, setApiModCopies, setScannerMods, setMasteryData, setArchonShards, setFormaData, setChangeLog, setLastChanged, setWfConnected, wfConnectedRef, setItemsRefreshKey, setClearMsg, clearMsg, blobLogEnabled, setBlobLogEnabled, blobLogSize, setBlobLogSize, companionApiEnabled, setCompanionApiEnabled, apiLogEnabled, setApiLogEnabled, apiLogSize, setApiLogSize, wfmWhisperLogEnabled, setWfmWhisperLogEnabled, setShowInventoryBatchPreview, notifyTestResult, setNotifyTestResult, overlayLogCopied, setOverlayLogCopied, autoDiagEnabled, setAutoDiagEnabled, diagFolderSize, setDiagFolderSize, diagPath, diagCapturing, setDiagCapturing, setDiagPath, reloadDebugSizes, memoryProbing, setMemoryProbing, probeSize, setProbeSize, rawScanning, setRawScanning, rawScanSize, setRawScanSize, memRelicDebugRunning, setMemRelicDebugRunning, relicPickOcrResult, relicPickOcrTesting, setRelicPickOcrTesting, setRelicPickOcrResult, relicPickTestResult, relicPickTestEra, setRelicPickTestEra, setRelicPickTestResult, eeLogTail, setEeLogTail, debugCatEnabled, setDebugCatEnabled, unmatchedPathsSize, setUnmatchedPathsSize, appVersion, arbOverlayEnabled, setArbOverlayEnabled, betaUpdatesEnabled, setBetaUpdatesEnabled } = props;
 
   // Preview visibility is local to Settings; live game data always takes precedence.
   const [rewardShown, setRewardShown] = useState(false);
   const [pickShown,   setPickShown]   = useState(false);
   const [rivenShown,    setRivenShown]    = useState(false);
   const [notifPermissionDenied, setNotifPermissionDenied] = useState(false);
+  const [wfmWhisperLogCopied, setWfmWhisperLogCopied] = useState(false);
   const closePreviews = () => {
     if (rewardShown) hideRewardOverlay().catch(() => {});
     if (pickShown) hidePickOverlay().catch(() => {});
@@ -898,6 +900,29 @@ export default function SettingsModal(props: SettingsModalProps) {
                       disabled={apiLogSize === 0}
                       onClick={async () => { await invoke("clear_debug_data", { which: "api_logs" }); setApiLogSize(0); }}
                     >{apiLogSize > 0 ? "Clear (" + formatBytes(apiLogSize) + ")" : "Clear"}</SecondaryButton>
+
+                    {/* WFM Whisper Log */}
+                    <div className={ROW_INFO_CLASS}>
+                      <span className={ROW_LABEL_CLASS}>WFM Whisper Log</span>
+                      <span className={ROW_DESC_CLASS}>Raw EE.log line + parsed result for every suspected trade whisper. Off by default — leave off if you trade a lot.</span>
+                    </div>
+                    <SecondaryButton
+                      className={toggleButtonClass(wfmWhisperLogEnabled)}
+                      onClick={() => setWfmWhisperLogEnabled(v => !v)}>{wfmWhisperLogEnabled ? "On" : "Off"}</SecondaryButton>
+                    <SecondaryButton onClick={async () => {
+                      try { alert(await invoke<string>("get_wfm_whisper_debug_log")); }
+                      catch (e) { alert("Error: " + e); }
+                    }}>View</SecondaryButton>
+                    <SecondaryButton onClick={async () => {
+                      try {
+                        const log = await invoke<string>("get_wfm_whisper_debug_log");
+                        navigator.clipboard.writeText(log).then(() => {
+                          setWfmWhisperLogCopied(true);
+                          setTimeout(() => setWfmWhisperLogCopied(false), 1500);
+                        }).catch(() => {});
+                      }
+                      catch (e) { alert("Error: " + e); }
+                    }}>{wfmWhisperLogCopied ? "✓ Copied" : "Copy"}</SecondaryButton>
 
                   </div>
                 </div>

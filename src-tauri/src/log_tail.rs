@@ -6,6 +6,9 @@ pub struct TailChunk {
     pub text: String,
     /// The file this text came from is not the one the previous chunk came
     /// from. Readers holding state across chunks must drop it.
+    /// No production caller reads this yet (the one caller just drains to
+    /// EOF at startup) — covered by this module's own restart-detection tests.
+    #[allow(dead_code)]
     pub restarted: bool,
 }
 
@@ -31,6 +34,8 @@ pub struct LogTail {
 
 impl LogTail {
     /// Empty logs still establish the boundary between backfill and live events.
+    /// No production caller yet — exercised by this module's own tests.
+    #[allow(dead_code)]
     pub fn has_read(&self) -> bool {
         self.file_id.is_some()
     }
