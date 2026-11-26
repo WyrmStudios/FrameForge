@@ -459,13 +459,13 @@ pub(crate) async fn evaluate_mastery_plan(app: tauri::AppHandle, plan: MasteryPl
 }
 
 #[tauri::command]
-pub(crate) fn load_mastery_plan(state: tauri::State<'_, AppState>) -> Option<MasteryPlan> {
-    state.mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).record().plan.clone()
+pub(crate) fn load_mastery_plan(state: tauri::State<'_, AppState>) -> Result<Option<MasteryPlan>, String> {
+    Ok(state.mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).record().plan.clone())
 }
 
 #[tauri::command]
-pub(crate) fn save_mastery_plan(state: tauri::State<'_, AppState>, plan: MasteryPlan) {
-    state.mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).set_plan(plan);
+pub(crate) fn save_mastery_plan(state: tauri::State<'_, AppState>, plan: MasteryPlan) -> Result<(), String> {
+    state.mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).set_plan(plan)
 }
 
 /// Builds the overview and, once an inventory scan says what the player

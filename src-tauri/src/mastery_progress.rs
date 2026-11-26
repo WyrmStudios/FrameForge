@@ -189,9 +189,11 @@ impl MasteryProgress {
 
     pub(crate) fn record(&self) -> &PlayerProgress { &self.record }
 
-    pub(crate) fn set_plan(&mut self, plan: MasteryPlan) {
+    /// The plan is kept in memory either way; the error only reports that it
+    /// could not be persisted, so the caller can surface it.
+    pub(crate) fn set_plan(&mut self, plan: MasteryPlan) -> Result<(), String> {
         self.record.plan = Some(plan);
-        self.save();
+        self.try_save()
     }
 
     pub(crate) fn clear(&mut self) {
@@ -201,14 +203,20 @@ impl MasteryProgress {
         self.write_blocked = false;
     }
 
+    /// Background writes (observations) log and carry on.
     fn save(&self) {
-        if self.write_blocked { return; }
-        match serde_json::to_string(&self.record) {
-            Ok(json) => if let Err(e) = atomic_write(&self.path, json.as_bytes()) {
-                error!(path = %self.path.display(), error = %e, "mastery progress not written");
-            },
-            Err(e) => error!(error = %e, "mastery progress not serialized"),
+        if let Err(e) = self.try_save() {
+            error!(path = %self.path.display(), error = %e, "mastery progress not saved");
         }
+    }
+
+    /// A write-blocked session runs in memory by design, so it is not an error.
+    fn try_save(&self) -> Result<(), String> {
+        if self.write_blocked { return Ok(()); }
+        let json = serde_json::to_string(&self.record)
+            .map_err(|e| format!("mastery progress not serialized: {e}"))?;
+        atomic_write(&self.path, json.as_bytes())
+            .map_err(|e| format!("mastery progress not written to {}: {e}", self.path.display()))
     }
 }
 
@@ -376,14 +384,14 @@ mod tests {
         };
         progress.apply_blob(Some(&affinity(&[(BRATON, 450_000)])), None, None, None, 1_000);
         assert_eq!(progress.record().plan, None, "no plan until one is saved");
-        progress.set_plan(plan(12, &[KUVA, MAG]));
+        progress.set_plan(plan(12, &[KUVA, MAG])).expect("plan saved");
         progress.apply_blob(Some(&affinity(&[(BRATON, 450_000), (KUVA, 800_000)])), None, None, None, 2_000);
         assert_eq!(progress.record().plan, Some(plan(12, &[KUVA, MAG])), "a new observation leaves the plan alone");
 
         let reloaded = MasteryProgress::load(path.clone(), &InventoryStateCache::default());
         assert_eq!(reloaded.record().plan, Some(plan(12, &[KUVA, MAG])));
 
-        progress.set_plan(plan(5, &[]));
+        progress.set_plan(plan(5, &[])).expect("plan saved");
         let reloaded = MasteryProgress::load(path.clone(), &InventoryStateCache::default());
         assert_eq!(reloaded.record().plan, Some(plan(5, &[])), "a cleared plan is still a plan");
     }

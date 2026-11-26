@@ -96,7 +96,7 @@ export default function TargetMr({ overview, controls, onChange, now, clockForma
         if (saved) { setPlan({ ...saved, view: planView(saved.view) }); setFresh(false); }
         else { setPlan({ target: (overview.mastery_rank ?? 0) + 1, view: "suggestions", selections: [], allowances: {} }); setFresh(true); }
       })
-      .catch(() => {});
+      .catch(e => console.error("load_mastery_plan failed:", e));
     return () => { stale = true; };
   }, [overview.mastery_rank]);
 
@@ -120,7 +120,7 @@ export default function TargetMr({ overview, controls, onChange, now, clockForma
     next = { ...next, intrinsic_targets: snapshotIntrinsicTargets(next, overview.opportunities), purchase_comparison: controls.comparison };
     setPlan(next);
     setFresh(false);
-    invoke(TAURI_COMMANDS.SAVE_MASTERY_PLAN, { plan: next }).catch(() => {});
+    invoke<void>(TAURI_COMMANDS.SAVE_MASTERY_PLAN, { plan: next }).catch(e => console.error("save_mastery_plan failed:", e));
   };
 
   // Before the rank is observed the default target is MR 1 and the gap zero, so the prefill waits.
