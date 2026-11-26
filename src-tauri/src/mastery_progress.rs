@@ -171,6 +171,33 @@ impl MasteryProgress {
         self.last_confirmed = None;
     }
 
+    /// Gap-fills mastery rank from the Companion API (or any other external
+    /// source), called every time fresh data arrives rather than just once.
+    /// `apply_blob` already overwrites `affinity` wholesale on every live scan,
+    /// so a rank this map already has at least as high is left untouched; this
+    /// only adds ranks a scan has never reported, the same "higher rank always
+    /// wins" rule `inventory_state_cache.json`'s own `mastery_rank` field uses.
+    /// Without this, API-sourced rank data was only ever consulted once, via
+    /// `import_pre_provenance`, and then discarded forever the moment the
+    /// first live scan landed.
+    pub(crate) fn apply_api_ranks(&mut self, ranks: &HashMap<String, u32>) -> bool {
+        let mut changed = false;
+        for (path, &rank) in ranks {
+            let affinity = rank_to_affinity(rank, path);
+            let entry = self.record.affinity.entry(path.clone()).or_insert(0);
+            if affinity > *entry {
+                *entry = affinity;
+                changed = true;
+            }
+        }
+        if !changed { return false; }
+        if self.record.equipment.state == ProvenanceState::Unknown {
+            self.record.equipment = Provenance { state: ProvenanceState::Unconfirmed, observed_at: None };
+        }
+        self.save();
+        true
+    }
+
     const REOBSERVE_SAVE_INTERVAL: i64 = 300;
 
     pub(crate) fn reobserve(&mut self, now: i64) -> bool {
@@ -307,6 +334,33 @@ mod tests {
         assert!(!progress.apply_blob(None, None, None, None, 3_000), "XPInfo not an array confirms nothing");
         let record = progress.record();
         assert_eq!((record.affinity.clone(), record.equipment.observed_at), (second, Some(2_000)));
+    }
+
+    #[test]
+    fn api_ranks_gap_fill_equipment_without_overriding_a_fresher_scan() {
+        let (_dir, _path, mut progress) = fresh("api-ranks");
+        assert!(!progress.apply_api_ranks(&HashMap::new()), "empty map changes nothing");
+        assert_eq!(progress.record().equipment, Provenance::default());
+
+        assert!(progress.apply_api_ranks(&[(BRATON.to_string(), 12)].into()));
+        let a = progress.record();
+        assert_eq!(a.equipment, Provenance { state: ProvenanceState::Unconfirmed, observed_at: None }, "Unknown becomes Unconfirmed, same as a pre-scan import");
+        assert_eq!(xp_to_rank(a.affinity[BRATON], BRATON), 12);
+
+        let scanned_braton = rank_to_affinity(20, BRATON);
+        progress.apply_blob(Some(&affinity(&[(BRATON, scanned_braton)])), None, None, None, 1_000);
+        assert_eq!(progress.record().equipment.state, ProvenanceState::Confirmed);
+
+        assert!(!progress.apply_api_ranks(&[(BRATON.to_string(), 15)].into()), "a lower API rank than the live scan already confirmed changes nothing");
+        assert_eq!(progress.record().affinity[BRATON], scanned_braton);
+
+        assert!(progress.apply_api_ranks(&[(KUVA.to_string(), 40)].into()), "the API still gap-fills an item the scan never mentioned");
+        let a = progress.record();
+        assert_eq!(xp_to_rank(a.affinity[KUVA], KUVA), 40);
+        assert_eq!(a.equipment.state, ProvenanceState::Confirmed, "gap-fill doesn't downgrade an already-confirmed state");
+
+        progress.apply_blob(Some(&affinity(&[(BRATON, scanned_braton)])), None, None, None, 2_000);
+        assert!(!progress.record().affinity.contains_key(KUVA), "the next scan still wholesale-replaces affinity, same as any other confirmed field");
     }
 
     #[test]

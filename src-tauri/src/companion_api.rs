@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::Ordering;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::app_state::AppState;
 use crate::inventory_state::{load_inventory_state_cache, persist_inventory_state_cache, CachedItem};
@@ -119,12 +119,20 @@ pub(crate) async fn scan_warframe_api_urls() -> Result<Vec<String>, String> {
 
 /// Persist mastery data (unique_name → rank 0-30) from the Companion API or any other source.
 /// Merges into each item's entry in inventory_state_cache.json; higher rank always wins.
+/// Also gap-fills the Mastery tab's own progress record the same way, so this
+/// data isn't only consulted once before the first live scan — see
+/// `MasteryProgress::apply_api_ranks`.
 #[tauri::command]
 pub(crate) fn save_mastery_data(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     data: HashMap<String, u32>,
 ) -> Result<(), String> {
     if data.is_empty() { return Ok(()); }
+    let changed = state.mastery_progress.lock().unwrap_or_else(|e| e.into_inner()).apply_api_ranks(&data);
+    if changed {
+        let _ = app.emit(crate::events::MASTERY_UPDATE, ());
+    }
     persist_inventory_state_cache(&state.inventory_state_cache_path, |cache| {
         for (k, v) in &data {
             let entry = cache.items.entry(k.clone()).or_insert_with(|| CachedItem {
