@@ -9,16 +9,18 @@ import {
   CLOCK_FORMAT_OPTIONS,
   DEFAULT_CLOCK_FORMAT,
   DEFAULT_FOUNDRY_PAGE_SIZE,
+  DEFAULT_MASTERY_EXCLUDE,
   DEFAULT_RELIC_OVERLAY_PRIORITY,
   DEFAULT_RELIC_PICK_LINES,
   DEFAULT_RELIC_PICK_PRIORITY,
   DEFAULT_RELIC_PICK_REFINEMENT,
   FOUNDRY_PAGE_SIZE_OPTIONS,
+  MASTERY_EXCLUDE_OPTIONS,
   RELIC_PICK_LINES_OPTIONS,
   RELIC_PICK_PRIORITY_OPTIONS,
   RELIC_PICK_REFINEMENT_OPTIONS,
 } from "../constants/settings";
-import type { ClockFormat, FissureWatch, FoundryPageSize, OverlayOffsets, RelicOverlayPriority, RelicPickLines, RelicPickPriority, RelicRefinement, SettingsSnapshot } from "../types/settings";
+import type { ClockFormat, FissureWatch, FoundryPageSize, MasteryExclude, OverlayOffsets, RelicOverlayPriority, RelicPickLines, RelicPickPriority, RelicRefinement, SettingsSnapshot } from "../types/settings";
 import { DEFAULT_OVERLAY_OFFSETS, parseOverlayOffsets } from "../types/settings";
 import type { FilterPresetSettings } from "../types/filterPresets";
 import { parseFilterPresetSettings } from "../types/filterPresets";
@@ -29,6 +31,7 @@ interface UseSettingsReturn {
   memoryScannerEnabled: boolean;
   blobLogEnabled: boolean;
   apiLogEnabled: boolean;
+  wfmWhisperLogEnabled: boolean;
   autoDiagEnabled: boolean;
   overlaysEnabled: boolean;
   overlayEnabled: boolean;
@@ -40,6 +43,7 @@ interface UseSettingsReturn {
   clockFormat: ClockFormat;
   systemLocale: string;
   foundryPageSize: FoundryPageSize;
+  masteryExclude: MasteryExclude;
   relicPickEnabled: boolean;
   relicPickPriority: RelicPickPriority;
   relicPickRefinement: RelicRefinement;
@@ -59,6 +63,7 @@ interface UseSettingsReturn {
   setMemoryScannerEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setBlobLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setApiLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  setWfmWhisperLogEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setAutoDiagEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlaysEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setOverlayEnabled: React.Dispatch<React.SetStateAction<boolean>>;
@@ -70,6 +75,7 @@ interface UseSettingsReturn {
   setClockFormat: React.Dispatch<React.SetStateAction<ClockFormat>>;
   setSystemLocale: React.Dispatch<React.SetStateAction<string>>;
   setFoundryPageSize: React.Dispatch<React.SetStateAction<FoundryPageSize>>;
+  setMasteryExclude: React.Dispatch<React.SetStateAction<MasteryExclude>>;
   setRelicPickEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setRelicPickPriority: React.Dispatch<React.SetStateAction<RelicPickPriority>>;
   setRelicPickRefinement: React.Dispatch<React.SetStateAction<RelicRefinement>>;
@@ -99,6 +105,7 @@ export function useSettings(
   const [memoryScannerEnabled, setMemoryScannerEnabled] = useState(false);
   const [blobLogEnabled, setBlobLogEnabled] = useState(false);
   const [apiLogEnabled, setApiLogEnabled] = useState(false);
+  const [wfmWhisperLogEnabled, setWfmWhisperLogEnabled] = useState(false);
   const [autoDiagEnabled, setAutoDiagEnabled] = useState(false);
   const [overlaysEnabled, setOverlaysEnabled] = useState<boolean>(
     () => localStorage.getItem(PREFERENCE_KEYS.OVERLAYS_ENABLED) !== "false"
@@ -124,6 +131,7 @@ export function useSettings(
   const [clockFormat, setClockFormat] = useState<ClockFormat>(DEFAULT_CLOCK_FORMAT);
   const [systemLocale, setSystemLocale] = useState("en-US");
   const [foundryPageSize, setFoundryPageSize] = useState<FoundryPageSize>(DEFAULT_FOUNDRY_PAGE_SIZE);
+  const [masteryExclude, setMasteryExclude] = useState<MasteryExclude>(DEFAULT_MASTERY_EXCLUDE);
   const [relicPickEnabled, setRelicPickEnabled] = useState<boolean>(true);
   const [relicPickPriority, setRelicPickPriority] = useState<RelicPickPriority>(DEFAULT_RELIC_PICK_PRIORITY);
   const [relicPickRefinement, setRelicPickRefinement] = useState<RelicRefinement>(DEFAULT_RELIC_PICK_REFINEMENT);
@@ -158,6 +166,7 @@ export function useSettings(
     memoryScannerEnabled: false,
     blobLogEnabled: false,
     apiLogEnabled: false,
+    wfmWhisperLogEnabled: false,
     autoDiagEnabled: false,
     tracked: [] as string[],
     favorites: [] as string[],
@@ -177,6 +186,7 @@ export function useSettings(
     relicPickRefinement: DEFAULT_RELIC_PICK_REFINEMENT,
     relicPickLines: DEFAULT_RELIC_PICK_LINES,
     foundryPageSize: DEFAULT_FOUNDRY_PAGE_SIZE,
+    masteryExclude: DEFAULT_MASTERY_EXCLUDE,
     filterPresets: { presets: [], restorePreviousFiltersOnPresetClick: false },
     betaUpdatesEnabled: false,
   });
@@ -212,6 +222,7 @@ export function useSettings(
         if (!COMPANION_API_SUSPENDED && typeof s.companionApiEnabled === "boolean") setCompanionApiEnabled(s.companionApiEnabled);
         if (typeof s.blobLogEnabled === "boolean") setBlobLogEnabled(s.blobLogEnabled);
         if (typeof s.apiLogEnabled === "boolean") setApiLogEnabled(s.apiLogEnabled);
+        if (typeof s.wfmWhisperLogEnabled === "boolean") setWfmWhisperLogEnabled(s.wfmWhisperLogEnabled);
         if (typeof s.autoDiagEnabled === "boolean") {
           setAutoDiagEnabled(s.autoDiagEnabled);
           localStorage.setItem(PREFERENCE_KEYS.AUTO_DIAGNOSTICS, String(s.autoDiagEnabled));
@@ -252,6 +263,11 @@ export function useSettings(
         }
         if (typeof s.foundryPageSize === "number" && FOUNDRY_PAGE_SIZE_OPTIONS.includes(s.foundryPageSize)) {
           setFoundryPageSize(s.foundryPageSize);
+        }
+        if (typeof s.masteryExclude === "object" && s.masteryExclude != null) {
+          const stored = s.masteryExclude as Partial<MasteryExclude>;
+          setMasteryExclude(Object.fromEntries(MASTERY_EXCLUDE_OPTIONS.map(o =>
+            [o.key, typeof stored[o.key] === "boolean" ? stored[o.key] : DEFAULT_MASTERY_EXCLUDE[o.key]])) as MasteryExclude);
         }
         const relicPickEnabled = typeof s.relicPickEnabled === "boolean" ? s.relicPickEnabled : true;
         setRelicPickEnabled(relicPickEnabled);
@@ -306,11 +322,17 @@ export function useSettings(
     invoke("set_api_log", { enabled: apiLogEnabled }).catch(() => {});
   }, [apiLogEnabled]); // eslint-disable-line
 
+  // ── WFM whisper log toggle ───────────────────────────────────────────────────
+  useEffect(() => {
+    invoke("set_wfm_whisper_log", { enabled: wfmWhisperLogEnabled }).catch(() => {});
+  }, [wfmWhisperLogEnabled]); // eslint-disable-line
+
   return {
     // Settings state
     memoryScannerEnabled,
     blobLogEnabled,
     apiLogEnabled,
+    wfmWhisperLogEnabled,
     autoDiagEnabled,
     overlaysEnabled,
     overlayEnabled,
@@ -322,6 +344,7 @@ export function useSettings(
     clockFormat,
     systemLocale,
     foundryPageSize,
+    masteryExclude,
     relicPickEnabled,
     relicPickPriority,
     relicPickRefinement,
@@ -341,6 +364,7 @@ export function useSettings(
     setMemoryScannerEnabled,
     setBlobLogEnabled,
     setApiLogEnabled,
+    setWfmWhisperLogEnabled,
     setAutoDiagEnabled,
     setOverlaysEnabled,
     setOverlayEnabled,
@@ -352,6 +376,7 @@ export function useSettings(
     setClockFormat,
     setSystemLocale,
     setFoundryPageSize,
+    setMasteryExclude,
     setRelicPickEnabled,
     setRelicPickPriority,
     setRelicPickRefinement,

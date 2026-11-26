@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use tauri::{Emitter, Manager};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::app_state::AppState;
 use crate::diagnostics::{append_to_diag, write_bmp};
@@ -1388,29 +1388,81 @@ pub(crate) struct ParsedWfmWhisper {
     pub from: String,
     pub item: Option<String>,
     pub price: Option<u64>,
-    /// "buy" when the *local* player sent this whisper to buy the item (they
-    /// are the buyer, `from` is the seller); "sell" when the local player
-    /// sent it to sell (they are the seller, `from` is the buyer). This is
-    /// always the local player's own intent, since EE.log only logs whispers
-    /// the local client sends ("IRC out") — never ones it receives.
+    /// Always the *local player's own* role in the trade: "buy" means the
+    /// local player is the buyer (`from` is the seller), "sell" means the
+    /// local player is the seller (`from` is the buyer) — regardless of
+    /// which literal phrase ("I want to buy"/"I want to sell") appears in
+    /// the message, and regardless of who actually sent it. See `incoming`.
     pub direction: &'static str,
+    /// false for a whisper the local client sent ("IRC out:" — the message
+    /// text describes the local player's own intent directly); true for one
+    /// the local client received ("IRC in:" — the message text describes
+    /// the *sender's* intent, which is the opposite of the local player's
+    /// role, and the real sender must be read from the IRC prefix rather
+    /// than the PRIVMSG target, which here is the local player).
+    pub incoming: bool,
 }
 
-/// Parse an outgoing WFM trade-whisper line from EE.log.
-/// Real format: "... IRC out: PRIVMSG <name> :Hi! I want to buy: \"<item>\" for N platinum. (warframe.market)"
-/// (or "...want to sell: ..." for the seller-side template.)
+/// Find the IRC sender nick from a prefix of the form ":Nick!user@host"
+/// appearing somewhere before "PRIVMSG " on an incoming IRC line. Standard
+/// IRC wire format is ":<prefix> PRIVMSG <target> :<text>"; we scan tokens
+/// right-to-left so a log-line marker that happens to start with ':' earlier
+/// in the string (there are none today, but nothing guarantees that stays
+/// true) can't be mistaken for the sender.
+fn extract_irc_sender(before_privmsg: &str) -> Option<String> {
+    before_privmsg
+        .split_whitespace()
+        .rev()
+        .find(|tok| tok.starts_with(':') && tok.contains('!'))
+        .and_then(|tok| tok[1..].find('!').map(|i| tok[1..1 + i].to_string()))
+}
+
+/// Parse a WFM trade-whisper line from EE.log, sent or received.
+///
+/// Outgoing real format: "... IRC out: PRIVMSG <name> :Hi! I want to buy: \"<item>\" for N platinum. (warframe.market)"
 /// ("@From " never appears for outgoing whispers — PRIVMSG's target *is* the trade partner.)
+///
+/// Incoming format is NOT yet confirmed against a real captured EE.log line —
+/// no "IRC in:" sample has been seen. This assumes Warframe mirrors standard
+/// IRC wire syntax for the sender prefix: "... IRC in: :<name>!user@host PRIVMSG <local player> :Hi! I want to buy: \"<item>\" for N platinum. (warframe.market)".
+/// If a real sample ever contradicts this, the WFM whisper debug log (see
+/// `parse_and_emit_wfm_whisper`) is what should be used to correct it.
 fn parse_wfm_whisper(raw: &str) -> ParsedWfmWhisper {
-    let from = raw.find("PRIVMSG ")
-        .map(|i| &raw[i+8..])
+    let lower = raw.to_lowercase();
+    // Default to the only shape this parser originally supported (outgoing)
+    // if neither direction tag is present, so unrecognized lines don't
+    // regress into being treated as incoming.
+    let incoming = lower.contains("irc in:") && !lower.contains("irc out:");
+
+    let privmsg_idx = raw.find("PRIVMSG ");
+    let privmsg_target = privmsg_idx
+        .map(|i| &raw[i + 8..])
         .and_then(|s| s.split(" :").next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "Unknown".to_string());
-    let (direction, item_prefix) = if raw.contains("want to sell: \"") {
+        .map(|s| s.trim().to_string());
+
+    let from = if incoming {
+        privmsg_idx
+            .and_then(|i| extract_irc_sender(&raw[..i]))
+            .unwrap_or_else(|| "Unknown".to_string())
+    } else {
+        privmsg_target.unwrap_or_else(|| "Unknown".to_string())
+    };
+
+    // The phrase always describes whoever SENT the whisper's own stated
+    // intent. For an outgoing whisper that's the local player, so it's used
+    // directly; for an incoming one it's the trade partner, so the local
+    // player's actual role is the opposite.
+    let (stated, item_prefix) = if raw.contains("want to sell: \"") {
         ("sell", "want to sell: \"")
     } else {
         ("buy", "want to buy: \"")
     };
+    let direction: &'static str = if incoming {
+        if stated == "sell" { "buy" } else { "sell" }
+    } else {
+        stated
+    };
+
     let item = {
         let suffix = "\" for ";
         raw.find(item_prefix).and_then(|i| {
@@ -1422,7 +1474,16 @@ fn parse_wfm_whisper(raw: &str) -> ParsedWfmWhisper {
         let rest = &raw[i+5..];
         rest.find(" platinum").and_then(|j| rest[..j].trim().parse().ok())
     });
-    ParsedWfmWhisper { from, item, price, direction }
+    ParsedWfmWhisper { from, item, price, direction, incoming }
+}
+
+/// Path to the WFM trade-whisper debug log: every EE.log line matched as a
+/// possible trade whisper (the same trigger `reward_watcher.rs` uses), with
+/// the raw text and everything the parser derived from it. Added so sent-vs-
+/// received misclassification reports can be diagnosed from a real session
+/// instead of guesswork. Also read by `diagnostics::get_wfm_whisper_debug_log`.
+pub(crate) fn wfm_whisper_debug_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("frameforge_wfm_whisper_debug.log")
 }
 
 pub(crate) fn parse_and_emit_wfm_whisper(
@@ -1431,12 +1492,30 @@ pub(crate) fn parse_and_emit_wfm_whisper(
 ) {
     let raw = log_line;
     let parsed = parse_wfm_whisper(raw);
+
+    if app.state::<AppState>().wfm_whisper_log_enabled.load(Ordering::SeqCst) {
+        let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+        let debug_entry = format!(
+            "[{ts}] RAW: {}\n       -> incoming={} from=\"{}\" item={:?} price={:?} direction=\"{}\"\n\n",
+            raw.trim(), parsed.incoming, parsed.from, parsed.item, parsed.price, parsed.direction,
+        );
+        let _ = append_to_file(&wfm_whisper_debug_log_path(), &debug_entry);
+    }
+    debug!(
+        target: "frameforge::wfm_whisper",
+        incoming = parsed.incoming,
+        from = %parsed.from,
+        direction = %parsed.direction,
+        "wfm whisper parsed"
+    );
+
     let _ = app.emit(events::WFM_WHISPER, serde_json::json!({
         "from": parsed.from,
         "message": raw.trim(),
         "item": parsed.item,
         "price": parsed.price,
         "direction": parsed.direction,
+        "incoming": parsed.incoming,
         "timestamp": chrono::Local::now().format("%H:%M:%S").to_string(),
     }));
 }
@@ -1461,6 +1540,7 @@ mod wfm_whisper_tests {
         assert_eq!(parsed.item, Some("Mecha Recharge (rank 0)".to_string()));
         assert_eq!(parsed.price, Some(20));
         assert_eq!(parsed.direction, "buy", "local player is buying, so `from` is the seller, not someone who 'wants' the item");
+        assert!(!parsed.incoming);
     }
 
     /// The seller-side WFM template ("want to sell") must be recognized too,
@@ -1500,6 +1580,51 @@ mod wfm_whisper_tests {
 
         assert_eq!(parsed.from, "Unknown");
         assert_eq!(parsed.item, None);
+    }
+
+    /// SPECULATIVE: no real "IRC in:" EE.log line has been captured yet. This
+    /// assumes Warframe mirrors standard IRC wire syntax (":nick!user@host
+    /// PRIVMSG target :text") for incoming lines, same as the outgoing
+    /// format assumption documented on `parse_wfm_whisper`. If the WFM
+    /// whisper debug log ever captures a real incoming line that doesn't
+    /// match this, update this test (and the parser) from that real sample.
+    #[test]
+    fn incoming_whisper_flips_direction_and_reads_real_sender() {
+        let raw = "Net [Info]: IRC in: :Mojhe1!Mojhe1@entries.warframe.com PRIVMSG LocalPlayer :Hi! I want to buy: \"Mecha Recharge (rank 0)\" for 20 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Mojhe1", "the trade partner, never the local player");
+        assert_eq!(parsed.item, Some("Mecha Recharge (rank 0)".to_string()));
+        assert_eq!(parsed.price, Some(20));
+        assert!(parsed.incoming);
+        assert_eq!(parsed.direction, "sell", "the sender wants to buy, so the local player's role is selling");
+    }
+
+    /// Same speculative format, "want to sell" case — local player's role
+    /// must flip to "buy".
+    #[test]
+    fn incoming_whisper_sell_phrase_flips_to_local_buy() {
+        let raw = "Net [Info]: IRC in: :Buyer99!Buyer99@entries.warframe.com PRIVMSG LocalPlayer :Hi! I want to sell: \"Primed Flow\" for 15 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Buyer99");
+        assert!(parsed.incoming);
+        assert_eq!(parsed.direction, "buy", "the sender wants to sell, so the local player's role is buying");
+    }
+
+    /// If an incoming line doesn't carry a recognizable IRC sender prefix,
+    /// fall back to "Unknown" — never reuse the PRIVMSG target, which for an
+    /// incoming line is the local player, not the trade partner.
+    #[test]
+    fn incoming_whisper_without_recognizable_prefix_falls_back_to_unknown() {
+        let raw = "Net [Info]: IRC in: PRIVMSG LocalPlayer :Hi! I want to buy: \"Primed Flow\" for 15 platinum. (warframe.market)";
+
+        let parsed = parse_wfm_whisper(raw);
+
+        assert_eq!(parsed.from, "Unknown");
+        assert!(parsed.incoming);
     }
 }
 

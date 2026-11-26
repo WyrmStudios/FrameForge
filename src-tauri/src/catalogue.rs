@@ -108,7 +108,8 @@ pub(crate) fn fix_category(name: &str, item_type: &str, product_category: &str, 
 
     // ── Tier 3: type field — most reliable, covers all 17 000 items ───────────
     match item_type {
-        "Warframe" => return "Warframes".to_string(),
+        // Venari carries type Warframe; the game's profile files it with Kavats.
+        "Warframe" => return if wfcd_cat == "Companions" { "Companions" } else { "Warframes" }.to_string(),
 
         // Companion weapons MUST come before Primary/Secondary checks — WFCD stores
         // Sentinel weapons (Akaten, Sweeper, Verglas, etc.) with category=Primary.
@@ -117,6 +118,8 @@ pub(crate) fn fix_category(name: &str, item_type: &str, product_category: &str, 
         "Rifle" | "Shotgun" | "Bow" | "Sniper" | "Launcher" | "Throwing" => {
             // Railjack turrets/crew weapons share weapon types with Primary weapons.
             if product_category == "CrewShipWeapons" { return "Railjack".to_string(); }
+            // WFCD types ten melee weapons (Paracesis, Prova, Mk1-Bo, …) as Rifle.
+            if product_category == "Melee" { return "Melee".to_string(); }
             return "Primary".to_string();
         }
 
@@ -644,7 +647,8 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
         "image_name": i.image_name, "vaulted": i.vaulted, "ducats": i.ducats,
         "mastery_req": i.mastery_req, "omega_attenuation": i.omega_attenuation,
         "fusion_limit": i.fusion_limit, "max_level_cap": i.max_level_cap,
-        "masterable": i.masterable, "ducat_schema": DUCAT_SCHEMA_VERSION,
+        "masterable": i.masterable, "tradable": i.tradable, "bp_cost": i.bp_cost,
+        "ducat_schema": DUCAT_SCHEMA_VERSION,
         "vaulted_schema": VAULTED_SCHEMA_VERSION
     })).collect::<Vec<_>>()) {
         let _ = std::fs::write(&state.items_cache_path, json);
@@ -662,6 +666,9 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
     }).collect();
     if let Ok(json) = serde_json::to_string(&result.relic_drops) {
         let _ = std::fs::write(&state.relic_drops_cache_path, json);
+    }
+    if let Ok(json) = serde_json::to_string(&result.drop_locations) {
+        let _ = std::fs::write(&state.drop_locations_cache_path, json);
     }
     if let Ok(json) = serde_json::to_string(&result.relic_rewards) {
         let _ = std::fs::write(&state.relic_rewards_cache_path, json);
@@ -696,7 +703,9 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
     });
 
     *state.wfcd_items.lock().map_err(|e| e.to_string())? = deduped;
-    *state.recipes.lock().map_err(|e| e.to_string())? = result.recipes;
+    *state.recipe_consumers.lock().map_err(|e| e.to_string())? = std::sync::Arc::new(crate::mastery_recipe::recipe_consumers(&result.recipes));
+    *state.recipes.lock().map_err(|e| e.to_string())? = std::sync::Arc::new(result.recipes);
+    *state.drop_locations.lock().map_err(|e| e.to_string())? = std::sync::Arc::new(result.drop_locations);
     *state.relic_drops.lock().map_err(|e| e.to_string())? = result.relic_drops;
     *state.relic_rewards.lock().map_err(|e| e.to_string())? = result.relic_rewards;
     *state.blueprint_to_result.lock().map_err(|e| e.to_string())? = result.blueprint_names;
@@ -710,7 +719,7 @@ fn apply_catalogue(state: &AppState, result: wfcd::FetchResult) -> Result<usize,
         if let Ok(json) = serde_json::to_string(&result.syndicate_catalog) {
             let _ = std::fs::write(&state.syndicate_catalog_path, json);
         }
-        *state.syndicate_catalog.lock().map_err(|e| e.to_string())? = result.syndicate_catalog;
+        *state.syndicate_catalog.lock().map_err(|e| e.to_string())? = std::sync::Arc::new(result.syndicate_catalog);
     }
     Ok(count)
 }
@@ -1033,7 +1042,9 @@ pub(crate) fn load_items_cache(path: &PathBuf) -> Option<Vec<WfcdItem>> {
         let max_level_cap     = v["max_level_cap"].as_u64().map(|n| n as u32)
             .or_else(|| if unique_name.contains("/EntratiMech/") { Some(40) } else { None });
         let masterable = v.get("masterable").and_then(|b| b.as_bool());
-        Some(WfcdItem { unique_name, name, category, item_type, product_category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap, tradable: None, masterable })
+        let tradable = v.get("tradable").and_then(|b| b.as_bool());
+        let bp_cost = v["bp_cost"].as_u64().map(|n| n as u32);
+        Some(WfcdItem { unique_name, name, category, item_type, product_category, image_name, vaulted, ducats, mastery_req, omega_attenuation, fusion_limit, max_level_cap, tradable, masterable, bp_cost })
     }).collect();
     if items.is_empty() { None } else { Some(dedup_known_aliases(items)) }
 }

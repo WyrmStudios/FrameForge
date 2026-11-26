@@ -1,4 +1,4 @@
-export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "arbitrations" | "statistics" | "completionist";
+export type Module = "inventory" | "foundry" | "market" | "relics" | "rivens" | "timers" | "arbitrations" | "statistics" | "mastery" | "companions";
 
 const MODULE_NAV = "w-18 shrink-0 bg-surface border-r border-border flex flex-col items-center py-2 gap-1";
 const MODULE_BTN =
@@ -47,9 +47,13 @@ export default function AppNavigation({ activeModule, onModuleChange }: AppNavig
         <img src="/riven-icon.png" alt="" className="size-6 object-contain" />
         <span className={MODULE_LABEL}>Rivens</span>
       </button>
-      <button className={`${MODULE_BTN} ${activeModule === "completionist" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("completionist")} title="Completionist">
+      <button className={`${MODULE_BTN} ${activeModule === "mastery" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("mastery")} title="Mastery">
         <img src="/completionist-icon.png" alt="" className="size-6 object-contain" />
-        <span className={MODULE_LABEL}>Completionist</span>
+        <span className={MODULE_LABEL}>Mastery</span>
+      </button>
+      <button className={`${MODULE_BTN} ${activeModule === "companions" ? MODULE_BTN_ON : MODULE_BTN_OFF}`} onClick={() => onModuleChange("companions")} title="Companions">
+        <img src="/companions-icon.svg" alt="" className="size-6 object-contain" />
+        <span className={MODULE_LABEL}>Companions</span>
       </button>
     </nav>
   );

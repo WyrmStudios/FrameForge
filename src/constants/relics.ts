@@ -9,6 +9,12 @@ export const RELIC_REFINEMENT_LABELS: Record<RelicRefinement, string> = {
   radiant: "Radiant",
 };
 
+/** The catalogue names each refinement as its own relic, "Lith A1 Radiant". */
+export const RELIC_REFINEMENT_SUFFIX = / (Intact|Exceptional|Flawless|Radiant)$/;
+
+/** Completion probability a relic route must exceed to join Suggestions. */
+export const RELIC_SUGGESTION_THRESHOLD = 0.85;
+
 export const RELIC_DROP_RATES = {
   intact:      { Common: 0.2533, Uncommon: 0.11,  Rare: 0.02 },
   exceptional: { Common: 0.2333, Uncommon: 0.13,  Rare: 0.04 },

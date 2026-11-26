@@ -11,6 +11,28 @@ export interface RawArchonShard {
   color: string; // raw string from game JSON, e.g. "ACC_CRIMSON", "ACC_AZURE_TAUFORGED"
 }
 
+export interface ColorSwatch {
+  name: string;
+  hex: string;
+}
+
+export interface ResolvedCompanion {
+  item_type: string;
+  species: "kubrow" | "kavat";
+  breed_name: string;
+  pet_name?: string | null;
+  body_type?: string | null;
+  size?: string | null;
+  colors: ColorSwatch[];
+  pattern?: string | null;
+  eye_color?: ColorSwatch | null;
+  head_type?: string | null;
+  tail_type?: string | null;
+  gender?: string | null;
+  is_puppy: boolean;
+  prints_remaining?: number | null;
+}
+
 export interface ChangeLogEntry {
   id: number;
   unique_name: string;
@@ -36,6 +58,7 @@ export interface InventoryUpdate {
   forma_counts?: Record<string, number>;
   is_full_pass?: boolean;
   player_name?: string;
+  companions?: ResolvedCompanion[];
 }
 
 export interface TrackedItem {

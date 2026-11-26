@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { collectNewMatches, matchesWatch } from "./fissureAlerts.ts";
+import { collectNewMatches, matchesWatch, planetOf } from "./fissureAlerts.ts";
 import type { FissureWatch } from "./types/settings.ts";
 import type { SeenFissures, WorldState, WsFissure } from "./types/worldstate.ts";
 
@@ -109,6 +109,20 @@ test("mission type must match exactly unless the watch says Any", () => {
   assert.equal(matchesWatch(watch("w", "Any", "Capture"), fissure("a", "Lith", "Capture"), "normal"), true);
   assert.equal(matchesWatch(watch("w", "Any", "Capture"), fissure("a", "Lith", "Rescue"), "normal"), false);
   assert.equal(matchesWatch(watch("w"), fissure("a", "Lith", "Rescue"), "normal"), true);
+});
+
+test("planet must match exactly unless the watch says Any or is unset", () => {
+  const onVoid = fissure("a"); // node: "Tessera (Void)"
+  assert.equal(matchesWatch({ ...watch("w"), planet: "Void" }, onVoid, "normal"), true);
+  assert.equal(matchesWatch({ ...watch("w"), planet: "Earth" }, onVoid, "normal"), false);
+  assert.equal(matchesWatch({ ...watch("w"), planet: "Any" }, onVoid, "normal"), true);
+  assert.equal(matchesWatch(watch("w"), onVoid, "normal"), true, "a watch saved before this field existed matches every planet");
+});
+
+test("planetOf reads the parenthesized suffix off a node name", () => {
+  assert.equal(planetOf("Tessera (Void)"), "Void");
+  assert.equal(planetOf("Flexa (Veil Proxima)"), "Veil Proxima");
+  assert.equal(planetOf("No Parens Here"), "No Parens Here");
 });
 
 test("a Steel Path fissure only reaches a watch that accepts hard", () => {

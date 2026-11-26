@@ -305,7 +305,7 @@ pub(crate) fn show_overlay_window(
         if url.as_str() == "about:blank" || url.as_str().starts_with("about:") {
             debug!(%url, "WebView2 deferred load detected, navigating to overlay URL");
             let overlay_url = if cfg!(debug_assertions) {
-                "http://localhost:1420/index.html?overlay"
+                "http://localhost:1422/index.html?overlay"
             } else {
                 "tauri://localhost/index.html?overlay"
             };

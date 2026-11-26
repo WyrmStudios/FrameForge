@@ -5284,7 +5284,7 @@ dependencies = [
 
 [[package]]
 name = "warframe-companion"
-version = "4.7.0"
+version = "4.7.2"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -5302,6 +5302,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",

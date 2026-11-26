@@ -18,6 +18,12 @@ fn effective_mastery_cap(max_level_cap: Option<u32>, polarized: u32) -> u32 {
     }
 }
 
+/// Level of one owned copy. The catalogue ceiling caps it; the per-forma
+/// ceiling is left to the mastery planner, which also reads `owned_forma`.
+fn copy_level(xp: i64, path: &str, path_to_max_level_cap: &HashMap<String, u32>) -> u32 {
+    crate::mastery_rules::earned_rank(xp, path, path_to_max_level_cap.get(path).copied())
+}
+
 /// One resolved modular component (Amp Prism/Scaffold/Brace, Kitgun barrel, etc.)
 /// stored inside the parent item's cache entry.
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
@@ -40,6 +46,13 @@ pub(crate) struct CachedItem {
     /// Mastery rank 0-30 (0 = not mastered or not applicable).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub(crate) mastery_rank: u32,
+    /// Level of each owned copy, ascending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) owned_levels: Vec<u32>,
+    /// Forma applied to each owned copy, in `owned_levels` order. Empty on a
+    /// cache written before it was stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) owned_forma: Vec<u32>,
     /// Socketed Archon Shards (warframes only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) archon_shards: Vec<memory_scanner::ArchonShard>,
@@ -102,6 +115,8 @@ pub(crate) struct CachedItem {
     pub(crate) is_stackable: bool,
 }
 
+pub(crate) const CREDITS_PATH: &str = "/_currency/Credits";
+
 pub(crate) fn is_false(v: &bool) -> bool { !v }
 
 pub(crate) fn is_zero_u32(v: &u32) -> bool { *v == 0 }
@@ -118,9 +133,65 @@ pub(crate) struct InventoryStateCache {
     /// All owned riven mods (veiled and revealed), populated from blob scans.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) rivens: Vec<memory_scanner::BlobRivenEntry>,
+    /// Owned Kubrows/Kavats, resolved for the Companions tab.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) companions: Vec<crate::companions::ResolvedCompanion>,
 }
 
 impl InventoryStateCache {
+    pub(crate) fn mastery_data(&self) -> HashMap<String, u32> {
+        self.items.iter().filter(|(_, item)| item.mastery_rank > 0)
+            .map(|(path, item)| (path.clone(), item.mastery_rank)).collect()
+    }
+
+    pub(crate) fn owned_levels(&self) -> HashMap<String, Vec<u32>> {
+        self.items.iter().filter(|(_, item)| !item.owned_levels.is_empty())
+            .map(|(path, item)| (path.clone(), item.owned_levels.clone())).collect()
+    }
+
+    pub(crate) fn owned_forma(&self) -> HashMap<String, Vec<u32>> {
+        self.items.iter().filter(|(_, item)| !item.owned_forma.is_empty())
+            .map(|(path, item)| (path.clone(), item.owned_forma.clone())).collect()
+    }
+
+    fn unique_quantities(&self) -> HashMap<String, i64> {
+        self.items.iter()
+            .filter(|(path, item)| item.amount > 0 && item.mod_ranks.is_none()
+                && !item.subsumed && !item.is_stackable && !item.is_flavour
+                && !matches!(item.category.as_str(), "Blueprints" | "Parts")
+                && is_unique_path(path))
+            .map(|(path, item)| (path.clone(), item.amount))
+            .collect()
+    }
+
+    /// `amount` is a binary owned flag for ordinary equipment, so the copy
+    /// count planning can spend comes from the levels seen per copy.
+    pub(crate) fn owned_copies(&self) -> HashMap<String, i64> {
+        let mut copies = self.unique_quantities();
+        for (path, n) in copies.iter_mut() {
+            let levels = self.items[path].owned_levels.len() as i64;
+            if levels > *n { *n = levels; }
+        }
+        copies
+    }
+
+    pub(crate) fn stackable_quantities(&self) -> HashMap<String, i64> {
+        self.items.iter()
+            // Currency zeroes distinguish an accepted empty inventory from a cache reset.
+            .filter(|(path, item)| (item.amount > 0 || path.starts_with("/_currency/")) && (item.is_flavour
+                || (item.mod_ranks.is_none() && (item.is_stackable
+                    || !is_unique_path(path)
+                    || matches!(item.category.as_str(), "Blueprints" | "Parts")))))
+            .map(|(path, item)| (path.clone(), item.amount))
+            .collect()
+    }
+
+    /// Only a full account observation writes currency rows; catalogue
+    /// refreshes seed item rows without one.
+    pub(crate) fn has_account_observation(&self) -> bool {
+        self.items.contains_key(CREDITS_PATH)
+    }
+
     /// Derive consumed_suits from items so callers don't need to know the internal layout.
     pub(crate) fn consumed_suits(&self) -> Vec<String> {
         self.items.iter()
@@ -175,6 +246,20 @@ pub(crate) fn modular_component_path(entry: &memory_scanner::BlobUniqueEntry) ->
 }
 
 
+/// WFCD lists some items under two paths while XPInfo credits only one.
+pub(crate) fn inventory_path_aliases() -> HashMap<&'static str, &'static str> {
+    [
+        // Sirius & Orion: two WFCD entries for one warframe.
+        ("/Lotus/Powersuits/SiriusOrion/OrionSuit",
+         "/Lotus/Powersuits/SiriusOrion/SiriusSuit"),
+        ("/Lotus/Powersuits/SiriusOrion/OrionSuitBlueprint",
+         "/Lotus/Types/Recipes/WarframeRecipes/SiriusOrionBlueprint"),
+        // WFCD lists the Grimoire twice; XPInfo only ever credits TnGrimoire.
+        ("/Lotus/Weapons/Tenno/Grimoire/TnDoppelgangerGrimoire",
+         "/Lotus/Weapons/Tenno/Grimoire/TnGrimoire"),
+    ].into_iter().collect()
+}
+
 /// Build a fresh `InventoryStateCache` from a parsed FULL_ACCOUNT blob.
 /// All sections are authoritative — this fully replaces scanner-derived data.
 pub(crate) fn build_inventory_from_blob(
@@ -211,7 +296,7 @@ pub(crate) fn build_inventory_from_blob(
     }
 
     // Currency (virtual paths not in WFCD catalog).
-    upsert!("/_currency/Credits").amount     = blob.credits;
+    upsert!(CREDITS_PATH).amount             = blob.credits;
     upsert!("/_currency/Endo").amount        = blob.endo;
     upsert!("/_currency/Platinum").amount    = blob.platinum - blob.free_platinum;
     upsert!("/_currency/PlatinumGift").amount = blob.free_platinum;
@@ -234,6 +319,8 @@ pub(crate) fn build_inventory_from_blob(
                 ..Default::default()
             });
             item.amount += 1;
+            item.owned_levels.push(copy_level(entry.xp, &component, path_to_max_level_cap));
+            item.owned_forma.push(entry.polarized);
             if entry.item_name.is_some() {
                 let rank = memory_scanner::xp_to_rank(entry.xp, &entry.item_type).min(30);
                 if rank > item.mastery_rank { item.mastery_rank = rank; }
@@ -252,6 +339,8 @@ pub(crate) fn build_inventory_from_blob(
 
         let item = upsert!(&entry.item_type);
         item.amount        = 1;
+        item.owned_levels.push(copy_level(entry.xp, &entry.item_type, path_to_max_level_cap));
+        item.owned_forma.push(entry.polarized);
         item.archon_shards = entry.archon_shards.clone();
         if entry.polarized > 0 { item.forma_count = Some(entry.polarized); }
         if !entry.modular_parts.is_empty() {
@@ -335,6 +424,9 @@ pub(crate) fn build_inventory_from_blob(
 
     // Catalog-derived fields + carry forward fetched WFM prices.
     for (path, item) in items.iter_mut() {
+        let mut copies: Vec<(u32, u32)> = item.owned_levels.iter().copied().zip(item.owned_forma.iter().copied()).collect();
+        copies.sort_unstable();
+        (item.owned_levels, item.owned_forma) = copies.into_iter().unzip();
         item.ducat_price  = path_to_ducat.get(path).copied();
         item.vaulted      = path_to_vaulted.get(path).copied();
         item.tradable     = path_to_tradable.get(path).copied();
@@ -352,10 +444,15 @@ pub(crate) fn build_inventory_from_blob(
 
     for path in excluded_paths { items.remove(path); }
 
+    let companions: Vec<crate::companions::ResolvedCompanion> = blob.companions.iter()
+        .filter_map(|c| crate::companions::resolve_companion(c, path_to_name))
+        .collect();
+
     InventoryStateCache {
         items,
         mastery_rank: if blob.mastery_level > 0 { Some(blob.mastery_level) } else { None },
         rivens: blob.rivens.clone(),
+        companions,
     }
 }
 

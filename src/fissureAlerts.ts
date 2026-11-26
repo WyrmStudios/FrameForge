@@ -1,6 +1,14 @@
 import type { MatchedFissure, SeenFissures, WorldState, WsFissure, WsStorm } from "./types/worldstate";
 import type { FissureVariant, FissureWatch } from "./types/settings";
 
+// Node strings are "Name (Planet)" for regular fissures and "Name (Proxima)"
+// for Void Storms (worldstate.rs resolves both through the same SOL_NODES
+// lookup) — the parenthesized suffix is the planet/region in both cases.
+export function planetOf(node: string): string {
+  const match = node.match(/\(([^()]+)\)\s*$/);
+  return match ? match[1] : node;
+}
+
 // actualVariant is passed explicitly from the caller who knows which array the fissure came from
 export function matchesWatch(
   watch: FissureWatch,
@@ -26,6 +34,9 @@ export function matchesWatch(
 
   // Mission type
   if (watch.missionType !== "Any" && fissure.missionType !== watch.missionType) return false;
+
+  // Planet — unset (watches saved before this field existed) behaves as "Any"
+  if (watch.planet && watch.planet !== "Any" && planetOf(fissure.node) !== watch.planet) return false;
 
   return true;
 }

@@ -8,6 +8,7 @@ import { EmptyMessage, FilterBar, FilterChip, FilterLabel, FilterSeparator, Foun
 import WfmTrading from "./WfmTrading";
 import ItemMarketPopup from "./ItemMarketPopup";
 import { matchesSearchTerms, splitSearchTerms } from "../lib/search";
+import { normalizeForWfm, wfmSlugLookup } from "../utils";
 import { TAURI_COMMANDS, TAURI_EVENTS } from "../constants/tauri";
 import { useCatalog } from "../hooks/useCatalog";
 import { useMarketData } from "../hooks/useMarketData";
@@ -67,10 +68,6 @@ function setName(itemName: string): string {
 
 function partLabel(itemName: string, set: string): string {
   return itemName.startsWith(set) ? itemName.slice(set.length).trim() || itemName : itemName;
-}
-
-function normalizeForWfm(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
 function flattenRecipeCounts(comps: RecipeComponent[], multiplier: number, out: Map<string, number>): void {
@@ -346,32 +343,7 @@ export default function MarketHelper({ inventory, refreshKey, crafting, onWfmLog
     return () => { unlisten.then(fn => fn()); };
   }, []); // eslint-disable-line
 
-  const wfmLookup = useMemo(() => {
-    const map = new Map<string, string>();
-
-    // Pass 1: exact matches — highest priority, never overwritten
-    for (const w of wfmItems) {
-      map.set(normalizeForWfm(w.item_name), w.url_name);
-    }
-
-    // Pass 2: fill gaps only — add Blueprint ↔ no-Blueprint aliases for keys
-    // that don't already have an exact entry, so we handle WFM's inconsistency
-    // (some items listed with "Blueprint" suffix, some without)
-    for (const w of wfmItems) {
-      const key = normalizeForWfm(w.item_name);
-      if (key.endsWith("_blueprint")) {
-        // WFM has "…Blueprint" → also expose without suffix for catalog names that omit it
-        const stripped = key.slice(0, -"_blueprint".length);
-        if (!map.has(stripped)) map.set(stripped, w.url_name);
-      } else {
-        // WFM has no "Blueprint" → also expose with suffix for catalog names that include it
-        const withBp = key + "_blueprint";
-        if (!map.has(withBp)) map.set(withBp, w.url_name);
-      }
-    }
-
-    return map;
-  }, [wfmItems]);
+  const wfmLookup = useMemo(() => wfmSlugLookup(wfmItems), [wfmItems]);
 
   const primeItems = useMemo(() =>
     catalog.filter(i =>

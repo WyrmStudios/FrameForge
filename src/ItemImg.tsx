@@ -1,4 +1,4 @@
-import { useContext, useState, useRef, useEffect } from "react";
+import { useContext, useState, useRef, useEffect, type ReactNode } from "react";
 import { ImgCacheDirContext } from "./ImgCacheDir";
 import { warframeStatImageUrl } from "./constants/urls";
 
@@ -24,9 +24,11 @@ interface Props {
   className?: string;
   fallbackClassName?: string;
   fallbackText?: string;
+  /** Rendered in place of the letter tile when there is no image. */
+  fallback?: ReactNode;
 }
 
-export default function ItemImg({ imageName, category = "?", size = 32, className = "img", fallbackClassName = "img-fallback", fallbackText }: Props) {
+export default function ItemImg({ imageName, category = "?", size = 32, className = "img", fallbackClassName = "img-fallback", fallbackText, fallback }: Props) {
   const baseUrl = useContext(ImgCacheDirContext);
   const [localFailed, setLocalFailed] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -55,6 +57,7 @@ export default function ItemImg({ imageName, category = "?", size = 32, classNam
     : fallbackClassName;
 
   if (!imageName || failed) {
+    if (fallback !== undefined) return <>{fallback}</>;
     if (category === "Blueprints") return <BlueprintIcon />;
     return <span className={fallbackClassNames} style={{ ...imageStyle, fontSize: size * 0.35 }}>{fallbackText ?? category[0].toUpperCase()}</span>;
   }

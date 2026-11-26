@@ -1,3 +1,4 @@
+import type { Unobtainable } from "./mastery";
 import type { FilterPresetSettings } from "./filterPresets";
 import type { TierKey } from "../arbitration/arbitrationTiers";
 
@@ -8,6 +9,9 @@ export type RelicRefinement = "intact" | "exceptional" | "flawless" | "radiant";
 export type RelicPickLines = "all" | "best" | "estimated";
 export type FoundryPageSize = 30 | 60 | 100;
 
+/** True keeps that class out of the Mastery progress denominator; its sources show only in the Unobtainable bucket. */
+export type MasteryExclude = Record<Unobtainable, boolean>;
+
 export type FissureVariant = "normal" | "hard" | "storm";
 
 export interface FissureWatch {
@@ -15,6 +19,9 @@ export interface FissureWatch {
   tier: string;
   missionType: string;
   variant: "any" | FissureVariant;
+  /** Planet/region parsed from the node name, or "Any"/unset to match every one.
+   *  Optional so watches saved before this field existed keep matching every planet. */
+  planet?: string;
 }
 
 /** Pixel offsets applied on top of each overlay's built-in placement. */
@@ -51,12 +58,12 @@ export interface SettingsSnapshot {
   overlayEnabled: boolean; overlayPriority: RelicOverlayPriority; overlayOffsets: OverlayOffsets;
   rivenEnabled: boolean; textScale: number; colorblindMode: boolean;
   clockFormat: ClockFormat; companionApiEnabled: boolean; memoryScannerEnabled: boolean;
-  blobLogEnabled: boolean; apiLogEnabled: boolean; autoDiagEnabled: boolean; tracked: string[];
+  blobLogEnabled: boolean; apiLogEnabled: boolean; wfmWhisperLogEnabled: boolean; autoDiagEnabled: boolean; tracked: string[];
   favorites: string[]; timerFavorites: string[]; fissureWatches: FissureWatch[]; fissureNotifications: boolean;
   modularWidth: number; modularSectionOrder: string[]; modularPopout: boolean; wfmInvisibleOnStart: boolean;
   wfmInvisibleOnClose: boolean; wfmAutoInvisible: boolean; wfmAutoInvisibleMins: number; wfmRecordSales: boolean; relicPickEnabled: boolean;
   relicPickPriority: RelicPickPriority; relicPickRefinement: RelicRefinement;
-  relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize;
+  relicPickLines: RelicPickLines; foundryPageSize: FoundryPageSize; masteryExclude: MasteryExclude;
   filterPresets: FilterPresetSettings;
   betaUpdatesEnabled: boolean;
 }
