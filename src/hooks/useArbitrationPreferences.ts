@@ -6,6 +6,13 @@ import { sanitizeTierKeys, TIER_KEYS, type TierKey } from "../arbitration/arbitr
 import { TAURI_COMMANDS } from "../constants/tauri";
 import type { SettingsFile } from "../types/tauri";
 
+// Without this, applySettings hands back a freshly-allocated array every
+// call even when the values are identical, which changes identity, which
+// re-triggers the save effect in App.tsx, which re-emits settings-updated,
+// which calls applySettings again — an infinite loop.
+const sameArray = <T,>(left: T[], right: T[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
 interface UseArbitrationPreferencesReturn {
   arbFavorites: string[];
   arbLeadMins: number;
@@ -33,12 +40,15 @@ export function useArbitrationPreferences(): UseArbitrationPreferencesReturn {
   const [arbOverlayEnabled, setArbOverlayEnabled] = useState(false);
 
   const applySettings = useCallback((s: SettingsFile) => {
-    if (Array.isArray(s.arbitrationFavorites)) setArbFavorites(s.arbitrationFavorites.filter((x: unknown) => typeof x === "string"));
+    if (Array.isArray(s.arbitrationFavorites)) {
+      const next = s.arbitrationFavorites.filter((x: unknown) => typeof x === "string");
+      setArbFavorites(current => sameArray(current, next) ? current : next);
+    }
     if (typeof s.arbitrationLeadMins === "number") setArbLeadMins(clampLead(s.arbitrationLeadMins));
     const storedFilter = sanitizeTierKeys(s.arbitrationTierFilter);
-    if (storedFilter) setArbTierFilter(storedFilter);
+    if (storedFilter) setArbTierFilter(current => sameArray(current, storedFilter) ? current : storedFilter);
     const storedAlertTiers = sanitizeTierKeys(s.arbitrationAlertTiers);
-    if (storedAlertTiers) setArbAlertTiers(storedAlertTiers);
+    if (storedAlertTiers) setArbAlertTiers(current => sameArray(current, storedAlertTiers) ? current : storedAlertTiers);
     if (typeof s.arbitrationScheduleDays === "number") setArbScheduleDays(clampScheduleDays(s.arbitrationScheduleDays));
     if (typeof s.arbitrationOverlayEnabled === "boolean") {
       setArbOverlayEnabled(s.arbitrationOverlayEnabled);

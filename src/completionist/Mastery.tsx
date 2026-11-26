@@ -54,10 +54,18 @@ export default function Mastery({ inventory, refreshKey, clockFormat, tracked, o
 
   useEffect(() => {
     let stale = false;
-    invoke<MasteryOverview>(TAURI_COMMANDS.GET_MASTERY_OVERVIEW)
-      .then(o => { if (!stale) { setOverview(o); setError(null); setNow(Math.floor(Date.now() / 1000)); } })
-      .catch(e => { if (!stale) setError(String(e)); });
-    return () => { stale = true; };
+    // inventory churns several times within the same tick during cold boot
+    // (catalog, quantities, mastery XP, etc. each land separately) — without
+    // this, each one cancels the in-flight fetch and restarts it, so the
+    // overview never gets a chance to land.
+    const debounce = setTimeout(() => {
+      invoke<MasteryOverview>(TAURI_COMMANDS.GET_MASTERY_OVERVIEW)
+        .then(o => {
+          if (!stale) { setOverview(o); setError(null); setNow(Math.floor(Date.now() / 1000)); }
+        })
+        .catch(e => { if (!stale) setError(String(e)); });
+    }, 300);
+    return () => { stale = true; clearTimeout(debounce); };
   }, [inventory, refreshKey, observationKey]);
 
   // Quotes are fetched only once the platinum view asks for them, a few a
