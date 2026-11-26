@@ -40,10 +40,3 @@ export interface RelicFilters {
   sortMode: "count" | "plat" | "ducats" | "az" | "za";
   ignoreFormaKuva: boolean;
 }
-
-export interface SyndicateFilters {
-  activeGroup: "main" | "openworld" | "other" | "lab";
-  activeTab: string;
-  missingOnly: boolean;
-  search: string;
-}

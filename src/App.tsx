@@ -44,7 +44,7 @@ import InventoryBatchPreview from "./inventory/InventoryBatchPreview";
 import InventoryToolbar from "./inventory/InventoryToolbar";
 import AppNavigation, { type Module } from "./AppNavigation";
 import InventorySidebar from "./inventory/InventorySidebar";
-import CompletionistTabs from "./completionist/CompletionistTabs";
+import Mastery from "./completionist/Mastery";
 import HeaderActions from "./header/HeaderActions";
 import ErrorBoundary from "./shared/ErrorBoundary";
 import HeaderStatusBadges from "./header/HeaderStatusBadges";
@@ -971,11 +971,11 @@ export default function App() {
         </KeepMountedWhenHidden>
         )}
 
-        {/* ── Completionist module ── */}
-        {visitedModules.has("completionist") && (
-        <KeepMountedWhenHidden active={activeModule === "completionist"}>
+        {/* ── Mastery module ── */}
+        {visitedModules.has("mastery") && (
+        <KeepMountedWhenHidden active={activeModule === "mastery"}>
           <ErrorBoundary>
-            <CompletionistTabs inventory={inventory} refreshKey={itemsRefreshKey} clockFormat={clockFormat} tracked={tracked} onTrackToggle={toggleTracked} />
+            <Mastery inventory={inventory} refreshKey={itemsRefreshKey} clockFormat={clockFormat} tracked={tracked} onTrackToggle={toggleTracked} />
           </ErrorBoundary>
         </KeepMountedWhenHidden>
         )}

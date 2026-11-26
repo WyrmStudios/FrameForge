@@ -1,4 +1,4 @@
-import type { FoundryFilters, InventoryFilters, MarketFilters, RelicFilters, SyndicateFilters } from "../types/filters";
+import type { FoundryFilters, InventoryFilters, MarketFilters, RelicFilters } from "../types/filters";
 
 export const INVENTORY_FILTERS_DEFAULT: InventoryFilters = {
   category: "all",
@@ -30,8 +30,4 @@ export const MARKET_FILTERS_DEFAULT: MarketFilters = {
 export const RELIC_FILTERS_DEFAULT: RelicFilters = {
   search: "", tiers: [], ownership: [], vault: [], completion: [], sortMode: "count",
   ignoreFormaKuva: false,
-};
-
-export const SYNDICATE_FILTERS_DEFAULT: SyndicateFilters = {
-  activeGroup: "main", activeTab: "Steel Meridian", missingOnly: false, search: "",
 };
